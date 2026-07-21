@@ -1,0 +1,47 @@
+Postman
+    │
+    ▼
+BrandRoutes
+    │
+    ▼
+BrandController
+    │
+    ▼
+Producer.sendMessage()
+    │
+    ▼
+brand_request_queue
+    │
+    ▼
+Consumer
+    │
+    ▼
+BrandHandler
+    │
+    ▼
+BrandService
+    │
+    ▼
+PostgreSQL
+    │
+    ▼
+BrandHandler
+    │
+    ▼
+brand_response_queue
+    │
+    ▼
+Producer
+    │
+    ▼
+Controller
+    │
+    ▼
+Postman Response
+
+
+
+
+1.JwtToken
+2.Error Handling
+3.Github
