@@ -15,8 +15,10 @@ const { startConsumer } = require("./consumer/consumer");
 const QUEUE = require("./config/queue");
 // ==========================================Routes
 const BrandMasterRoutes = require("./routes/BrandMaster");
+const OrganizationMasterRoutes = require("./routes/OrganizationRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/BrandMaster");
+const OrganizationHandler = require("./consumer/OrganizationHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -26,6 +28,7 @@ app.use(helmet());
 app.use(morgan("dev"));
 //======================================= Routes Url
 app.use("/api/brandmaster", BrandMasterRoutes);
+app.use("/api/organizationmaster", OrganizationMasterRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -42,10 +45,17 @@ const startServer = async () => {
     await producerRabbit.connectRabbitMQ();
     // ====================================Consumer RabbitMQ Start
     await consumerRabbit.connectRabbitMQ();
+        //==================================Brand Consumer
     await startConsumer(
       QUEUE.BRAND.REQUEST,
       QUEUE.BRAND.RESPONSE,
       BrandMasterConsumer,
+    );
+    //=====================================Organization Consumer
+    await startConsumer(
+      QUEUE.ORGANIZATION.REQUEST,
+      QUEUE.ORGANIZATION.RESPONSE,
+      OrganizationHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;

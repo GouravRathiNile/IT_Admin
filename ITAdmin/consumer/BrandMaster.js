@@ -2,7 +2,6 @@ const BrandMaster = require("../services/BrandMaster");
 
 const BrandMasterConsumer = async (payload) => {
     try {
-        console.log('Enter Consumer successfully')
         const { action, data } = payload;
         switch (action) {
             // ======================================Create Brand
@@ -14,8 +13,6 @@ const BrandMasterConsumer = async (payload) => {
             case "GET_ALL_BRANDS":
 
                 return await BrandMaster.getAllBrands();
-
-           
 
             // ==========================
             // Update Brand

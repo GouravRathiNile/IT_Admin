@@ -1,21 +1,21 @@
 const { pool } = require("../db");
-
+const generateUrl = require("../AzurConfigration/BrandMaster/AzureGetData");
+const moment = require("moment");
 
 //=========================================== Create Brand
 const createBrand = async (data) => {
-        console.log('Enter Database successfully')
-    const {
-        BrandCode,
-        BrandName,
-        ShortName,
-        BrandLogo,
-        Website,
-        IsActive,
-        CreatedBy,
-        IsDeleted
-    } = data;
+  const {
+    BrandCode,
+    BrandName,
+    ShortName,
+    BrandLogo,
+    Website,
+    IsActive,
+    CreatedBy,
+    IsDeleted,
+  } = data;
 
-    const query = `
+  const query = `
         INSERT INTO Brand_Master
         (
             BrandCode,
@@ -32,153 +32,150 @@ const createBrand = async (data) => {
         RETURNING *;
     `;
 
-    const values = [
-        BrandCode,
-        BrandName,
-        ShortName,
-        BrandLogo,
-        Website,
-        IsActive,
-        CreatedBy,
-        IsDeleted
-    ];
+  const values = [
+    BrandCode,
+    BrandName,
+    ShortName,
+    BrandLogo,
+    Website,
+    IsActive,
+    CreatedBy,
+    IsDeleted,
+  ];
 
-    const result = await pool.query(query, values);
+  const result = await pool.query(query, values);
 
-    return {
-        success: true,
-        message: "Brand Created Successfully",
-    };
-
+  return {
+    success: true,
+    message: "Brand Created Successfully",
+  };
 };
-
-// ===============================
-// Get All Brands
-// ===============================
+// =========================================Get All Brands
 const getAllBrands = async () => {
-
+  try {
     const query = `
-        SELECT *
-        FROM Brand_Master
-        WHERE IsDeleted = FALSE
-        ORDER BY BrandID DESC;
-    `;
+            SELECT *
+            FROM Brand_Master
+            WHERE IsDeleted = FALSE
+            AND IsActive = TRUE
+            ORDER BY BrandID DESC;
+        `;
 
     const result = await pool.query(query);
+    const brands = result.rows.map((brand) => ({
+      ...brand,
+      brandlogo: brand.brandlogo ? generateUrl(brand.brandlogo) : null,
+      createddatetime: brand.createddatetime
+        ? moment(brand.createddatetime).format("DD MMM YYYY")
+        : null,
+
+      modifieddatetime: brand.modifieddatetime
+        ? moment(brand.modifieddatetime).format("DD MMM YYYY")
+        : null,
+
+      deleteddatetime: brand.deleteddatetime
+        ? moment(brand.deleteddatetime).format("DD MMM YYYY")
+        : null,
+    }));
 
     return {
-        success: true,
-        data: result.rows
+      success: true,
+      message: "Brands fetched successfully",
+      data: brands,
     };
-
-};
-
-// ===============================
-// Get Brand By Id
-// ===============================
-const getBrandById = async (BrandID) => {
-
-    const query = `
-        SELECT *
-        FROM Brand_Master
-        WHERE BrandID = $1
-        AND IsDeleted = FALSE;
-    `;
-
-    const result = await pool.query(query, [BrandID]);
-
-    if (result.rows.length === 0) {
-
-        return {
-            success: false,
-            message: "Brand Not Found"
-        };
-
-    }
-
+  } catch (error) {
     return {
-        success: true,
-        data: result.rows[0]
+      success: false,
+      message: error.message,
     };
-
+  }
 };
-
-// ===============================
-// Update Brand
-// ===============================
+// =========================================Update Brand
 const updateBrand = async (data) => {
-
+  try {
     const {
-
-        BrandID,
-        BrandCode,
-        BrandName,
-        ShortName,
-        BrandLogo,
-        Website,
-        IsActive,
-        ModifiedBy
-
+      BrandID,
+      BrandCode,
+      BrandName,
+      ShortName,
+      BrandLogo,
+      Website,
+      ModifiedBy,
     } = data;
 
-    const query = `
-        UPDATE Brand_Master
-        SET
-            BrandCode=$1,
-            BrandName=$2,
-            ShortName=$3,
-            BrandLogo=$4,
-            Website=$5,
-            IsActive=$6,
-            ModifiedBy=$7,
-            ModifiedDateTime=NOW()
-        WHERE BrandID=$8
-        AND IsDeleted=FALSE
-        RETURNING *;
-    `;
+    let query = "";
+    let values = [];
 
-    const values = [
+    if (BrandLogo) {
+      query = `
+                UPDATE Brand_Master
+                SET
+                    BrandCode = $1,
+                    BrandName = $2,
+                    ShortName = $3,
+                    BrandLogo = $4,
+                    Website = $5,
+                    IsActive = TRUE,
+                    ModifiedBy = $6,
+                    ModifiedDateTime = NOW()
+                WHERE BrandID = $7
+                AND IsDeleted = FALSE
+                RETURNING *;
+            `;
 
+      values = [
         BrandCode,
         BrandName,
         ShortName,
         BrandLogo,
         Website,
-        IsActive,
         ModifiedBy,
-        BrandID
+        BrandID,
+      ];
+    } else {
+      query = `
+                UPDATE Brand_Master
+                SET
+                    BrandCode = $1,
+                    BrandName = $2,
+                    ShortName = $3,
+                    Website = $4,
+                    IsActive = TRUE,
+                    ModifiedBy = $5,
+                    ModifiedDateTime = NOW()
+                WHERE BrandID = $6
+                AND IsDeleted = FALSE
+                RETURNING *;
+            `;
 
-    ];
+      values = [BrandCode, BrandName, ShortName, Website, ModifiedBy, BrandID];
+    }
 
     const result = await pool.query(query, values);
 
     if (result.rows.length === 0) {
-
-        return {
-
-            success: false,
-            message: "Brand Not Found"
-
-        };
-
+      return {
+        success: false,
+        message: "Brand Not Found",
+      };
     }
 
     return {
-
-        success: true,
-        message: "Brand Updated Successfully",
-        data: result.rows[0]
-
+      success: true,
+      message: "Brand Updated Successfully",
     };
+  } catch (error) {
+    console.log("Update Brand Error :", error.message);
 
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
 };
-
-// ===============================
-// Delete Brand
-// ===============================
+// =========================================Delete Brand
 const deleteBrand = async (BrandID, DeletedBy) => {
-
-    const query = `
+  const query = `
         UPDATE Brand_Master
         SET
             IsDeleted=TRUE,
@@ -188,39 +185,54 @@ const deleteBrand = async (BrandID, DeletedBy) => {
         RETURNING *;
     `;
 
-    const result = await pool.query(query, [
+  const result = await pool.query(query, [DeletedBy, BrandID]);
 
-        DeletedBy,
-        BrandID
+  if (result.rows.length === 0) {
+    return {
+      success: false,
+      message: "Brand Not Found",
+    };
+  }
 
-    ]);
+  return {
+    success: true,
+    message: "Brand Deleted Successfully",
+  };
+};
+// =============================================Get For Brand Dropdown
+const getBrandDropdown = async () => {
+  try {
+    const query = `
+            SELECT
+                BrandID,
+                BrandCode,
+                BrandName,
+                ShortName
+            FROM Brand_Master
+            WHERE IsDeleted = FALSE
+            AND IsActive = TRUE
+            ORDER BY BrandName ASC;
+        `;
 
-    if (result.rows.length === 0) {
-
-        return {
-
-            success: false,
-            message: "Brand Not Found"
-
-        };
-
-    }
+    const result = await pool.query(query);
 
     return {
-
-        success: true,
-        message: "Brand Deleted Successfully"
-
+      success: true,
+      message: "Brand List fetched successfully",
+      data: result.rows,
     };
-
+  } catch (error) {
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
 };
 
 module.exports = {
-
-    createBrand,
-    getAllBrands,
-    getBrandById,
-    updateBrand,
-    deleteBrand
-
+  createBrand,
+  getAllBrands,
+  updateBrand,
+  deleteBrand,
+  getBrandDropdown,
 };
