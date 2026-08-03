@@ -1,46 +1,30 @@
 const OrganizationService = require("../services/OrganizationService");
 
 const OrganizationHandler = async (message) => {
-
-    try {
-
-        switch (message.action) {
-
-            //==========================================
-            // Create Organization
-            //==========================================
-            case "CREATE_ORGANIZATION":
-
-                console.log("Enter Organization Consumer Successfully");
-
-                return await OrganizationService.createOrganization(
-                    message.data
-                );
-
-            default:
-
-                return {
-
-                    success: false,
-                    message: "Invalid Action"
-
-                };
-
-        }
-
-    } catch (error) {
-
-        console.log(error);
-
+  try {
+    switch (message.action) {
+      // ======================================= Create Organization
+      case "CREATE_ORGANIZATION":
+        return await OrganizationService.createOrganization(message.data);
+      // ======================================= Update Organization
+      case "UPDATE_ORGANIZATION":
+        return await OrganizationService.updateOrganization(message.data);
+      case "DELETE_ORGANIZATION":
+        return await OrganizationService.deleteOrganization(message.data);
+      default:
         return {
-
-            success: false,
-            message: error.message
-
+          success: false,
+          message: "Invalid Action",
         };
-
     }
+  } catch (error) {
+    console.log(error);
 
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
 };
 
 module.exports = OrganizationHandler;

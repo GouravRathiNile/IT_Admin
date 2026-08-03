@@ -7,23 +7,13 @@ const BrandMasterConsumer = async (payload) => {
             // ======================================Create Brand
             case "CREATE_BRAND":
                 return await BrandMaster.createBrand(data);
-            // ==========================
-            // Get All Brands
-            // ==========================
-            case "GET_ALL_BRANDS":
 
-                return await BrandMaster.getAllBrands();
-
-            // ==========================
-            // Update Brand
-            // ==========================
+            // =======================================Update Brand
             case "UPDATE_BRAND":
 
                 return await BrandMaster.updateBrand(data);
 
-            // ==========================
-            // Delete Brand
-            // ==========================
+            // =======================================Delete Brand
             case "DELETE_BRAND":
 
                 return await BrandMaster.deleteBrand(

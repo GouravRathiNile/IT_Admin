@@ -16,9 +16,11 @@ const QUEUE = require("./config/queue");
 // ==========================================Routes
 const BrandMasterRoutes = require("./routes/BrandMaster");
 const OrganizationMasterRoutes = require("./routes/OrganizationRoutes");
+const DivisionRoutes = require("./routes/DivisionRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/BrandMaster");
 const OrganizationHandler = require("./consumer/OrganizationHandler");
+const DivisionHandler = require("./consumer/DivisionHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -29,6 +31,7 @@ app.use(morgan("dev"));
 //======================================= Routes Url
 app.use("/api/brandmaster", BrandMasterRoutes);
 app.use("/api/organizationmaster", OrganizationMasterRoutes);
+app.use("/api/divisionmaster", DivisionRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -56,6 +59,12 @@ const startServer = async () => {
       QUEUE.ORGANIZATION.REQUEST,
       QUEUE.ORGANIZATION.RESPONSE,
       OrganizationHandler
+    );
+    //=====================================Division Consumer
+    await startConsumer(
+      QUEUE.DIVISION.REQUEST,
+      QUEUE.DIVISION.RESPONSE,
+      DivisionHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;
