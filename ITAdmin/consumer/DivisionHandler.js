@@ -12,10 +12,6 @@ const DivisionHandler = async (message) => {
           message.data
         );
 
-      // ============================= Get All
-      case "GET_ALL_DIVISIONS":
-        return await DivisionService.getAllDivisions();
-
       // ============================= Update
       case "UPDATE_DIVISION":
         return await DivisionService.updateDivision(

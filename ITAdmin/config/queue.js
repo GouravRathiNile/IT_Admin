@@ -7,8 +7,13 @@ module.exports = {
     REQUEST: "organization_request_queue",
     RESPONSE: "organization_response_queue",
   },
-    DIVISION: {
+  DIVISION: {
     REQUEST: "division_request_queue",
     RESPONSE: "division_response_queue",
+  },
+
+  DEPARTMENT: {
+    REQUEST: "department_request_queue",
+    RESPONSE: "department_response_queue",
   },
 };

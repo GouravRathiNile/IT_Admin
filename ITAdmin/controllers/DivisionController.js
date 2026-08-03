@@ -7,8 +7,8 @@ const uploadToAzure = require("../AzurConfigration/OrganizationMaster/AzureUploa
 const STATUS_CODES = require("../utils/statusCodes");
 const AppError = require("../utils/AppError");
 const handleError = require("../utils/errorHandler");
-//==================================================Get Funcation from Serive
-
+//==================================================Get Funcation from Service
+const DivisionService = require("../services/DivisionService");
 
 // ========================================= Create Division
 exports.createDivision = async (req, res) => {
@@ -66,24 +66,17 @@ exports.createDivision = async (req, res) => {
 exports.getAllDivisions = async (req, res) => {
   try {
 
-    const response = await producer.sendMessage(
-      QUEUE.DIVISION.REQUEST,
-      QUEUE.DIVISION.RESPONSE,
-      {
-        action: "GET_ALL_DIVISIONS",
-      }
-    );
+
+    const response = await DivisionService.getAllDivisions();
 
     if (!response.success) {
       throw new AppError(
-        response.message,
+        response.message || "Unable to fetch divisions",
         STATUS_CODES.BAD_REQUEST
       );
     }
 
-    return res
-      .status(STATUS_CODES.SUCCESS)
-      .json(response);
+    return res.status(STATUS_CODES.SUCCESS).json(response);
 
   } catch (error) {
     handleError(error, res);
@@ -174,34 +167,22 @@ exports.deleteDivision = async (req, res) => {
   }
 };
 // ========================================= Get Division Dropdown
-exports.getDivisionDropdown = async (req, res) => {
-    try {
+exports.getDivisionsDropdown = async (req, res) => {
+  try {
 
-        const response = await producer.sendMessage(
-            QUEUE.DIVISION.REQUEST,
-            QUEUE.DIVISION.RESPONSE,
-            {
-                action: "GET_DIVISION_DROPDOWN"
-            }
-        );
 
-        if (!response.success) {
-            throw new AppError(
-                response.message,
-                STATUS_CODES.BAD_REQUEST
-            );
-        }
+    const response = await DivisionService.getDivisionDropdown();
 
-        return res
-            .status(STATUS_CODES.SUCCESS)
-            .json(response);
-
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch divisions",
+        STATUS_CODES.BAD_REQUEST
+      );
     }
 
-    catch (error) {
+    return res.status(STATUS_CODES.SUCCESS).json(response);
 
-        handleError(error, res);
-
-    }
-
+  } catch (error) {
+    handleError(error, res);
+  }
 };

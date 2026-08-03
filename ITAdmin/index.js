@@ -17,10 +17,12 @@ const QUEUE = require("./config/queue");
 const BrandMasterRoutes = require("./routes/BrandMaster");
 const OrganizationMasterRoutes = require("./routes/OrganizationRoutes");
 const DivisionRoutes = require("./routes/DivisionRoutes");
+const DepartmentRoutes = require("./routes/DepartmentRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/BrandMaster");
 const OrganizationHandler = require("./consumer/OrganizationHandler");
 const DivisionHandler = require("./consumer/DivisionHandler");
+const DepartmentHandler = require("./consumer/DepartmentHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -32,6 +34,7 @@ app.use(morgan("dev"));
 app.use("/api/brandmaster", BrandMasterRoutes);
 app.use("/api/organizationmaster", OrganizationMasterRoutes);
 app.use("/api/divisionmaster", DivisionRoutes);
+app.use("/api/departmentmaster", DepartmentRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -65,6 +68,12 @@ const startServer = async () => {
       QUEUE.DIVISION.REQUEST,
       QUEUE.DIVISION.RESPONSE,
       DivisionHandler
+    );
+    //=====================================Department Consumer
+    await startConsumer(
+      QUEUE.DEPARTMENT.REQUEST,
+      QUEUE.DEPARTMENT.RESPONSE,
+      DepartmentHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;
