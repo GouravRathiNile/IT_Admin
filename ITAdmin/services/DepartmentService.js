@@ -47,7 +47,6 @@ const createDepartment = async (data) => {
     return {
       success: true,
       message: "Department Created Successfully",
-      data: result.rows[0],
     };
 
   } catch (error) {

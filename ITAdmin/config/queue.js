@@ -16,4 +16,9 @@ module.exports = {
     REQUEST: "department_request_queue",
     RESPONSE: "department_response_queue",
   },
+
+  PRODUCT_CATEGORY: {
+    REQUEST: "product_category_request_queue",
+    RESPONSE: "product_category_response_queue",
+  },
 };

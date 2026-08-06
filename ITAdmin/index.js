@@ -18,11 +18,13 @@ const BrandMasterRoutes = require("./routes/BrandMaster");
 const OrganizationMasterRoutes = require("./routes/OrganizationRoutes");
 const DivisionRoutes = require("./routes/DivisionRoutes");
 const DepartmentRoutes = require("./routes/DepartmentRoutes");
+const ProductCategoryRoutes = require("./routes/ProductCategoryRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/BrandMaster");
 const OrganizationHandler = require("./consumer/OrganizationHandler");
 const DivisionHandler = require("./consumer/DivisionHandler");
 const DepartmentHandler = require("./consumer/DepartmentHandler");
+const ProductCategoryHandler = require("./consumer/ProductCategoryHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -35,6 +37,7 @@ app.use("/api/brandmaster", BrandMasterRoutes);
 app.use("/api/organizationmaster", OrganizationMasterRoutes);
 app.use("/api/divisionmaster", DivisionRoutes);
 app.use("/api/departmentmaster", DepartmentRoutes);
+app.use("/api/productcategorymaster", ProductCategoryRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -74,6 +77,12 @@ const startServer = async () => {
       QUEUE.DEPARTMENT.REQUEST,
       QUEUE.DEPARTMENT.RESPONSE,
       DepartmentHandler
+    );
+    //=====================================Product Category Consumer
+    await startConsumer(
+      QUEUE.PRODUCT_CATEGORY.REQUEST,
+      QUEUE.PRODUCT_CATEGORY.RESPONSE,
+      ProductCategoryHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;
