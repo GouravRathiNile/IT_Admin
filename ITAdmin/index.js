@@ -20,6 +20,8 @@ const DivisionRoutes = require("./routes/DivisionRoutes");
 const DepartmentRoutes = require("./routes/DepartmentRoutes");
 const ProductCategoryRoutes = require("./routes/ProductCategoryRoutes");
 const ProductRoutes = require("./routes/ProductRoutes");
+const UserRoutes = require("./routes/UserRoutes");
+const HotelOpsLoginRoutes = require("./routes/HotelOpsLoginRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/BrandMaster");
 const OrganizationHandler = require("./consumer/OrganizationHandler");
@@ -27,6 +29,8 @@ const DivisionHandler = require("./consumer/DivisionHandler");
 const DepartmentHandler = require("./consumer/DepartmentHandler");
 const ProductCategoryHandler = require("./consumer/ProductCategoryHandler");
 const ProductHandler = require("./consumer/ProductHandler");
+const UserHandler = require("./consumer/UserHandler");
+const HotelOpsLoginHandler = require("./consumer/HotelOpsLoginHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -41,6 +45,8 @@ app.use("/api/divisionmaster", DivisionRoutes);
 app.use("/api/departmentmaster", DepartmentRoutes);
 app.use("/api/productcategorymaster", ProductCategoryRoutes);
 app.use("/api/productmaster", ProductRoutes);
+app.use("/api/usermaster", UserRoutes);
+app.use("/api/hotelopslogin", HotelOpsLoginRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -92,6 +98,18 @@ const startServer = async () => {
       QUEUE.PRODUCT.REQUEST,
       QUEUE.PRODUCT.RESPONSE,
       ProductHandler,
+    );
+    // ===================================== User Consumer
+    await startConsumer(
+      QUEUE.USER.REQUEST,
+      QUEUE.USER.RESPONSE,
+      UserHandler
+    );
+    // ======================================Login Consumer
+    await startConsumer(
+      QUEUE.AUTH.REQUEST,
+      QUEUE.AUTH.RESPONSE,
+      HotelOpsLoginHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;

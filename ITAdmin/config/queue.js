@@ -25,4 +25,12 @@ module.exports = {
    REQUEST: "product_request_queue",
     RESPONSE: "product_response_queue",
 },
+ USER: {
+    REQUEST: "user_request_queue",
+    RESPONSE: "user_response_queue",
+  },
+   AUTH: {
+    REQUEST: "Login_request_queue",
+    RESPONSE: "Login_response_queue",
+  },
 };
