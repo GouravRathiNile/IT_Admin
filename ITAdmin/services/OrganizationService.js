@@ -1,6 +1,7 @@
 const { pool } = require("../db");
 const generateUrl = require("../AzurConfigration/OrganizationMaster/AzureGetData");
 const moment = require("moment");
+const {formatDate} = require("../utils/dateFormatter");
 // =========================================Create Organization
 const createOrganization = async (data) => {
   const client = await pool.connect();
@@ -360,17 +361,17 @@ const getAllOrganizations = async () => {
 
           CreatedBy: row.createdby,
           CreatedDateTime: row.createddatetime
-            ? moment(row.createddatetime).format("DD MMM YYYY")
+            ? formatDate(row.createddatetime)
             : null,
 
           ModifiedBy: row.modifiedby,
           ModifiedDateTime: row.modifieddatetime
-            ? moment(row.modifieddatetime).format("DD MMM YYYY")
+            ? formatDate(row.modifieddatetime)
             : null,
 
           DeletedBy: row.deletedby,
           DeletedDateTime: row.deleteddatetime
-            ? moment(row.deleteddatetime).format("DD MMM YYYY")
+            ? formatDate(row.deleteddatetime)
             : null,
 
           Logos: [],
@@ -389,6 +390,7 @@ const getAllOrganizations = async () => {
     return {
       success: true,
       message: "Organizations fetched successfully",
+      Count: Object.keys(organizations).length,
       data: Object.values(organizations),
     };
   } catch (error) {
@@ -743,6 +745,7 @@ const getOrganizationsDropdown = async () => {
     return {
       success: true,
       message: "Organizations fetched successfully",
+      Count: Object.keys(organizations).length,
       data: Object.values(organizations),
     };
 

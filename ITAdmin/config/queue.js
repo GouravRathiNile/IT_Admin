@@ -21,4 +21,8 @@ module.exports = {
     REQUEST: "product_category_request_queue",
     RESPONSE: "product_category_response_queue",
   },
+  PRODUCT: {
+   REQUEST: "product_request_queue",
+    RESPONSE: "product_response_queue",
+},
 };

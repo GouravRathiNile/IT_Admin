@@ -1,5 +1,5 @@
 const { pool } = require("../db");
-const moment = require("moment");
+const {formatDate} = require("../utils/dateFormatter");
 
 // ========================================= Create Department
 const createDepartment = async (data) => {
@@ -80,7 +80,6 @@ const createDepartment = async (data) => {
     client.release();
   }
 };
-
 // ========================================= Get All Departments
 const getAllDepartments = async () => {
   try {
@@ -93,7 +92,6 @@ const getAllDepartments = async () => {
         dm.DepartmentShortName,
 
         dm.OrganizationID,
-        om.OrganizationName,
 
         dm.DivisionID,
         div.DivisionName,
@@ -108,9 +106,6 @@ const getAllDepartments = async () => {
         dm.DeletedDateTime
 
       FROM Department_Master dm
-
-      INNER JOIN Organization_Master om
-      ON dm.OrganizationID = om.OrganizationID
 
       INNER JOIN Division_Master div
       ON dm.DivisionID = div.DivisionID
@@ -129,24 +124,23 @@ const getAllDepartments = async () => {
       DepartmentShortName: row.departmentshortname,
 
       OrganizationID: row.organizationid,
-      OrganizationName: row.organizationname,
 
       DivisionID: row.divisionid,
       DivisionName: row.divisionname,
 
       CreatedBy: row.createdby,
       CreatedDateTime: row.createddatetime
-        ? moment(row.createddatetime).format("DD MMM YYYY")
+        ? formatDate(row.createddatetime)
         : null,
 
       ModifiedBy: row.modifiedby,
       ModifiedDateTime: row.modifieddatetime
-        ? moment(row.modifieddatetime).format("DD MMM YYYY")
+        ? formatDate(row.modifieddatetime)
         : null,
 
       DeletedBy: row.deletedby,
       DeletedDateTime: row.deleteddatetime
-        ? moment(row.deleteddatetime).format("DD MMM YYYY")
+        ? formatDate(row.deleteddatetime)
         : null,
 
     }));
@@ -155,6 +149,7 @@ const getAllDepartments = async () => {
 
       success: true,
       message: "Departments fetched successfully",
+      Count: departments.length,
       data: departments,
 
     };
@@ -172,7 +167,6 @@ const getAllDepartments = async () => {
 
   }
 };
-
 // ========================================= Department Dropdown
 const getDepartmentsDropdown = async () => {
   try {
@@ -200,6 +194,7 @@ const getDepartmentsDropdown = async () => {
     return {
       success: true,
       message: "Department Dropdown fetched successfully",
+      Count: departments.length,
       data: departments,
     };
 
@@ -214,7 +209,6 @@ const getDepartmentsDropdown = async () => {
 
   }
 };
-
 // ========================================= Update Department
 const updateDepartment = async (data) => {
   try {
@@ -292,7 +286,6 @@ const updateDepartment = async (data) => {
 
   }
 };
-
 // ========================================= Delete Department
 const deleteDepartment = async (data) => {
   try {

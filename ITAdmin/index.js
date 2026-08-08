@@ -19,12 +19,14 @@ const OrganizationMasterRoutes = require("./routes/OrganizationRoutes");
 const DivisionRoutes = require("./routes/DivisionRoutes");
 const DepartmentRoutes = require("./routes/DepartmentRoutes");
 const ProductCategoryRoutes = require("./routes/ProductCategoryRoutes");
+const ProductRoutes = require("./routes/ProductRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/BrandMaster");
 const OrganizationHandler = require("./consumer/OrganizationHandler");
 const DivisionHandler = require("./consumer/DivisionHandler");
 const DepartmentHandler = require("./consumer/DepartmentHandler");
 const ProductCategoryHandler = require("./consumer/ProductCategoryHandler");
+const ProductHandler = require("./consumer/ProductHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -38,6 +40,7 @@ app.use("/api/organizationmaster", OrganizationMasterRoutes);
 app.use("/api/divisionmaster", DivisionRoutes);
 app.use("/api/departmentmaster", DepartmentRoutes);
 app.use("/api/productcategorymaster", ProductCategoryRoutes);
+app.use("/api/productmaster", ProductRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -54,7 +57,7 @@ const startServer = async () => {
     await producerRabbit.connectRabbitMQ();
     // ====================================Consumer RabbitMQ Start
     await consumerRabbit.connectRabbitMQ();
-        //==================================Brand Consumer
+    //==================================Brand Consumer
     await startConsumer(
       QUEUE.BRAND.REQUEST,
       QUEUE.BRAND.RESPONSE,
@@ -64,25 +67,31 @@ const startServer = async () => {
     await startConsumer(
       QUEUE.ORGANIZATION.REQUEST,
       QUEUE.ORGANIZATION.RESPONSE,
-      OrganizationHandler
+      OrganizationHandler,
     );
     //=====================================Division Consumer
     await startConsumer(
       QUEUE.DIVISION.REQUEST,
       QUEUE.DIVISION.RESPONSE,
-      DivisionHandler
+      DivisionHandler,
     );
     //=====================================Department Consumer
     await startConsumer(
       QUEUE.DEPARTMENT.REQUEST,
       QUEUE.DEPARTMENT.RESPONSE,
-      DepartmentHandler
+      DepartmentHandler,
     );
     //=====================================Product Category Consumer
     await startConsumer(
       QUEUE.PRODUCT_CATEGORY.REQUEST,
       QUEUE.PRODUCT_CATEGORY.RESPONSE,
-      ProductCategoryHandler
+      ProductCategoryHandler,
+    );
+    //=====================================Product Master Consumer
+    await startConsumer(
+      QUEUE.PRODUCT.REQUEST,
+      QUEUE.PRODUCT.RESPONSE,
+      ProductHandler,
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;

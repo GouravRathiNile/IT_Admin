@@ -46,3 +46,18 @@ Postman Response
 2.Organization Master create Image Size fix ,width ,heiht lena
 3.Organization me organizationwise filter set krna
 4.Live Krne se phle sara data delete krna he
+5.Sari get apis me count lene
+6.get apis me date formate set kro
+7.Department get apis organizationwise krne 
+
+
+
+==============multiple tabel for one thing 
+Organization
+1.OrganizationMaster
+2.OrganizationLogoMaster
+
+user
+1.User_master
+2.user_org_mapping
+3.user_product_mapping

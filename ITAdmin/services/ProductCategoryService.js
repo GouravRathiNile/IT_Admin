@@ -1,5 +1,6 @@
 const { pool } = require("../db");
 const moment = require("moment");
+const {formatDate} = require("../utils/dateFormatter");
 
 // ========================================= Create Product Category
 const createProductCategory = async (data) => {
@@ -58,7 +59,6 @@ const createProductCategory = async (data) => {
 
   }
 };
-
 // ========================================= Get All Product Categories
 const getAllProductCategories = async () => {
   try {
@@ -92,23 +92,24 @@ const getAllProductCategories = async () => {
 
       CreatedBy: row.createdby,
       CreatedDate: row.createddate
-        ? moment(row.createddate).format("DD MMM YYYY")
+        ? formatDate(row.createddate)
         : null,
 
       ModifiedBy: row.modifiedby,
       ModifiedDate: row.modifieddate
-        ? moment(row.modifieddate).format("DD MMM YYYY")
+        ? formatDate(row.modifieddate)
         : null,
 
       DeletedBy: row.deletedby,
       DeletedDate: row.deleteddate
-        ? moment(row.deleteddate).format("DD MMM YYYY")
+        ? formatDate(row.deleteddate)
         : null,
     }));
 
     return {
       success: true,
       message: "Product Categories fetched successfully",
+      Count: categories.length,
       data: categories,
     };
 
@@ -123,7 +124,6 @@ const getAllProductCategories = async () => {
 
   }
 };
-
 // ========================================= Product Category Dropdown
 const getProductCategoryDropdown = async () => {
   try {
@@ -145,6 +145,7 @@ const getProductCategoryDropdown = async () => {
     return {
       success: true,
       message: "Product Category dropdown fetched successfully",
+      Count:result.rows.length,
       data: result.rows.map((row) => ({
         ProductCategoryID: row.productcategoryid,
         CategoryName: row.categoryname,
@@ -164,7 +165,6 @@ const getProductCategoryDropdown = async () => {
 
   }
 };
-
 // ========================================= Update Product Category
 const updateProductCategory = async (data) => {
   try {
@@ -223,7 +223,6 @@ const updateProductCategory = async (data) => {
 
   }
 };
-
 // ========================================= Delete Product Category
 const deleteProductCategory = async (data) => {
   try {
@@ -277,6 +276,7 @@ const deleteProductCategory = async (data) => {
 
   }
 };
+
 module.exports = {
   createProductCategory,
   getAllProductCategories,

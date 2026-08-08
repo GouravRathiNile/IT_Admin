@@ -1,5 +1,5 @@
 const { pool } = require("../db");
-const moment = require("moment");
+const {formatDate} = require("../utils/dateFormatter");
 
 // ========================================= Create Division
 const createDivision = async (data) => {
@@ -97,19 +97,19 @@ const getAllDivisions = async () => {
             CreatedBy: row.createdby,
 
             CreatedDateTime: row.createddatetime
-                ? moment(row.createddatetime).format("DD MMM YYYY")
+                ? formatDate(row.createddatetime)
                 : null,
 
             ModifiedBy: row.modifiedby,
 
             ModifiedDateTime: row.modifieddatetime
-                ? moment(row.modifieddatetime).format("DD MMM YYYY")
+                ? formatDate(row.modifieddatetime)
                 : null,
 
             DeletedBy: row.deletedby,
 
             DeletedDateTime: row.deleteddatetime
-                ? moment(row.deleteddatetime).format("DD MMM YYYY")
+                ? formatDate(row.deleteddatetime)
                 : null
 
         }));
@@ -118,6 +118,7 @@ const getAllDivisions = async () => {
 
             success: true,
             message: "Divisions fetched successfully",
+            Count:divisions.length,
             data: divisions
 
         };
@@ -348,6 +349,7 @@ const getDivisionDropdown = async () => {
 
             success: true,
             message: "Division dropdown fetched successfully",
+            Count: result.rows.length,
             data: result.rows
 
         };

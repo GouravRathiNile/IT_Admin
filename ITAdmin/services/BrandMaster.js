@@ -1,7 +1,6 @@
 const { pool } = require("../db");
 const generateUrl = require("../AzurConfigration/BrandMaster/AzureGetData");
-const moment = require("moment");
-
+const {formatDate} = require("../utils/dateFormatter");
 //=========================================== Create Brand
 const createBrand = async (data) => {
   const {
@@ -66,21 +65,22 @@ const getAllBrands = async () => {
       ...brand,
       brandlogo: brand.brandlogo ? generateUrl(brand.brandlogo) : null,
       createddatetime: brand.createddatetime
-        ? moment(brand.createddatetime).format("DD MMM YYYY")
+        ? formatDate(brand.createddatetime)
         : null,
 
       modifieddatetime: brand.modifieddatetime
-        ? moment(brand.modifieddatetime).format("DD MMM YYYY")
+        ? formatDate(brand.modifieddatetime)
         : null,
 
       deleteddatetime: brand.deleteddatetime
-        ? moment(brand.deleteddatetime).format("DD MMM YYYY")
+        ? formatDate(brand.deleteddatetime)
         : null,
     }));
 
     return {
       success: true,
       message: "Brands fetched successfully",
+      Count : brands.length,
       data: brands,
     };
   } catch (error) {
@@ -219,6 +219,7 @@ const getBrandDropdown = async () => {
     return {
       success: true,
       message: "Brand List fetched successfully",
+      Count : result.rows.length,
       data: result.rows,
     };
   } catch (error) {
