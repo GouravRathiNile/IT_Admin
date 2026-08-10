@@ -425,303 +425,6 @@ const deleteUser = async (data) => {
     client.release();
   }
 };
-// ============================================================UPDATE USER
-const updateUser = async (data) => {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const {
-      UserID,
-
-      EmployeeCode,
-      Username,
-      PasswordHash,
-      FullName,
-
-      Designation,
-      Department,
-      Division,
-
-      LoginType,
-      UserType,
-
-      Email,
-      PhoneNumber,
-      Gender,
-
-      ProfilePhoto,
-
-      LastPasswordChangedDate,
-      PasswordExpiryDate,
-      DateOfJoining,
-
-      IsLocked,
-      IsActive,
-
-      ModifiedBy,
-
-      Organizations,
-      Products,
-    } = data;
-
-    // ========================================================
-    // Check User
-    // ========================================================
-
-    const userCheck = await client.query(
-      `
-      SELECT UserID, ProfilePhoto
-      FROM user_master
-      WHERE UserID = $1
-        AND IsDeleted = FALSE;
-      `,
-      [UserID],
-    );
-
-    if (userCheck.rows.length === 0) {
-      await client.query("ROLLBACK");
-
-      return {
-        success: false,
-        message: "User Not Found",
-      };
-    }
-
-    const oldProfilePhoto = userCheck.rows[0].profilephoto;
-
-    // ========================================================
-    // Profile Photo
-    // ========================================================
-    // New photo aayi hai to new photo save hogi.
-    // New photo nahi aayi to old photo preserve hogi.
-
-    const finalProfilePhoto =
-      ProfilePhoto !== undefined ? ProfilePhoto : oldProfilePhoto;
-
-    // ========================================================
-    // Update User
-    // ========================================================
-
-    const result = await client.query(
-      `
-      UPDATE user_master
-      SET
-
-        EmployeeCode = $1,
-        Username = $2,
-        PasswordHash = $3,
-        FullName = $4,
-
-        Designation = $5,
-        Department = $6,
-        Division = $7,
-
-        LoginType = $8,
-        UserType = $9,
-
-        Email = $10,
-        PhoneNumber = $11,
-        Gender = $12,
-
-        ProfilePhoto = $13,
-
-        LastPasswordChangedDate = $14,
-        PasswordExpiryDate = $15,
-
-        IsLocked = $16,
-        IsActive = $17,
-
-        DateOfJoining = $18,
-
-        ModifiedBy = $19,
-        ModifiedDate = CURRENT_TIMESTAMP
-
-      WHERE UserID = $20
-        AND IsDeleted = FALSE
-
-      RETURNING UserID;
-      `,
-      [
-        EmployeeCode,
-        Username,
-        PasswordHash,
-        FullName,
-
-        Designation,
-        Department,
-        Division,
-
-        LoginType,
-        UserType,
-
-        Email,
-        PhoneNumber,
-        Gender,
-
-        finalProfilePhoto,
-
-        LastPasswordChangedDate || null,
-        PasswordExpiryDate || null,
-
-        IsLocked ?? false,
-        IsActive ?? true,
-
-        DateOfJoining || null,
-
-        ModifiedBy,
-
-        UserID,
-      ],
-    );
-
-    if (result.rows.length === 0) {
-      await client.query("ROLLBACK");
-
-      return {
-        success: false,
-        message: "User Not Found",
-      };
-    }
-
-    // ========================================================
-    // ORGANIZATION MAPPING
-    // ========================================================
-    if (Array.isArray(Organizations) && Organizations.length > 0) {
-      for (const organization of Organizations) {
-        const { BrandID, OrganizationID } = organization;
-
-        if (!BrandID || !OrganizationID) {
-          throw new Error("BrandID and OrganizationID are required");
-        }
-
-        const mappingIdResult = await client.query(`
-      SELECT COALESCE(MAX(UserOrgMapID), 0) + 1 AS UserOrgMapID
-      FROM user_org_mapping;
-    `);
-
-        const UserOrgMapID = Number(mappingIdResult.rows[0].userorgmapid);
-
-        await client.query(
-          `
-      INSERT INTO user_org_mapping
-      (
-        UserOrgMapID,
-        UserID,
-        BrandID,
-        OrganizationID,
-        IsActive,
-        IsDeleted,
-        CreatedBy
-      )
-      VALUES
-      (
-        $1,
-        $2,
-        $3,
-        $4,
-        TRUE,
-        FALSE,
-        $5
-      )
-      ON CONFLICT (UserID, BrandID, OrganizationID)
-      DO NOTHING;
-      `,
-          [UserOrgMapID, UserID, BrandID, OrganizationID, ModifiedBy || null],
-        );
-      }
-    }
-    // ========================================================
-    // PRODUCT MAPPING
-    // ========================================================
-    if (Array.isArray(Products) && Products.length > 0) {
-      for (const product of Products) {
-        const { ProductID } = product;
-
-        if (!ProductID) {
-          throw new Error("ProductID is required");
-        }
-
-        const mappingIdResult = await client.query(`
-      SELECT COALESCE(MAX(UserProductMapID), 0) + 1 AS UserProductMapID
-      FROM user_product_mapping;
-    `);
-
-        const UserProductMapID = Number(
-          mappingIdResult.rows[0].userproductmapid,
-        );
-
-        await client.query(
-          `
-      INSERT INTO user_product_mapping
-      (
-        UserProductMapID,
-        UserID,
-        ProductID,
-        IsActive,
-        IsDeleted,
-        CreatedBy
-      )
-      VALUES
-      (
-        $1,
-        $2,
-        $3,
-        TRUE,
-        FALSE,
-        $4
-      )
-      ON CONFLICT (UserID, ProductID)
-      DO NOTHING;
-      `,
-          [UserProductMapID, UserID, ProductID, ModifiedBy || null],
-        );
-      }
-    }
-    // ========================================================
-    // COMMIT
-    // ========================================================
-
-    await client.query("COMMIT");
-
-    return {
-      success: true,
-
-      message: "User Updated Successfully",
-    };
-  } catch (error) {
-    await client.query("ROLLBACK");
-
-    console.log("Update User Error :", error.message);
-
-    // Duplicate
-    if (error.code === "23505") {
-      return {
-        success: false,
-
-        message: "Username, Employee Code, Email or Mapping already exists",
-      };
-    }
-
-    // Foreign Key
-    if (error.code === "23503") {
-      return {
-        success: false,
-
-        message: "Invalid Brand, Organization or Product",
-      };
-    }
-
-    return {
-      success: false,
-
-      message: error.message,
-    };
-  } finally {
-    client.release();
-  }
-};
 // ============================================================ GET ALL USERS
 const getAllUsers = async () => {
   try {
@@ -1241,20 +944,13 @@ const getUserOrganizations = async (UserID) => {
       `
       SELECT
 
-        uom.UserOrgMapID,
-
         uom.UserID,
 
-        uom.BrandID,
-        bm.BrandName,
-
         uom.OrganizationID,
-        om.OrganizationName
+        om.OrganizationName,
+        om.ShortName
 
       FROM user_org_mapping uom
-
-      LEFT JOIN Brand_Master bm
-        ON uom.BrandID = bm.BrandID
 
       LEFT JOIN Organization_Master om
         ON uom.OrganizationID = om.OrganizationID
@@ -1264,7 +960,6 @@ const getUserOrganizations = async (UserID) => {
         AND uom.IsDeleted = FALSE
 
       ORDER BY
-        bm.BrandName ASC,
         om.OrganizationName ASC;
       `,
       [UserID],
@@ -1278,29 +973,1334 @@ const getUserOrganizations = async (UserID) => {
       Count: result.rows.length,
 
       data: result.rows.map((row) => ({
-        UserOrgMapID: row.userorgmapid,
-
         UserID: row.userid,
-
-        BrandID: row.brandid,
-
-        BrandName: row.brandname,
 
         OrganizationID: row.organizationid,
 
         OrganizationName: row.organizationname,
+
+        ShortName: row.shortname,
       })),
     };
+
   } catch (error) {
-    console.log("Get My Organizations Error:", error.message);
+
+    console.log(
+      "Get My Organizations Error:",
+      error.message
+    );
+
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+};
+// ============================================================User wise product
+const getUserProducts = async (UserID) => {
+  try {
+
+    const result = await pool.query(
+      `
+      SELECT
+
+        upm.UserID,
+
+        upm.ProductID,
+
+        pm.ProductName,
+        pm.ProductLabel
+
+      FROM user_product_mapping upm
+
+      LEFT JOIN Product_Master pm
+        ON upm.ProductID = pm.ProductID
+
+      WHERE upm.UserID = $1
+        AND upm.IsActive = TRUE
+        AND upm.IsDeleted = FALSE
+
+      ORDER BY
+        pm.ProductName ASC;
+      `,
+      [UserID]
+    );
+
+
+    return {
+
+      success: true,
+
+      message:
+        "User products fetched successfully",
+
+      Count:
+        result.rows.length,
+
+      data:
+        result.rows.map((row) => ({
+
+          UserID:
+            row.userid,
+
+          ProductID:
+            row.productid,
+
+          ProductName:
+            row.productname,
+
+          ProductLabel:
+            row.productlabel,
+
+        })),
+
+    };
+
+  } catch (error) {
+
+    console.log(
+      "Get User Products Error:",
+      error.message
+    );
+
+    return {
+
+      success: false,
+
+      message:
+        error.message,
+
+    };
+
+  }
+};
+// ============================================================User Personal details
+const getUserPersonalDetails = async (UserID) => {
+  try {
+
+    const result = await pool.query(
+      `
+      SELECT
+
+        UserID,
+
+        EmployeeCode,
+        Username,
+        FullName,
+
+        Designation,
+        Department,
+        Division,
+
+        LoginType,
+        UserType,
+
+        Email,
+        PhoneNumber,
+        Gender,
+
+        ProfilePhoto,
+
+        LastPasswordChangedDate,
+        PasswordExpiryDate,
+        LastLogin,
+
+        IsLocked,
+        IsActive,
+
+        DateOfJoining,
+
+        CreatedBy,
+        CreatedDate,
+
+        ModifiedBy,
+        ModifiedDate
+
+      FROM user_master
+
+      WHERE UserID = $1
+        AND IsDeleted = FALSE
+
+      LIMIT 1;
+      `,
+      [UserID]
+    );
+
+
+    // ========================================================
+    // User Not Found
+    // ========================================================
+
+    if (result.rows.length === 0) {
+
+      return {
+        success: false,
+        message: "User not found",
+      };
+
+    }
+
+
+    const user = result.rows[0];
+
+
+    // ========================================================
+    // Response
+    // ========================================================
+
+    return {
+
+      success: true,
+
+      message:
+        "User personal details fetched successfully",
+
+      data: {
+
+        UserID:
+          user.userid,
+
+        EmployeeCode:
+          user.employeecode,
+
+        Username:
+          user.username,
+
+        FullName:
+          user.fullname,
+
+        Designation:
+          user.designation,
+
+        Department:
+          user.department,
+
+        Division:
+          user.division,
+
+        LoginType:
+          user.logintype,
+
+        UserType:
+          user.usertype,
+
+        Email:
+          user.email,
+
+        PhoneNumber:
+          user.phonenumber,
+
+        Gender:
+          user.gender,
+
+        ProfilePhoto:
+          user.profilephoto
+            ? generateUrl(user.profilephoto)
+            : null,
+
+    
+
+        PasswordExpiryDate:
+          user.passwordexpirydate
+            ? formatDate(user.passwordexpirydate)
+            : null,
+
+
+      
+
+        DateOfJoining:
+          user.dateofjoining
+            ? formatDate(user.dateofjoining)
+            : null,
+
+
+      },
+
+    };
+
+  } catch (error) {
+
+    console.log(
+      "Get User Personal Details Error:",
+      error.message
+    );
+
+    return {
+
+      success: false,
+
+      message:
+        error.message,
+
+    };
+
+  }
+};
+// ============================================================User Tabel
+const getAllUsersTabel = async () => {
+  try {
+    const query = `
+      SELECT
+        um.UserID,
+        um.EmployeeCode,
+        um.Username,
+        um.FullName,
+
+        um.Designation,
+        um.Department,
+        um.Division,
+
+        um.LoginType,
+        um.UserType,
+
+        um.Email,
+        um.PhoneNumber,
+        um.Gender
+
+      FROM user_master um
+
+      WHERE um.IsDeleted = FALSE
+
+      ORDER BY um.FullName ASC;
+    `;
+
+    const result = await pool.query(query);
+
+    return {
+      success: true,
+
+      message: "Users fetched successfully",
+
+      Count: result.rows.length,
+
+      data: result.rows.map((row) => ({
+        UserID: row.userid,
+
+        EmployeeCode: row.employeecode,
+        Username: row.username,
+        FullName: row.fullname,
+
+        Designation: row.designation,
+        Department: row.department,
+        Division: row.division,
+
+        LoginType: row.logintype,
+        UserType: row.usertype,
+
+        Email: row.email,
+        PhoneNumber: row.phonenumber,
+        Gender: row.gender,
+      })),
+    };
+
+  } catch (error) {
+
+    console.log(
+      "Get All Users Error:",
+      error.message
+    );
+
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+};
+// ============================================================UPDATE USER
+const updateUser = async (data) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const {
+      UserID,
+
+      EmployeeCode,
+      Username,
+      PasswordHash,
+      FullName,
+
+      Designation,
+      Department,
+      Division,
+
+      LoginType,
+      UserType,
+
+      Email,
+      PhoneNumber,
+      Gender,
+
+      ProfilePhoto,
+
+      LastPasswordChangedDate,
+      PasswordExpiryDate,
+      DateOfJoining,
+
+      IsLocked,
+      IsActive,
+
+      ModifiedBy,
+
+      Organizations,
+      Products,
+    } = data;
+
+    // ========================================================
+    // Check User
+    // ========================================================
+
+    const userCheck = await client.query(
+      `
+      SELECT UserID, ProfilePhoto
+      FROM user_master
+      WHERE UserID = $1
+        AND IsDeleted = FALSE;
+      `,
+      [UserID],
+    );
+
+    if (userCheck.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "User Not Found",
+      };
+    }
+
+    const oldProfilePhoto = userCheck.rows[0].profilephoto;
+
+    // ========================================================
+    // Profile Photo
+    // ========================================================
+    // New photo aayi hai to new photo save hogi.
+    // New photo nahi aayi to old photo preserve hogi.
+
+    const finalProfilePhoto =
+      ProfilePhoto !== undefined ? ProfilePhoto : oldProfilePhoto;
+
+    // ========================================================
+    // Update User
+    // ========================================================
+
+    const result = await client.query(
+      `
+      UPDATE user_master
+      SET
+
+        EmployeeCode = $1,
+        Username = $2,
+        PasswordHash = $3,
+        FullName = $4,
+
+        Designation = $5,
+        Department = $6,
+        Division = $7,
+
+        LoginType = $8,
+        UserType = $9,
+
+        Email = $10,
+        PhoneNumber = $11,
+        Gender = $12,
+
+        ProfilePhoto = $13,
+
+        LastPasswordChangedDate = $14,
+        PasswordExpiryDate = $15,
+
+        IsLocked = $16,
+        IsActive = $17,
+
+        DateOfJoining = $18,
+
+        ModifiedBy = $19,
+        ModifiedDate = CURRENT_TIMESTAMP
+
+      WHERE UserID = $20
+        AND IsDeleted = FALSE
+
+      RETURNING UserID;
+      `,
+      [
+        EmployeeCode,
+        Username,
+        PasswordHash,
+        FullName,
+
+        Designation,
+        Department,
+        Division,
+
+        LoginType,
+        UserType,
+
+        Email,
+        PhoneNumber,
+        Gender,
+
+        finalProfilePhoto,
+
+        LastPasswordChangedDate || null,
+        PasswordExpiryDate || null,
+
+        IsLocked ?? false,
+        IsActive ?? true,
+
+        DateOfJoining || null,
+
+        ModifiedBy,
+
+        UserID,
+      ],
+    );
+
+    if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "User Not Found",
+      };
+    }
+
+    // ========================================================
+    // ORGANIZATION MAPPING
+    // ========================================================
+    if (Array.isArray(Organizations) && Organizations.length > 0) {
+      for (const organization of Organizations) {
+        const { BrandID, OrganizationID } = organization;
+
+        if (!BrandID || !OrganizationID) {
+          throw new Error("BrandID and OrganizationID are required");
+        }
+
+        const mappingIdResult = await client.query(`
+      SELECT COALESCE(MAX(UserOrgMapID), 0) + 1 AS UserOrgMapID
+      FROM user_org_mapping;
+    `);
+
+        const UserOrgMapID = Number(mappingIdResult.rows[0].userorgmapid);
+
+        await client.query(
+          `
+      INSERT INTO user_org_mapping
+      (
+        UserOrgMapID,
+        UserID,
+        BrandID,
+        OrganizationID,
+        IsActive,
+        IsDeleted,
+        CreatedBy
+      )
+      VALUES
+      (
+        $1,
+        $2,
+        $3,
+        $4,
+        TRUE,
+        FALSE,
+        $5
+      )
+      ON CONFLICT (UserID, BrandID, OrganizationID)
+      DO NOTHING;
+      `,
+          [UserOrgMapID, UserID, BrandID, OrganizationID, ModifiedBy || null],
+        );
+      }
+    }
+    // ========================================================
+    // PRODUCT MAPPING
+    // ========================================================
+    if (Array.isArray(Products) && Products.length > 0) {
+      for (const product of Products) {
+        const { ProductID } = product;
+
+        if (!ProductID) {
+          throw new Error("ProductID is required");
+        }
+
+        const mappingIdResult = await client.query(`
+      SELECT COALESCE(MAX(UserProductMapID), 0) + 1 AS UserProductMapID
+      FROM user_product_mapping;
+    `);
+
+        const UserProductMapID = Number(
+          mappingIdResult.rows[0].userproductmapid,
+        );
+
+        await client.query(
+          `
+      INSERT INTO user_product_mapping
+      (
+        UserProductMapID,
+        UserID,
+        ProductID,
+        IsActive,
+        IsDeleted,
+        CreatedBy
+      )
+      VALUES
+      (
+        $1,
+        $2,
+        $3,
+        TRUE,
+        FALSE,
+        $4
+      )
+      ON CONFLICT (UserID, ProductID)
+      DO NOTHING;
+      `,
+          [UserProductMapID, UserID, ProductID, ModifiedBy || null],
+        );
+      }
+    }
+    // ========================================================
+    // COMMIT
+    // ========================================================
+
+    await client.query("COMMIT");
+
+    return {
+      success: true,
+
+      message: "User Updated Successfully",
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    console.log("Update User Error :", error.message);
+
+    // Duplicate
+    if (error.code === "23505") {
+      return {
+        success: false,
+
+        message: "Username, Employee Code, Email or Mapping already exists",
+      };
+    }
+
+    // Foreign Key
+    if (error.code === "23503") {
+      return {
+        success: false,
+
+        message: "Invalid Brand, Organization or Product",
+      };
+    }
 
     return {
       success: false,
 
       message: error.message,
     };
+  } finally {
+    client.release();
   }
 };
+// ============================================================UPDATE USER PERSONAL DETAILS
+const updateUserPersonalDetails = async (data) => {
+  try {
+    // console.log("SERVICE DATA:", data);
+
+    const {
+      UserID,
+      EmployeeCode,
+      Username,
+      FullName,
+      Designation,
+      Department,
+      Division,
+      LoginType,
+      UserType,
+      Email,
+      PhoneNumber,
+      Gender,
+      ProfilePhoto,
+      DateOfJoining,
+      IsLocked,
+      IsActive,
+      ModifiedBy,
+    } = data;
+
+    // ========================================================
+    // Validate UserID
+    // ========================================================
+
+    if (!UserID) {
+      return {
+        success: false,
+        message: "UserID is required",
+      };
+    }
+
+    // ========================================================
+    // Check User
+    // ========================================================
+
+    const userCheck = await pool.query(
+      `
+      SELECT userid
+      FROM user_master
+      WHERE userid = $1
+        AND isdeleted = FALSE
+      LIMIT 1;
+      `,
+      [UserID]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return {
+        success: false,
+        message: "User not found",
+      };
+    }
+
+    // ========================================================
+    // Dynamic Update
+    // Only fields which are provided will be updated
+    // ========================================================
+
+    const fields = [];
+    const values = [];
+
+    const addField = (column, value) => {
+      if (value !== undefined) {
+        values.push(value);
+        fields.push(`${column} = $${values.length}`);
+      }
+    };
+
+    addField("employeecode", EmployeeCode);
+    addField("username", Username);
+    addField("fullname", FullName);
+    addField("designation", Designation);
+    addField("department", Department);
+    addField("division", Division);
+    addField("logintype", LoginType);
+    addField("usertype", UserType);
+    addField("email", Email);
+    addField("phonenumber", PhoneNumber);
+    addField("gender", Gender);
+    addField("profilephoto", ProfilePhoto);
+    addField("dateofjoining", DateOfJoining);
+    addField("islocked", IsLocked);
+    addField("isactive", IsActive);
+
+    // ========================================================
+    // No fields
+    // ========================================================
+
+    if (fields.length === 0) {
+      return {
+        success: false,
+        message: "No fields provided for update",
+      };
+    }
+
+    // ========================================================
+    // Modified By
+    // ========================================================
+
+    values.push(ModifiedBy || UserID);
+
+    fields.push(
+      `modifiedby = $${values.length}`
+    );
+
+    fields.push(
+      `modifieddate = CURRENT_TIMESTAMP`
+    );
+
+    // ========================================================
+    // UserID
+    // ========================================================
+
+    values.push(UserID);
+
+    const userIdParameter = values.length;
+
+    // ========================================================
+    // Update
+    // ========================================================
+
+    const query = `
+      UPDATE user_master
+
+      SET
+        ${fields.join(", ")}
+
+      WHERE userid = $${userIdParameter}
+        AND isdeleted = FALSE
+
+      RETURNING
+        userid AS "UserID",
+        employeecode AS "EmployeeCode",
+        username AS "Username",
+        fullname AS "FullName",
+
+        designation AS "Designation",
+        department AS "Department",
+        division AS "Division",
+
+        logintype AS "LoginType",
+        usertype AS "UserType",
+
+        email AS "Email",
+        phonenumber AS "PhoneNumber",
+        gender AS "Gender",
+
+        profilephoto AS "ProfilePhoto",
+
+        dateofjoining AS "DateOfJoining",
+
+        islocked AS "IsLocked",
+        isactive AS "IsActive",
+
+        modifiedby AS "ModifiedBy",
+        modifieddate AS "ModifiedDate";
+    `;
+
+    console.log("UPDATE QUERY:", query);
+    console.log("UPDATE VALUES:", values);
+
+    const result = await pool.query(
+      query,
+      values
+    );
+
+    // ========================================================
+    // Response
+    // ========================================================
+
+    return {
+      success: true,
+
+      message:
+        "User personal details updated successfully",
+
+    };
+
+  } catch (error) {
+
+    console.log(
+      "Update User Personal Details Error:",
+      error.message
+    );
+
+    // ========================================================
+    // Duplicate
+    // ========================================================
+
+    if (error.code === "23505") {
+
+      return {
+        success: false,
+
+        message:
+          "Username, Employee Code or Email already exists",
+      };
+    }
+
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+};
+// ============================================================UPDATE USER ORGANIZATIONS
+const updateUserOrganizations = async (
+  UserID,
+  Organizations,
+  ModifiedBy
+) => {
+
+  const client = await pool.connect();
+
+  try {
+
+    await client.query("BEGIN");
+
+    // ========================================================
+    // Check User
+    // ========================================================
+
+    const userCheck = await client.query(
+      `
+      SELECT UserID
+      FROM user_master
+      WHERE UserID = $1
+        AND IsDeleted = FALSE
+      LIMIT 1;
+      `,
+      [UserID]
+    );
+
+    if (userCheck.rows.length === 0) {
+
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "User not found",
+      };
+    }
+
+    // ========================================================
+    // Validate Organizations
+    // ========================================================
+
+    if (!Array.isArray(Organizations)) {
+
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "Organizations must be an array",
+      };
+    }
+
+    // ========================================================
+    // Deactivate Existing Organizations
+    // ========================================================
+
+    await client.query(
+      `
+      UPDATE user_org_mapping
+      SET
+        IsActive = FALSE,
+        IsDeleted = TRUE,
+
+        ModifiedBy = $1,
+        ModifiedDate = CURRENT_TIMESTAMP,
+
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+
+      WHERE UserID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [
+        ModifiedBy || UserID,
+        UserID,
+      ]
+    );
+
+    // ========================================================
+    // Insert / Reactivate Organizations
+    // ========================================================
+
+    for (const organization of Organizations) {
+
+      const {
+        BrandID,
+        OrganizationID,
+      } = organization;
+
+      if (!BrandID || !OrganizationID) {
+
+        throw new Error(
+          "BrandID and OrganizationID are required"
+        );
+      }
+
+      // ======================================================
+      // Check Existing Mapping
+      // ======================================================
+
+      const duplicateCheck = await client.query(
+        `
+        SELECT UserOrgMapID
+        FROM user_org_mapping
+
+        WHERE UserID = $1
+          AND BrandID = $2
+          AND OrganizationID = $3
+
+        LIMIT 1;
+        `,
+        [
+          UserID,
+          BrandID,
+          OrganizationID,
+        ]
+      );
+
+      // ======================================================
+      // Reactivate Existing Mapping
+      // ======================================================
+
+      if (duplicateCheck.rows.length > 0) {
+
+        await client.query(
+          `
+          UPDATE user_org_mapping
+          SET
+
+            IsActive = TRUE,
+            IsDeleted = FALSE,
+
+            ModifiedBy = $1,
+            ModifiedDate = CURRENT_TIMESTAMP,
+
+            DeletedBy = NULL,
+            DeletedDate = NULL
+
+          WHERE UserOrgMapID = $2;
+          `,
+          [
+            ModifiedBy || UserID,
+            duplicateCheck.rows[0].userorgmapid,
+          ]
+        );
+
+        continue;
+      }
+
+      // ======================================================
+      // Generate Mapping ID
+      // ======================================================
+
+      const idResult = await client.query(
+        `
+        SELECT
+          COALESCE(MAX(UserOrgMapID), 0) + 1
+          AS UserOrgMapID
+
+        FROM user_org_mapping;
+        `
+      );
+
+      const UserOrgMapID =
+        Number(
+          idResult.rows[0].userorgmapid
+        );
+
+      // ======================================================
+      // Insert
+      // ======================================================
+
+      await client.query(
+        `
+        INSERT INTO user_org_mapping
+        (
+          UserOrgMapID,
+          UserID,
+          BrandID,
+          OrganizationID,
+
+          IsActive,
+          IsDeleted,
+
+          CreatedBy
+        )
+
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          $4,
+
+          TRUE,
+          FALSE,
+
+          $5
+        );
+        `,
+        [
+          UserOrgMapID,
+          UserID,
+          BrandID,
+          OrganizationID,
+          ModifiedBy || UserID,
+        ]
+      );
+    }
+
+    // ========================================================
+    // Commit
+    // ========================================================
+
+    await client.query("COMMIT");
+
+    return {
+      success: true,
+      message: "User organizations updated successfully",
+    };
+
+  } catch (error) {
+
+    await client.query("ROLLBACK");
+
+    console.log(
+      "Update User Organizations Error:",
+      error.message
+    );
+
+    if (error.code === "23505") {
+
+      return {
+        success: false,
+        message:
+          "Duplicate organization mapping already exists",
+      };
+    }
+
+    if (error.code === "23503") {
+
+      return {
+        success: false,
+        message:
+          "Invalid User, Brand or Organization",
+      };
+    }
+
+    return {
+      success: false,
+      message: error.message,
+    };
+
+  } finally {
+
+    client.release();
+
+  }
+};
+// ============================================================UPDATE USER PRODUCTS
+const updateUserProducts = async (
+  UserID,
+  Products,
+  ModifiedBy
+) => {
+
+  const client = await pool.connect();
+
+  try {
+
+    await client.query("BEGIN");
+
+    // ========================================================
+    // Check User
+    // ========================================================
+
+    const userCheck = await client.query(
+      `
+      SELECT UserID
+      FROM user_master
+      WHERE UserID = $1
+        AND IsDeleted = FALSE
+      LIMIT 1;
+      `,
+      [UserID]
+    );
+
+    if (userCheck.rows.length === 0) {
+
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "User not found",
+      };
+    }
+
+    // ========================================================
+    // Validate Products
+    // ========================================================
+
+    if (!Array.isArray(Products)) {
+
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "Products must be an array",
+      };
+    }
+
+    // ========================================================
+    // Remove Existing Active Mappings
+    // ========================================================
+
+    await client.query(
+      `
+      UPDATE user_product_mapping
+      SET
+        IsActive = FALSE,
+        IsDeleted = TRUE,
+        ModifiedBy = $1,
+        ModifiedDate = CURRENT_TIMESTAMP,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+      WHERE UserID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [
+        ModifiedBy || UserID,
+        UserID,
+      ]
+    );
+
+    // ========================================================
+    // Insert / Reactivate Products
+    // ========================================================
+
+    for (const product of Products) {
+
+      const ProductID = product.ProductID;
+
+      if (!ProductID) {
+        throw new Error("ProductID is required");
+      }
+
+      // ======================================================
+      // Check Existing Mapping
+      // ======================================================
+
+      const existingMapping = await client.query(
+        `
+        SELECT UserProductMapID
+        FROM user_product_mapping
+        WHERE UserID = $1
+          AND ProductID = $2
+        LIMIT 1;
+        `,
+        [
+          UserID,
+          ProductID,
+        ]
+      );
+
+      // ======================================================
+      // Reactivate Existing
+      // ======================================================
+
+      if (existingMapping.rows.length > 0) {
+
+        await client.query(
+          `
+          UPDATE user_product_mapping
+          SET
+            IsActive = TRUE,
+            IsDeleted = FALSE,
+            ModifiedBy = $1,
+            ModifiedDate = CURRENT_TIMESTAMP,
+            DeletedBy = NULL,
+            DeletedDate = NULL
+          WHERE UserProductMapID = $2;
+          `,
+          [
+            ModifiedBy || UserID,
+            existingMapping.rows[0].userproductmapid,
+          ]
+        );
+
+      } else {
+
+        // ====================================================
+        // Generate Mapping ID
+        // ====================================================
+
+        const idResult = await client.query(
+          `
+          SELECT
+            COALESCE(MAX(UserProductMapID), 0) + 1
+            AS UserProductMapID
+          FROM user_product_mapping;
+          `
+        );
+
+        const UserProductMapID = Number(
+          idResult.rows[0].userproductmapid
+        );
+
+        // ====================================================
+        // Insert
+        // ====================================================
+
+        await client.query(
+          `
+          INSERT INTO user_product_mapping
+          (
+            UserProductMapID,
+            UserID,
+            ProductID,
+            IsActive,
+            IsDeleted,
+            CreatedBy
+          )
+          VALUES
+          (
+            $1,
+            $2,
+            $3,
+            TRUE,
+            FALSE,
+            $4
+          );
+          `,
+          [
+            UserProductMapID,
+            UserID,
+            ProductID,
+            ModifiedBy || UserID,
+          ]
+        );
+      }
+    }
+
+    // ========================================================
+    // Commit
+    // ========================================================
+
+    await client.query("COMMIT");
+
+    return {
+      success: true,
+      message: "User products updated successfully",
+    };
+
+  } catch (error) {
+
+    await client.query("ROLLBACK");
+
+    console.log(
+      "Update User Products Error:",
+      error.message
+    );
+
+    if (error.code === "23505") {
+      return {
+        success: false,
+        message: "Duplicate product mapping already exists",
+      };
+    }
+
+    if (error.code === "23503") {
+      return {
+        success: false,
+        message: "Invalid User or Product",
+      };
+    }
+
+    return {
+      success: false,
+      message: error.message,
+    };
+
+  } finally {
+
+    client.release();
+
+  }
+};
+
 // ============================================================
 // EXPORT
 // ============================================================
@@ -1311,5 +2311,11 @@ module.exports = {
   updateUser,
   deleteUser,
   getUserDropdown,
-  getUserOrganizations
+  getUserOrganizations,
+  getUserProducts,
+  getUserPersonalDetails,
+  getAllUsersTabel,
+  updateUserPersonalDetails,
+  updateUserOrganizations,
+  updateUserProducts,
 };

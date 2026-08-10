@@ -165,6 +165,220 @@ exports.deleteUser = async (req, res) => {
     handleError(error, res);
   }
 };
+// ========================================= Get All Users
+exports.getAllUsers = async (req, res) => {
+  try {
+    const response = await UserService.getAllUsers();
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch users",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    handleError(error, res);
+  }
+};
+// ========================================= Get User By ID
+exports.getUserById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      throw new AppError("User ID is required", STATUS_CODES.BAD_REQUEST);
+    }
+
+    const response = await UserService.getUserById({
+      UserID: id,
+    });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch user",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    handleError(error, res);
+  }
+};
+// =========================================Get User Dropdown
+exports.getUserDropdown = async (req, res) => {
+  try {
+    const response = await UserService.getUserDropdown();
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch users",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    handleError(error, res);
+  }
+};
+// =========================================User wise Organization
+exports.getUserOrganizations = async (req, res) => {
+
+  try {
+
+    // JWT middleware se UserID
+    const UserID = req.user.UserID;
+
+    if (!UserID) {
+
+      throw new AppError(
+        "User ID not found in token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+
+    }
+
+    const response =
+      await UserService.getUserOrganizations(UserID);
+
+
+    if (!response.success) {
+
+      throw new AppError(
+        response.message ||
+          "Unable to fetch organizations",
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+
+    handleError(error, res);
+
+  }
+};
+// =========================================User wise product
+exports.getUserProducts = async (req, res) => {
+
+  try {
+
+    // JWT se UserID
+    const UserID = req.user.UserID;
+
+
+    if (!UserID) {
+
+      throw new AppError(
+        "User ID not found in token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+
+    }
+
+
+    const response =
+      await UserService.getUserProducts(UserID);
+
+
+    if (!response.success) {
+
+      throw new AppError(
+        response.message ||
+          "Unable to fetch user products",
+
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+
+    handleError(error, res);
+
+  }
+};
+// =========================================User wise personal details
+exports.getUserPersonalDetails = async (req, res) => {
+  try {
+
+    // ========================================================
+    // UserID JWT se milegi
+    // ========================================================
+
+    const UserID = req.user.UserID;
+
+
+    if (!UserID) {
+
+      throw new AppError(
+        "User ID not found in token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+
+    }
+
+
+    // ========================================================
+    // Service
+    // ========================================================
+
+    const response =
+      await UserService.getUserPersonalDetails(UserID);
+
+
+    if (!response.success) {
+
+      throw new AppError(
+        response.message ||
+          "Unable to fetch user personal details",
+
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+
+    handleError(error, res);
+
+  }
+};
+// =========================================Get All Users Tabel
+exports.getAllUsersTabel = async (req, res) => {
+  try {
+    const response = await UserService.getAllUsersTabel();
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch users",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    handleError(error, res);
+  }
+};
 // ========================================= Update User
 exports.updateUser = async (req, res) => {
   try {
@@ -238,96 +452,80 @@ exports.updateUser = async (req, res) => {
     handleError(error, res);
   }
 };
-// ========================================= Get All Users
-exports.getAllUsers = async (req, res) => {
-  try {
-    const response = await UserService.getAllUsers();
-
-    if (!response.success) {
-      throw new AppError(
-        response.message || "Unable to fetch users",
-        STATUS_CODES.BAD_REQUEST,
-      );
-    }
-
-    return res.status(STATUS_CODES.SUCCESS).json(response);
-  } catch (error) {
-    handleError(error, res);
-  }
-};
-// ========================================= Get User By ID
-exports.getUserById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!id) {
-      throw new AppError("User ID is required", STATUS_CODES.BAD_REQUEST);
-    }
-
-    const response = await UserService.getUserById({
-      UserID: id,
-    });
-
-    if (!response.success) {
-      throw new AppError(
-        response.message || "Unable to fetch user",
-        STATUS_CODES.BAD_REQUEST,
-      );
-    }
-
-    return res.status(STATUS_CODES.SUCCESS).json(response);
-  } catch (error) {
-    handleError(error, res);
-  }
-};
-// =========================================Get User Dropdown
-exports.getUserDropdown = async (req, res) => {
-  try {
-    const response = await UserService.getUserDropdown();
-
-    if (!response.success) {
-      throw new AppError(
-        response.message || "Unable to fetch users",
-        STATUS_CODES.BAD_REQUEST,
-      );
-    }
-
-    return res.status(STATUS_CODES.SUCCESS).json(response);
-  } catch (error) {
-    handleError(error, res);
-  }
-};
-// ============================================================User wise Organization
-exports.getUserOrganizations = async (req, res) => {
-
+// ============================================================UPDATE USER PERSONAL DETAILS
+exports.updateUserPersonalDetails = async (req, res) => {
   try {
 
-    // JWT middleware se UserID
-    const UserID = req.user.UserID;
+    // ========================================================
+    // Get UserID From JWT
+    // ========================================================
+
+    const UserID = req.user?.UserID;
 
     if (!UserID) {
-
       throw new AppError(
         "User ID not found in token",
         STATUS_CODES.UNAUTHORIZED
       );
-
     }
 
-    const response =
-      await UserService.getUserOrganizations(UserID);
+    // ========================================================
+    // ModifiedBy From JWT
+    // ========================================================
 
+    const ModifiedBy = req.user.UserID;
+
+    // ========================================================
+    // Profile Photo
+    // ========================================================
+
+    let ProfilePhoto;
+
+    if (req.file) {
+      ProfilePhoto = await uploadToAzure(req.file);
+    }
+
+    // ========================================================
+    // Send To RabbitMQ
+    // ========================================================
+
+    const response = await producer.sendMessage(
+      QUEUE.USER.REQUEST,
+      QUEUE.USER.RESPONSE,
+      {
+        action: "UPDATE_USER_PERSONAL_DETAILS",
+
+        data: {
+          UserID: Number(UserID),
+
+          ...req.body,
+
+          ...(ProfilePhoto !== undefined && {
+            ProfilePhoto,
+          }),
+
+          ModifiedBy: Number(ModifiedBy),
+        },
+      }
+    );
+
+    // ========================================================
+    // RabbitMQ Error
+    // ========================================================
 
     if (!response.success) {
-
       throw new AppError(
         response.message ||
-          "Unable to fetch organizations",
-        STATUS_CODES.BAD_REQUEST
-      );
+          "Unable to update user personal details",
 
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST
+      );
     }
 
+    // ========================================================
+    // Response
+    // ========================================================
 
     return res
       .status(STATUS_CODES.SUCCESS)
@@ -337,6 +535,166 @@ exports.getUserOrganizations = async (req, res) => {
 
     handleError(error, res);
 
+  }
+};
+// ============================================================UPDATE USER ORGANIZATIONS
+exports.updateUserOrganizations = async (req, res) => {
+  try {
+
+    // ========================================================
+    // UserID JWT se
+    // ========================================================
+
+    const UserID = req.user?.UserID;
+
+    if (!UserID) {
+      throw new AppError(
+        "User ID not found in token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
+    // ========================================================
+    // Organizations
+    // ========================================================
+
+    const { Organizations } = req.body;
+
+    if (!Array.isArray(Organizations)) {
+      throw new AppError(
+        "Organizations must be an array",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // ModifiedBy JWT se
+    // ========================================================
+
+    const ModifiedBy = req.user?.UserID;
+
+    // ========================================================
+    // Send To RabbitMQ
+    // ========================================================
+
+    const response = await producer.sendMessage(
+      QUEUE.USER.REQUEST,
+      QUEUE.USER.RESPONSE,
+      {
+        action: "UPDATE_USER_ORGANIZATIONS",
+
+        data: {
+          UserID: Number(UserID),
+
+          Organizations,
+
+          ModifiedBy: Number(ModifiedBy),
+        },
+      }
+    );
+
+    // ========================================================
+    // RabbitMQ Error
+    // ========================================================
+
+    if (!response.success) {
+      throw new AppError(
+        response.message ||
+          "Unable to update user organizations",
+
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // Response
+    // ========================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+
+    handleError(error, res);
+
+  }
+};
+// ============================================================UPDATE USER PRODUCTS
+exports.updateUserProducts = async (req, res) => {
+  try {
+    // ========================================================
+    // UserID JWT se
+    // ========================================================
+
+    const UserID = req.user?.UserID;
+
+    if (!UserID) {
+      throw new AppError(
+        "User ID not found in token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
+    // ========================================================
+    // Products
+    // ========================================================
+
+    const { Products } = req.body;
+
+    if (!Array.isArray(Products)) {
+      throw new AppError(
+        "Products must be an array",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // ModifiedBy JWT se
+    // ========================================================
+
+    const ModifiedBy = req.user?.UserID;
+
+    // ========================================================
+    // Send to RabbitMQ
+    // ========================================================
+
+    const response = await producer.sendMessage(
+      QUEUE.USER.REQUEST,
+      QUEUE.USER.RESPONSE,
+      {
+        action: "UPDATE_USER_PRODUCTS",
+
+        data: {
+          UserID: Number(UserID),
+          Products,
+          ModifiedBy: Number(ModifiedBy),
+        },
+      }
+    );
+
+    // ========================================================
+    // RabbitMQ Response Error
+    // ========================================================
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to update user products",
+        response.statusCode || STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // Response
+    // ========================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    handleError(error, res);
   }
 };
 
