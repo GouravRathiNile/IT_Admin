@@ -1,6 +1,9 @@
+//==================================================RabbitMq
+const producer = require("../producer/producer");
+const QUEUE = require("../config/queue");
+// ===================================================Jwt
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { pool } = require("../db");
 //==================================================Error Handling
 const STATUS_CODES = require("../utils/statusCodes");
 const AppError = require("../utils/AppError");

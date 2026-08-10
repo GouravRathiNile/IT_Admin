@@ -33,7 +33,6 @@ exports.createUser = async (req, res) => {
       Organizations,
       Products,
     } = req.body;
- console.log("req.body", req.body);
     // ========================================= Validation
 
     if (!Username) {
@@ -45,11 +44,11 @@ exports.createUser = async (req, res) => {
     }
 
     const passwordRegex =
-      /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{6,}$/;
+      /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$#!%*?&])[A-Za-z\d@$!#%*?&]{6,}$/;
 
     if (!passwordRegex.test(PasswordHash)) {
       throw new AppError(
-        "Password must be 8+ characters with uppercase, lowercase, number & special character",
+        "Password must be 6+ characters with uppercase, lowercase, number & special character",
         STATUS_CODES.BAD_REQUEST,
       );
     }

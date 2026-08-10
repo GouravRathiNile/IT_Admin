@@ -1,26 +1,30 @@
 const HotelOpsLoginService = require("../services/HotelOpsLoginService");
 
-
 const HotelOpsLoginHandler = async (message) => {
   try {
     const {
       action,
       data,
     } = message;
+
     switch (action) {
-      // ====================================================== // LOGIN
+
+      // ======================================================
+      // LOGIN
+      // ======================================================
+
       case "LOGIN":
         return await HotelOpsLoginService.login(data);
+
       // ======================================================
       // DEFAULT
       // ======================================================
+
       default:
         return {
           success: false,
-          message:
-            `Unknown Login Action: ${action}`,
+          message: `Unknown Login Action: ${action}`,
         };
-
     }
 
   } catch (error) {
@@ -34,12 +38,7 @@ const HotelOpsLoginHandler = async (message) => {
       success: false,
       message: error.message,
     };
-
   }
-
 };
 
-
-module.exports = {
-  HotelOpsLoginHandler,
-};
+module.exports = HotelOpsLoginHandler;

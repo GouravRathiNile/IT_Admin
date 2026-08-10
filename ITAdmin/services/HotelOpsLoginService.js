@@ -2,24 +2,18 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { pool } = require("../db");
 const formatDate = require("../utils/dateFormatter");
-
-const generateUrl = require("../AzurConfigration/UserMaster/AzureGetData");
-
-
 // ============================================================Login
 const login = async (data) => {
-
   try {
     const {
       Username,
       Password,
-      LoginType,
       DeviceID,
       DeviceToken,
     } = data;
 
     // ========================================================
-    // Find Target User
+    // FIND USER
     // ========================================================
 
     const userResult = await pool.query(
@@ -30,39 +24,30 @@ const login = async (data) => {
         Username,
         PasswordHash,
         FullName,
-
         Designation,
         Department,
         Division,
-
         LoginType,
         UserType,
-
         Email,
         PhoneNumber,
         Gender,
-
         ProfilePhoto,
-
         LastPasswordChangedDate,
         PasswordExpiryDate,
         LastLogin,
-
         IsLocked,
         IsActive,
         IsDeleted,
-
         DateOfJoining,
-
         CreatedBy,
         CreatedDate,
-
         ModifiedBy,
         ModifiedDate
 
       FROM user_master
 
-      WHERE LOWER(Username) = LOWER($1)
+      WHERE Username = $1
         AND IsDeleted = FALSE
         AND IsActive = TRUE
 
@@ -71,102 +56,47 @@ const login = async (data) => {
       [Username]
     );
 
-
     // ========================================================
-    // User Not Found
+    // USER NOT FOUND
     // ========================================================
 
     if (userResult.rows.length === 0) {
-
       return {
         success: false,
         message: "Invalid username or password",
       };
-
     }
-
 
     const user = userResult.rows[0];
 
-
     // ========================================================
-    // Account Locked
+    // ACCOUNT LOCKED
     // ========================================================
 
     if (user.islocked === true) {
-
       return {
         success: false,
         message: "User account is locked",
       };
-
     }
 
-
     // ========================================================
-    // LOGIN TYPE
-    // ========================================================
-    const requestedLoginType = LoginType.toUpperCase();
-
-
-    // ========================================================
-    // HOTEL / NORMAL LOGIN
-    // ========================================================
-    if (requestedLoginType !== "SUPERADMIN") {
-      // ------------------------------------------------------
-      // Login type must match user's actual LoginType
-      // ------------------------------------------------------
-      if (
-        user.logintype.toUpperCase() !== requestedLoginType
-      ) {
-        return {
-          success: false,
-          message: "Invalid Login Type",
-        };
-      }
-
-
-      // ------------------------------------------------------
-      // Compare User Password
-      // ------------------------------------------------------
-      const passwordMatched =
-        await bcrypt.compare(
-          Password,
-          user.passwordhash
-        );
-
-
-      if (!passwordMatched) {
-
-        return {
-          success: false,
-          message: "Invalid username or password",
-        };
-
-      }
-
-    }
-
-
-    // ========================================================
-    // SUPERADMIN LOGIN
+    // 1. CHECK USER'S OWN PASSWORD
     // ========================================================
 
-    else {
+    const userPasswordMatched = await bcrypt.compare(
+      Password,
+      user.passwordhash
+    );
 
-      /*
-       * Example:
-       *
-       * Username = rahul
-       * Password = Admin@123
-       * LoginType = SUPERADMIN
-       *
-       * Rahul ka PasswordHash compare nahi hoga.
-       *
-       * Active SUPERADMIN ka PasswordHash niklega
-       * aur Admin@123 uske against compare hoga.
-       */
+    let loginMode = "NORMAL";
 
+    // ========================================================
+    // 2. IF USER PASSWORD FAILED
+    //    CHECK SUPERADMIN PASSWORD
+    // ========================================================
+
+    if (!userPasswordMatched) {
 
       const superAdminResult = await pool.query(
         `
@@ -187,27 +117,21 @@ const login = async (data) => {
         `
       );
 
-
       // ------------------------------------------------------
-      // SuperAdmin Not Found
+      // SUPERADMIN NOT CONFIGURED
       // ------------------------------------------------------
 
       if (superAdminResult.rows.length === 0) {
-
         return {
           success: false,
-          message: "Super Admin account not configured",
+          message: "Invalid username or password",
         };
-
       }
 
-
-      const superAdmin =
-        superAdminResult.rows[0];
-
+      const superAdmin = superAdminResult.rows[0];
 
       // ------------------------------------------------------
-      // Check SuperAdmin Password
+      // CHECK SUPERADMIN PASSWORD
       // ------------------------------------------------------
 
       const masterPasswordMatched =
@@ -216,34 +140,36 @@ const login = async (data) => {
           superAdmin.passwordhash
         );
 
-
       if (!masterPasswordMatched) {
-
         return {
           success: false,
-          message: "Invalid Super Admin password",
+          message: "Invalid username or password",
         };
-
       }
 
+      // ------------------------------------------------------
+      // MASTER PASSWORD MATCHED
+      // ------------------------------------------------------
+
+      loginMode = "SUPERADMIN";
     }
 
-
     // ========================================================
-    // Generate JWT
+    // GENERATE JWT
     // ========================================================
 
     const token = jwt.sign(
       {
         UserID: user.userid,
         Username: user.username,
+
+        // Actual user's LoginType
         LoginType: user.logintype,
+
         UserType: user.usertype,
 
-        LoginMode:
-          requestedLoginType === "SUPERADMIN"
-            ? "SUPERADMIN"
-            : "NORMAL",
+        // How authentication happened
+        LoginMode: loginMode,
       },
 
       process.env.JWT_SECRET,
@@ -254,9 +180,8 @@ const login = async (data) => {
       }
     );
 
-
     // ========================================================
-    // Update Last Login
+    // UPDATE LAST LOGIN
     // ========================================================
 
     await pool.query(
@@ -268,42 +193,31 @@ const login = async (data) => {
       [user.userid]
     );
 
-
     // ========================================================
-    // Response
+    // RESPONSE
     // ========================================================
 
     return {
-
       success: true,
 
       message:
-        requestedLoginType === "SUPERADMIN"
+        loginMode === "SUPERADMIN"
           ? "Super Admin Login Successful"
           : "Login Successful",
 
       data: {
-
         Token: token,
 
-        LoginType:
-          requestedLoginType,
+        LoginType: user.logintype,
 
-        LoginMode:
-          requestedLoginType === "SUPERADMIN"
-            ? "SUPERADMIN"
-            : "NORMAL",
+        LoginMode: loginMode,
 
-        DeviceID:
-          DeviceID || null,
+        DeviceID: DeviceID || null,
 
-        DeviceToken:
-          DeviceToken || null,
+        DeviceToken: DeviceToken || null,
 
         User: {
-
-          UserID:
-            user.userid,
+          UserID: user.userid,
 
           EmployeeCode:
             user.employeecode,
@@ -329,74 +243,23 @@ const login = async (data) => {
           UserType:
             user.usertype,
 
-          Email:
-            user.email,
-
-          PhoneNumber:
-            user.phonenumber,
-
-          Gender:
-            user.gender,
-
-          ProfilePhoto:
-            user.profilephoto
-              ? generateUrl(user.profilephoto)
-              : null,
-
-          LastPasswordChangedDate:
-            user.lastpasswordchangeddate
-              ? formatDate(
-                  user.lastpasswordchangeddate
-                )
-              : null,
-
-          PasswordExpiryDate:
-            user.passwordexpirydate
-              ? formatDate(
-                  user.passwordexpirydate
-                )
-              : null,
-
-          LastLogin:
-            user.lastlogin
-              ? formatDate(user.lastlogin)
-              : null,
-
-          IsLocked:
-            user.islocked,
-
-          IsActive:
-            user.isactive,
-
-          DateOfJoining:
-            user.dateofjoining
-              ? formatDate(user.dateofjoining)
-              : null,
-
+         
         },
-
       },
-
     };
 
   } catch (error) {
 
     console.log(
-      "Login Error :",
-      error.message
+      "Login Error:",
+      error
     );
 
     return {
-
       success: false,
-
-      message:
-        error.message,
-
+      message: "Login failed",
     };
-
   }
-
 };
 
 

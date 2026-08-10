@@ -29,6 +29,7 @@ module.exports = {
     REQUEST: "user_request_queue",
     RESPONSE: "user_response_queue",
   },
+  
    AUTH: {
     REQUEST: "Login_request_queue",
     RESPONSE: "Login_response_queue",

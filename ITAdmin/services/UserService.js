@@ -1,6 +1,7 @@
 const { pool } = require("../db");
 const generateUrl = require("../AzurConfigration/UserMaster/AzureGetData");
 const { formatDate } = require("../utils/dateFormatter");
+const bcrypt = require("bcrypt");
 
 // ============================================================Create User
 const createUser = async (data) => {
@@ -44,7 +45,14 @@ const createUser = async (data) => {
     `);
 
     const UserID = Number(userIdResult.rows[0].userid);
+// ========================================================
+    // Hash Password
+    // ========================================================
 
+    const hashedPassword = await bcrypt.hash(
+      PasswordHash,
+      10
+    );
     // ========================================================
     // Insert User
     // ========================================================
@@ -124,7 +132,7 @@ const createUser = async (data) => {
 
         EmployeeCode || null,
         Username,
-        PasswordHash,
+        hashedPassword,
         FullName,
 
         Designation || null,
