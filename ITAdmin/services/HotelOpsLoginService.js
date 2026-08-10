@@ -10,6 +10,7 @@ const login = async (data) => {
       Password,
       DeviceID,
       DeviceToken,
+      DeviceType,
     } = data;
 
     // ========================================================
@@ -194,6 +195,57 @@ const login = async (data) => {
     );
 
     // ========================================================
+    // DEVICE REGISTRATION
+    // ========================================================
+
+    if (DeviceID && DeviceToken) {
+
+      await pool.query(
+        `
+    INSERT INTO user_device
+    (
+      UserID,
+      DeviceID,
+      DeviceToken,
+      DeviceType,
+      IsActive,
+      IsDeleted,
+      CreatedBy,
+      CreatedDate
+    )
+    VALUES
+    (
+      $1,
+      $2,
+      $3,
+      $4,
+      TRUE,
+      FALSE,
+      $1,
+      CURRENT_TIMESTAMP
+    )
+
+    ON CONFLICT (UserID, DeviceID)
+
+    DO UPDATE SET
+      DeviceToken = EXCLUDED.DeviceToken,
+      DeviceType = EXCLUDED.DeviceType,
+      IsActive = TRUE,
+      IsDeleted = FALSE,
+      ModifiedBy = EXCLUDED.UserID,
+      ModifiedDate = CURRENT_TIMESTAMP;
+    `,
+        [
+          user.userid,
+          DeviceID,
+          DeviceToken,
+          DeviceType
+        ]
+      );
+
+    }
+
+    // ========================================================
     // RESPONSE
     // ========================================================
 
@@ -212,39 +264,6 @@ const login = async (data) => {
 
         LoginMode: loginMode,
 
-        DeviceID: DeviceID || null,
-
-        DeviceToken: DeviceToken || null,
-
-        User: {
-          UserID: user.userid,
-
-          EmployeeCode:
-            user.employeecode,
-
-          Username:
-            user.username,
-
-          FullName:
-            user.fullname,
-
-          Designation:
-            user.designation,
-
-          Department:
-            user.department,
-
-          Division:
-            user.division,
-
-          LoginType:
-            user.logintype,
-
-          UserType:
-            user.usertype,
-
-         
-        },
       },
     };
 
@@ -262,7 +281,227 @@ const login = async (data) => {
   }
 };
 
+// ============================================================Change Password
+const changePassword = async (data) => {
+
+  const client = await pool.connect();
+
+  try {
+
+    await client.query("BEGIN");
+
+    const {
+      UserID,
+      CurrentPassword,
+      NewPassword,
+    } = data;
+
+    // ========================================================
+    // Get User
+    // ========================================================
+
+    const userResult = await client.query(
+      `
+      SELECT
+        UserID,
+        Username,
+        PasswordHash,
+        IsActive,
+        IsDeleted
+
+      FROM user_master
+
+      WHERE UserID = $1
+        AND IsDeleted = FALSE
+
+      LIMIT 1;
+      `,
+      [UserID]
+    );
+
+    // ========================================================
+    // User Not Found
+    // ========================================================
+
+    if (userResult.rows.length === 0) {
+
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "User not found",
+      };
+
+    }
+
+    const user = userResult.rows[0];
+
+    // ========================================================
+    // Account Inactive
+    // ========================================================
+
+    if (!user.isactive) {
+
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "User account is inactive",
+      };
+
+    }
+
+    // ========================================================
+    // Verify Current Password
+    // ========================================================
+
+    const currentPasswordMatched =
+      await bcrypt.compare(
+        CurrentPassword,
+        user.passwordhash
+      );
+
+    if (!currentPasswordMatched) {
+
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message: "Current password is incorrect",
+      };
+
+    }
+
+    // ========================================================
+    // Prevent Same Password
+    // ========================================================
+
+    const samePassword =
+      await bcrypt.compare(
+        NewPassword,
+        user.passwordhash
+      );
+
+    if (samePassword) {
+
+      await client.query("ROLLBACK");
+
+      return {
+        success: false,
+        message:
+          "New password must be different from current password",
+      };
+
+    }
+
+    // ========================================================
+    // Hash New Password
+    // ========================================================
+
+    const newPasswordHash =
+      await bcrypt.hash(
+        NewPassword,
+        10
+      );
+
+    // ========================================================
+    // Password Dates
+    // ========================================================
+
+    /*
+     * Password Changed:
+     * Current Timestamp
+     *
+     * Password Expiry:
+     * 90 Days from Current Timestamp
+     */
+
+    // ========================================================
+    // Update Password
+    // ========================================================
+
+    await client.query(
+      `
+      UPDATE user_master
+
+      SET
+        PasswordHash = $1,
+
+        LastPasswordChangedDate =
+          CURRENT_TIMESTAMP,
+
+        PasswordExpiryDate =
+          CURRENT_TIMESTAMP + INTERVAL '90 days',
+
+        ModifiedBy = $2,
+
+        ModifiedDate =
+          CURRENT_TIMESTAMP
+
+      WHERE UserID = $2;
+      `,
+      [
+        newPasswordHash,
+        UserID,
+      ]
+    );
+
+    // ========================================================
+    // Commit
+    // ========================================================
+
+    await client.query("COMMIT");
+
+    return {
+
+      success: true,
+
+      message:
+        "Password changed successfully",
+
+      data: {
+
+        UserID,
+
+        PasswordChangedDate:
+          new Date(),
+
+        PasswordExpiryDate:
+          new Date(
+            Date.now() +
+            90 * 24 * 60 * 60 * 1000
+          ),
+
+      },
+
+    };
+
+  } catch (error) {
+
+    await client.query("ROLLBACK");
+
+    console.log(
+      "Change Password Error:",
+      error.message
+    );
+
+    return {
+
+      success: false,
+
+      message:
+        error.message,
+
+    };
+
+  } finally {
+
+    client.release();
+
+  }
+};
 
 module.exports = {
   login,
+  changePassword,
 };

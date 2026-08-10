@@ -1,5 +1,5 @@
 const express = require("express");
-const { createProduct, getAllProducts, getProductDropdown, updateProduct, deleteProduct } = require("../controllers/ProductController");
+const { createProduct, getAllProducts, getProductDropdown, updateProduct, deleteProduct, getProductsByCategory } = require("../controllers/ProductController");
 const router = express.Router();
 
 // ===================================== Create Product
@@ -12,5 +12,7 @@ router.get("/getdropdowndata",getProductDropdown);
 router.put("/update/:id",updateProduct);
 // ===================================== Delete Product
 router.delete("/delete/:id",deleteProduct);
+// ===================================== Get Products By Category
+router.get("/getbycategory/{*id}", getProductsByCategory);
 
 module.exports = router;

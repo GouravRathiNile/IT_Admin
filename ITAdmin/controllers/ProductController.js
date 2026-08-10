@@ -186,3 +186,161 @@ exports.deleteProduct = async (req, res) => {
     handleError(error, res);
   }
 };
+// ===================================== Get Products By Category
+
+exports.getProductsByCategory = async (req, res) => {
+  try {
+
+    // ========================================================
+    // Get Category ID
+    // ========================================================
+
+    let { id } = req.params;
+
+    console.log("Category Params:", req.params);
+
+    // ========================================================
+    // Missing Category ID
+    // ========================================================
+
+    if (
+      id === undefined ||
+      id === null ||
+      id === "" ||
+      (Array.isArray(id) && id.length === 0)
+    ) {
+      throw new AppError(
+        "Product Category ID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // Express 5 wildcard gives array
+    // Example:
+    // /getbycategory/2
+    // id = ["2"]
+    // ========================================================
+
+    if (Array.isArray(id)) {
+
+      // More than one path value
+      if (id.length !== 1) {
+        throw new AppError(
+          "Invalid Product Category ID",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+
+      id = id[0];
+    }
+
+    // ========================================================
+    // Trim
+    // ========================================================
+
+    id = String(id).trim();
+
+    // ========================================================
+    // Empty ID
+    // ========================================================
+
+    if (!id) {
+      throw new AppError(
+        "Product Category ID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // Numeric Validation
+    // ========================================================
+
+    if (!/^\d+$/.test(id)) {
+      throw new AppError(
+        "Product Category ID must be a valid number",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // Convert To Number
+    // ========================================================
+
+    const ProductCategoryID = Number(id);
+
+    // ========================================================
+    // Positive Number Validation
+    // ========================================================
+
+    if (ProductCategoryID <= 0) {
+      throw new AppError(
+        "Product Category ID must be greater than 0",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // Service Call
+    // ========================================================
+
+    const response =
+      await ProductService.getProductsByCategory(
+        ProductCategoryID
+      );
+
+    // ========================================================
+    // Service Error
+    // ========================================================
+
+    if (!response.success) {
+
+      // ------------------------------------------------------
+      // No Product Found
+      // ------------------------------------------------------
+
+      if (response.message === "Products Not Found") {
+
+        return res
+          .status(STATUS_CODES.SUCCESS)
+          .json({
+            success: false,
+            message: "Products Not Found",
+            Count: 0,
+            data: [],
+          });
+      }
+
+      // ------------------------------------------------------
+      // Other Service Error
+      // ------------------------------------------------------
+
+      throw new AppError(
+        response.message || "Unable to fetch products",
+        response.statusCode || STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // Success
+    // ========================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json({
+        success: true,
+        message: "Products fetched successfully",
+        Count: response.Count,
+        data: response.data,
+      });
+
+  } catch (error) {
+
+    console.log(
+      "Get Products By Category Controller Error:",
+      error.message
+    );
+
+    handleError(error, res);
+  }
+};

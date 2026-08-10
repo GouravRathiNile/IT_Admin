@@ -323,6 +323,141 @@ const deleteProduct = async (data) => {
   }
 };
 
+// ========================================= Get Products By Category
+
+const getProductsByCategory = async (ProductCategoryID) => {
+
+  try {
+
+    // ========================================================
+    // Validate Category ID
+    // ========================================================
+
+    if (
+      ProductCategoryID === undefined ||
+      ProductCategoryID === null ||
+      ProductCategoryID === ""
+    ) {
+      return {
+        success: false,
+        message: "Product Category ID is required",
+      };
+    }
+
+    // ========================================================
+    // Validate Number
+    // ========================================================
+
+    if (
+      !Number.isInteger(ProductCategoryID) ||
+      ProductCategoryID <= 0
+    ) {
+      return {
+        success: false,
+        message:
+          "Product Category ID must be a valid positive number",
+      };
+    }
+
+    // ========================================================
+    // Get Products
+    // ========================================================
+
+    const query = `
+      SELECT
+
+        ProductID,
+        ProductName,
+        ProductLabel,
+        ProductCategoryID,
+        DevelopmentLanguage
+
+      FROM Product_Master
+
+      WHERE ProductCategoryID = $1
+        AND IsDeleted = FALSE
+        AND IsActive = TRUE
+
+      ORDER BY ProductID ASC;
+    `;
+
+    const result = await pool.query(
+      query,
+      [ProductCategoryID]
+    );
+
+    // ========================================================
+    // Products Not Found
+    // ========================================================
+
+    if (result.rows.length === 0) {
+
+      return {
+        success: false,
+        message: "Products Not Found",
+        Count: 0,
+        data: [],
+      };
+
+    }
+
+    // ========================================================
+    // Success
+    // ========================================================
+
+    const products = result.rows.map((product) => ({
+
+      ProductID:
+        product.productid,
+
+      ProductName:
+        product.productname,
+
+      ProductLabel:
+        product.productlabel,
+
+      ProductCategoryID:
+        product.productcategoryid,
+
+      DevelopmentLanguage:
+        product.developmentlanguage,
+
+    }));
+
+    return {
+
+      success: true,
+
+      message:
+        "Products fetched successfully",
+
+      Count:
+        products.length,
+
+      data:
+        products,
+
+    };
+
+  } catch (error) {
+
+    console.log(
+      "Get Products By Category Error:",
+      error.message
+    );
+
+    return {
+
+      success: false,
+
+      message:
+        "Unable to fetch products: " + error.message,
+
+    };
+
+  }
+};
+
 // ========================================= Module Exports
 module.exports = {
   createProduct,
@@ -330,4 +465,5 @@ module.exports = {
   getProductDropdown,
   updateProduct,
   deleteProduct,
+  getProductsByCategory,
 };
