@@ -1,7 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const upload = require("../middleware/upload");
-const { createUser,getAllUsers,getUserById,getUserDropdown,updateUser,deleteUser } = require("../controllers/UserController");
+const authenticateToken = require("../middleware/authMiddleware");
+const { createUser,getAllUsers,getUserById,getUserDropdown,updateUser,deleteUser,getUserOrganizations } = require("../controllers/UserController");
 
 // ========================================= Create User
 router.post("/create",upload.single("ProfilePhoto"),createUser);
@@ -15,7 +16,8 @@ router.get("/getdata",getAllUsers);
 router.get("/getsingleuser/:id",getUserById);
 // ========================================= User Dropdown
 router.get("/getdropdowndata",getUserDropdown);
-
+// ===========================================User Organizations
+router.get("/getuserorganizations",authenticateToken,getUserOrganizations);
 
 
 

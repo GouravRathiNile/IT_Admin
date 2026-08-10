@@ -1234,6 +1234,73 @@ const getUserDropdown = async () => {
     };
   }
 };
+// ============================================================User wise Organization
+const getUserOrganizations = async (UserID) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+
+        uom.UserOrgMapID,
+
+        uom.UserID,
+
+        uom.BrandID,
+        bm.BrandName,
+
+        uom.OrganizationID,
+        om.OrganizationName
+
+      FROM user_org_mapping uom
+
+      LEFT JOIN Brand_Master bm
+        ON uom.BrandID = bm.BrandID
+
+      LEFT JOIN Organization_Master om
+        ON uom.OrganizationID = om.OrganizationID
+
+      WHERE uom.UserID = $1
+        AND uom.IsActive = TRUE
+        AND uom.IsDeleted = FALSE
+
+      ORDER BY
+        bm.BrandName ASC,
+        om.OrganizationName ASC;
+      `,
+      [UserID],
+    );
+
+    return {
+      success: true,
+
+      message: "User organizations fetched successfully",
+
+      Count: result.rows.length,
+
+      data: result.rows.map((row) => ({
+        UserOrgMapID: row.userorgmapid,
+
+        UserID: row.userid,
+
+        BrandID: row.brandid,
+
+        BrandName: row.brandname,
+
+        OrganizationID: row.organizationid,
+
+        OrganizationName: row.organizationname,
+      })),
+    };
+  } catch (error) {
+    console.log("Get My Organizations Error:", error.message);
+
+    return {
+      success: false,
+
+      message: error.message,
+    };
+  }
+};
 // ============================================================
 // EXPORT
 // ============================================================
@@ -1244,4 +1311,5 @@ module.exports = {
   updateUser,
   deleteUser,
   getUserDropdown,
+  getUserOrganizations
 };

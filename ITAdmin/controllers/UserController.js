@@ -241,19 +241,16 @@ exports.updateUser = async (req, res) => {
 // ========================================= Get All Users
 exports.getAllUsers = async (req, res) => {
   try {
-
-
     const response = await UserService.getAllUsers();
 
     if (!response.success) {
       throw new AppError(
         response.message || "Unable to fetch users",
-        STATUS_CODES.BAD_REQUEST
+        STATUS_CODES.BAD_REQUEST,
       );
     }
 
     return res.status(STATUS_CODES.SUCCESS).json(response);
-
   } catch (error) {
     handleError(error, res);
   }
@@ -264,10 +261,7 @@ exports.getUserById = async (req, res) => {
     const { id } = req.params;
 
     if (!id) {
-      throw new AppError(
-        "User ID is required",
-        STATUS_CODES.BAD_REQUEST
-      );
+      throw new AppError("User ID is required", STATUS_CODES.BAD_REQUEST);
     }
 
     const response = await UserService.getUserById({
@@ -277,14 +271,11 @@ exports.getUserById = async (req, res) => {
     if (!response.success) {
       throw new AppError(
         response.message || "Unable to fetch user",
-        STATUS_CODES.BAD_REQUEST
+        STATUS_CODES.BAD_REQUEST,
       );
     }
 
-    return res
-      .status(STATUS_CODES.SUCCESS)
-      .json(response);
-
+    return res.status(STATUS_CODES.SUCCESS).json(response);
   } catch (error) {
     handleError(error, res);
   }
@@ -297,14 +288,55 @@ exports.getUserDropdown = async (req, res) => {
     if (!response.success) {
       throw new AppError(
         response.message || "Unable to fetch users",
-        STATUS_CODES.BAD_REQUEST
+        STATUS_CODES.BAD_REQUEST,
       );
     }
 
     return res.status(STATUS_CODES.SUCCESS).json(response);
-
   } catch (error) {
     handleError(error, res);
+  }
+};
+// ============================================================User wise Organization
+exports.getUserOrganizations = async (req, res) => {
+
+  try {
+
+    // JWT middleware se UserID
+    const UserID = req.user.UserID;
+
+    if (!UserID) {
+
+      throw new AppError(
+        "User ID not found in token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+
+    }
+
+    const response =
+      await UserService.getUserOrganizations(UserID);
+
+
+    if (!response.success) {
+
+      throw new AppError(
+        response.message ||
+          "Unable to fetch organizations",
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+
+    handleError(error, res);
+
   }
 };
 
