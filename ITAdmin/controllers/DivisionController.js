@@ -17,8 +17,8 @@ exports.createDivision = async (req, res) => {
     const {
       DivisionName,
       ShortName,
-      CreatedBy,
     } = req.body;
+    const CreatedBy = req.user.UserID;
 
     if (!DivisionName) {
       throw new AppError(
@@ -65,9 +65,31 @@ exports.createDivision = async (req, res) => {
 // ========================================= Get All Divisions
 exports.getAllDivisions = async (req, res) => {
   try {
+    const page = Number(req.query.page || 1);
+    const { DivisionName } = req.query;
 
+    if (!Number.isInteger(page) || page < 1) {
+      throw new AppError(
+        "Page must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
 
-    const response = await DivisionService.getAllDivisions();
+    if (
+      DivisionName !== undefined
+      && (typeof DivisionName !== "string" || !DivisionName.trim())
+    ) {
+      throw new AppError(
+        "Division Name cannot be empty",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const currentPage = DivisionName ? 1 : page;
+    const response = await DivisionService.getAllDivisions(
+      currentPage,
+      DivisionName?.trim()
+    );
 
     if (!response.success) {
       throw new AppError(
@@ -87,10 +109,18 @@ exports.updateDivision = async (req, res) => {
   try {
 
     const {
+      DivisionID,
       DivisionName,
       ShortName,
-      ModifiedBy,
     } = req.body;
+    const ModifiedBy = req.user.UserID;
+
+    if (!DivisionID) {
+      throw new AppError(
+        "Division ID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
 
     if (!DivisionName) {
       throw new AppError(
@@ -112,7 +142,7 @@ exports.updateDivision = async (req, res) => {
       {
         action: "UPDATE_DIVISION",
         data: {
-          DivisionID: req.params.id,
+          DivisionID,
           DivisionName,
           ShortName,
           ModifiedBy,
@@ -138,6 +168,14 @@ exports.updateDivision = async (req, res) => {
 // ========================================= Delete Division
 exports.deleteDivision = async (req, res) => {
   try {
+    const { DivisionID } = req.body;
+
+    if (!DivisionID) {
+      throw new AppError(
+        "Division ID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
 
     const response = await producer.sendMessage(
       QUEUE.DIVISION.REQUEST,
@@ -145,8 +183,8 @@ exports.deleteDivision = async (req, res) => {
       {
         action: "DELETE_DIVISION",
         data: {
-          DivisionID: req.params.id,
-          DeletedBy: req.body.DeletedBy,
+          DivisionID,
+          DeletedBy: req.user.UserID,
         },
       }
     );

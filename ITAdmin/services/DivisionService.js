@@ -4,6 +4,7 @@ const {formatDate} = require("../utils/dateFormatter");
 // ========================================= Create Division
 const createDivision = async (data) => {
   try {
+    console.log(data)
     // Last DivisionID
     const lastIdResult = await pool.query(`
       SELECT COALESCE(MAX(DivisionID), 0) AS LastID
@@ -64,27 +65,47 @@ const createDivision = async (data) => {
   }
 };
 // ========================================= Get All Divisions
-const getAllDivisions = async () => {
+const getAllDivisions = async (page = 1, DivisionName) => {
 
     try {
+        const limit = 10;
+        const offset = (page - 1) * limit;
+        const filters = ["IsDeleted = FALSE"];
+        const filterValues = [];
+
+        if (DivisionName) {
+            filterValues.push(`%${DivisionName}%`);
+            filters.push(`DivisionName ILIKE $${filterValues.length}`);
+        }
+
+        const whereClause = filters.join(" AND ");
+        const limitParameter = filterValues.length + 1;
+        const offsetParameter = filterValues.length + 2;
 
         const query = `
             SELECT
                 DivisionID,
                 DivisionName,
                 ShortName,
-                CreatedBy,
-                CreatedDateTime,
-                ModifiedBy,
-                ModifiedDateTime,
-                DeletedBy,
-                DeletedDateTime
+                CreatedDateTime
             FROM Division_Master
-            WHERE IsDeleted = FALSE
-            ORDER BY DivisionName ASC;
+            WHERE ${whereClause}
+            ORDER BY DivisionName ASC, DivisionID ASC
+            LIMIT $${limitParameter} OFFSET $${offsetParameter};
         `;
 
-        const result = await pool.query(query);
+        const countQuery = `
+            SELECT COUNT(*) AS TotalCount
+            FROM Division_Master
+            WHERE ${whereClause};
+        `;
+
+        const [result, countResult] = await Promise.all([
+            pool.query(query, [...filterValues, limit, offset]),
+            pool.query(countQuery, filterValues),
+        ]);
+
+        const totalCount = Number(countResult.rows[0].totalcount);
 
         const divisions = result.rows.map((row) => ({
 
@@ -94,23 +115,9 @@ const getAllDivisions = async () => {
 
             ShortName: row.shortname,
 
-            CreatedBy: row.createdby,
-
             CreatedDateTime: row.createddatetime
                 ? formatDate(row.createddatetime)
                 : null,
-
-            ModifiedBy: row.modifiedby,
-
-            ModifiedDateTime: row.modifieddatetime
-                ? formatDate(row.modifieddatetime)
-                : null,
-
-            DeletedBy: row.deletedby,
-
-            DeletedDateTime: row.deleteddatetime
-                ? formatDate(row.deleteddatetime)
-                : null
 
         }));
 
@@ -118,7 +125,11 @@ const getAllDivisions = async () => {
 
             success: true,
             message: "Divisions fetched successfully",
-            Count:divisions.length,
+            TotalCount: totalCount,
+            PageCount: divisions.length,
+            CurrentPage: page,
+            PageSize: limit,
+            TotalPages: Math.ceil(totalCount / limit),
             data: divisions
 
         };

@@ -39,14 +39,14 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan("dev"));
 //======================================= Routes Url
-app.use("/api/brandmaster", BrandMasterRoutes);
-app.use("/api/organizationmaster", OrganizationMasterRoutes);
-app.use("/api/divisionmaster", DivisionRoutes);
-app.use("/api/departmentmaster", DepartmentRoutes);
-app.use("/api/productcategorymaster", ProductCategoryRoutes);
-app.use("/api/productmaster", ProductRoutes);
-app.use("/api/usermaster", UserRoutes);
-app.use("/api/hotelopslogin", HotelOpsLoginRoutes);
+app.use("/api/BrandMaster", BrandMasterRoutes);
+app.use("/api/OrganizationMaster", OrganizationMasterRoutes);
+app.use("/api/DivisionMaster", DivisionRoutes);
+app.use("/api/DepartmentMaster", DepartmentRoutes);
+app.use("/api/ProductCategoryMaster", ProductCategoryRoutes);
+app.use("/api/ProductMaster", ProductRoutes);
+app.use("/api/UserMaster", UserRoutes);
+app.use("/api/HotelOpsLogin", HotelOpsLoginRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({

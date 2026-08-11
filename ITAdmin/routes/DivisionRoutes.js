@@ -1,16 +1,17 @@
 const express = require("express");
 const router = express.Router();
+const authenticateToken = require("../middleware/authMiddleware");
 const {createDivision,getAllDivisions,updateDivision,deleteDivision,getDivisionsDropdown} = require("../controllers/DivisionController");
 
 // ========================== Create
-router.post("/create", createDivision);
+router.post("/create", authenticateToken, createDivision);
 // ========================== Get All
-router.get("/getdata", getAllDivisions);
+router.get("/DivisionList",authenticateToken, getAllDivisions);
 // ========================== Get Dropdown
-router.get("/dropdown", getDivisionsDropdown);
+router.get("/DivisionNames", authenticateToken, getDivisionsDropdown);
 // ========================== Update
-router.put("/update/:id", updateDivision);
+router.put("/update", authenticateToken, updateDivision);
 // ========================== Delete
-router.delete("/delete/:id", deleteDivision);
+router.delete("/delete", authenticateToken, deleteDivision);
 
 module.exports = router;

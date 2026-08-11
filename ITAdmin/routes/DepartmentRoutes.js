@@ -1,17 +1,18 @@
 const express = require("express");
+const { createDepartment,getAllDepartments,getDepartmentsDropdown,updateDepartment,deleteDepartment } = require("../controllers/DepartmentController");
+const authenticateToken = require("../middleware/authMiddleware");
 const router = express.Router();
 
-const DepartmentController = require("../controllers/DepartmentController");
 
 // ================================= Create Department
-router.post("/create", DepartmentController.createDepartment);
+router.post("/create", authenticateToken, createDepartment);
 // ================================= Get All Department
-router.get("/getall", DepartmentController.getAllDepartments);
+router.get("/DepartmentList",authenticateToken, getAllDepartments);
 // ================================= Department Dropdown
-router.get("/dropdown", DepartmentController.getDepartmentsDropdown);
+router.get("/DepartmentNames", authenticateToken,getDepartmentsDropdown);
 // ================================= Update Department
-router.put("/update/:id", DepartmentController.updateDepartment);
+router.put("/update", authenticateToken, updateDepartment);
 // ================================= Delete Department
-router.delete("/delete/:id", DepartmentController.deleteDepartment);
+router.delete("/delete", authenticateToken, deleteDepartment);
 
 module.exports = router;

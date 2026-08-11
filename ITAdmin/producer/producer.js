@@ -2,56 +2,73 @@ const { v4: uuidv4 } = require("uuid");
 const { getChannel } = require("./rabbitmq");
 
 const pendingRequests = new Map();
-let consumerStarted = false;
+const responseConsumers = new Set();
+let activeChannel = null;
 
-// Response Queue ko sirf ek baar consume karega
+// Har response queue ko current channel par sirf ek baar consume karega
 const startResponseConsumer = async (responseQueue) => {
 
     const channel = getChannel();
 
-    if (!channel || consumerStarted) {
+    if (!channel) {
+        throw new Error("RabbitMQ Channel Not Initialized");
+    }
+
+    // Reconnect ke baad naye channel par consumers dobara start honge
+    if (activeChannel !== channel) {
+        activeChannel = channel;
+        responseConsumers.clear();
+    }
+
+    if (responseConsumers.has(responseQueue)) {
         return;
     }
 
-    await channel.assertQueue(responseQueue, {
-        durable: true
-    });
+    // Concurrent requests ko duplicate consumer start karne se roke
+    responseConsumers.add(responseQueue);
 
-    consumerStarted = true;
+    try {
+        await channel.assertQueue(responseQueue, {
+            durable: true
+        });
 
-    channel.consume(
-        responseQueue,
-        (msg) => {
+        await channel.consume(
+            responseQueue,
+            (msg) => {
 
-            if (!msg) return;
+                if (!msg) return;
 
-            const correlationId = msg.properties.correlationId;
+                const correlationId = msg.properties.correlationId;
 
-            const pending = pendingRequests.get(correlationId);
+                const pending = pendingRequests.get(correlationId);
 
-            if (pending) {
+                if (pending) {
 
-                const response = JSON.parse(msg.content.toString());
+                    const response = JSON.parse(msg.content.toString());
 
-                console.log("Producer Received =>", response);
+                    console.log("Producer Received =>", response);
 
-                clearTimeout(pending.timeout);
+                    clearTimeout(pending.timeout);
 
-                pending.resolve(response);
+                    pending.resolve(response);
 
-                pendingRequests.delete(correlationId);
+                    pendingRequests.delete(correlationId);
 
+                }
+
+                channel.ack(msg);
+
+            },
+            {
+                noAck: false
             }
+        );
 
-            channel.ack(msg);
-
-        },
-        {
-            noAck: false
-        }
-    );
-
-    console.log("Producer Response Consumer Started");
+        console.log(`Producer Response Consumer Started: ${responseQueue}`);
+    } catch (error) {
+        responseConsumers.delete(responseQueue);
+        throw error;
+    }
 };
 
 const sendMessage = async (

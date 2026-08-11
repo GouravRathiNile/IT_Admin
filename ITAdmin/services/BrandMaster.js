@@ -3,18 +3,19 @@ const generateUrl = require("../AzurConfigration/BrandMaster/AzureGetData");
 const {formatDate} = require("../utils/dateFormatter");
 //=========================================== Create Brand
 const createBrand = async (data) => {
-  const {
-    BrandCode,
-    BrandName,
-    ShortName,
-    BrandLogo,
-    Website,
-    IsActive,
-    CreatedBy,
-    IsDeleted,
-  } = data;
+  try {
+    const {
+      BrandCode,
+      BrandName,
+      ShortName,
+      BrandLogo,
+      Website,
+      IsActive,
+      CreatedBy,
+      IsDeleted,
+    } = data;
 
-  const query = `
+    const query = `
         INSERT INTO Brand_Master
         (
             BrandCode,
@@ -31,56 +32,107 @@ const createBrand = async (data) => {
         RETURNING *;
     `;
 
-  const values = [
-    BrandCode,
-    BrandName,
-    ShortName,
-    BrandLogo,
-    Website,
-    IsActive,
-    CreatedBy,
-    IsDeleted,
-  ];
+    const values = [
+      BrandCode,
+      BrandName,
+      ShortName,
+      BrandLogo,
+      Website,
+      IsActive,
+      CreatedBy,
+      IsDeleted,
+    ];
 
-  const result = await pool.query(query, values);
+    await pool.query(query, values);
 
-  return {
-    success: true,
-    message: "Brand Created Successfully",
-  };
+    return {
+      success: true,
+      message: "Brand Created Successfully",
+    };
+  } catch (error) {
+    if (error.code === "23505") {
+      return {
+        success: false,
+        message: "Brand Code already exists",
+      };
+    }
+
+    if (error.code === "23502" && error.column === "brandcode") {
+      return {
+        success: false,
+        message: "Brand Code is required",
+      };
+    }
+
+    return {
+      success: false,
+      message: "Unable to create brand",
+    };
+  }
 };
 // =========================================Get All Brands
-const getAllBrands = async () => {
+const getAllBrands = async (page = 1, date) => {
   try {
+    const limit = 2;
+    const offset = (page - 1) * limit;
+    const filters = ["IsDeleted = FALSE", "IsActive = TRUE"];
+    const filterValues = [];
+
+    if (date) {
+      filterValues.push(date);
+      filters.push(`CreatedDateTime >= $${filterValues.length}::date`);
+      filters.push(
+        `CreatedDateTime < ($${filterValues.length}::date + INTERVAL '1 day')`
+      );
+    }
+
+    const whereClause = filters.join(" AND ");
+    const limitParameter = filterValues.length + 1;
+    const offsetParameter = filterValues.length + 2;
+
     const query = `
-            SELECT *
+            SELECT
+              BrandID,
+              BrandCode,
+              BrandName,
+              ShortName,
+              BrandLogo,
+              Website,
+              CreatedDateTime
             FROM Brand_Master
-            WHERE IsDeleted = FALSE
-            AND IsActive = TRUE
-            ORDER BY BrandID DESC;
+            WHERE ${whereClause}
+            ORDER BY BrandID DESC
+            LIMIT $${limitParameter} OFFSET $${offsetParameter};
         `;
 
-    const result = await pool.query(query);
+    const countQuery = `
+      SELECT COUNT(*) AS TotalCount
+      FROM Brand_Master
+      WHERE ${whereClause};
+    `;
+// console.log(countQuery);
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [...filterValues, limit, offset]),
+      pool.query(countQuery, filterValues),
+    ]);
+
+    const totalCount = Number(countResult.rows[0].totalcount);
     const brands = result.rows.map((brand) => ({
-      ...brand,
-      brandlogo: brand.brandlogo ? generateUrl(brand.brandlogo) : null,
-      createddatetime: brand.createddatetime
-        ? formatDate(brand.createddatetime)
-        : null,
-
-      modifieddatetime: brand.modifieddatetime
-        ? formatDate(brand.modifieddatetime)
-        : null,
-
-      deleteddatetime: brand.deleteddatetime
-        ? formatDate(brand.deleteddatetime)
-        : null,
+        ...brand,
+        brandlogo: brand.brandlogo ? generateUrl(brand.brandlogo) : null,
+        createddatetime: brand.createddatetime
+          ? formatDate(brand.createddatetime)
+          : null,
     }));
 
     return {
       success: true,
       message: "Brands fetched successfully",
-      Count : brands.length,
+      TotalCount: totalCount,
+      PageCount: brands.length,
+      CurrentPage: page,
+      PageSize: limit,
+      TotalPages: Math.ceil(totalCount / limit),
       data: brands,
     };
   } catch (error) {

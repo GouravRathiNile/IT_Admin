@@ -81,8 +81,36 @@ const createDepartment = async (data) => {
   }
 };
 // ========================================= Get All Departments
-const getAllDepartments = async () => {
+const getAllDepartments = async (
+  page = 1,
+  OrganizationID,
+  DivisionID,
+  DepartmentName
+) => {
   try {
+    const limit = 10;
+    const offset = (page - 1) * limit;
+    const filters = ["dm.IsDeleted = FALSE"];
+    const filterValues = [];
+
+    if (OrganizationID) {
+      filterValues.push(OrganizationID);
+      filters.push(`dm.OrganizationID = $${filterValues.length}`);
+    }
+
+    if (DivisionID) {
+      filterValues.push(DivisionID);
+      filters.push(`dm.DivisionID = $${filterValues.length}`);
+    }
+
+    if (DepartmentName) {
+      filterValues.push(`%${DepartmentName}%`);
+      filters.push(`dm.DepartmentName ILIKE $${filterValues.length}`);
+    }
+
+    const whereClause = filters.join(" AND ");
+    const limitParameter = filterValues.length + 1;
+    const offsetParameter = filterValues.length + 2;
 
     const query = `
       SELECT
@@ -96,26 +124,35 @@ const getAllDepartments = async () => {
         dm.DivisionID,
         div.DivisionName,
 
-        dm.CreatedBy,
-        dm.CreatedDateTime,
 
-        dm.ModifiedBy,
-        dm.ModifiedDateTime,
+        dm.CreatedDateTime
 
-        dm.DeletedBy,
-        dm.DeletedDateTime
 
       FROM Department_Master dm
 
       INNER JOIN Division_Master div
       ON dm.DivisionID = div.DivisionID
 
-      WHERE dm.IsDeleted = FALSE
+      WHERE ${whereClause}
 
-      ORDER BY dm.DepartmentName ASC;
+      ORDER BY dm.DepartmentName ASC, dm.DepartmentID ASC
+      LIMIT $${limitParameter} OFFSET $${offsetParameter};
     `;
 
-    const result = await pool.query(query);
+    const countQuery = `
+      SELECT COUNT(*) AS TotalCount
+      FROM Department_Master dm
+      INNER JOIN Division_Master div
+      ON dm.DivisionID = div.DivisionID
+      WHERE ${whereClause};
+    `;
+
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [...filterValues, limit, offset]),
+      pool.query(countQuery, filterValues),
+    ]);
+
+    const totalCount = Number(countResult.rows[0].totalcount);
 
     const departments = result.rows.map((row) => ({
 
@@ -128,20 +165,11 @@ const getAllDepartments = async () => {
       DivisionID: row.divisionid,
       DivisionName: row.divisionname,
 
-      CreatedBy: row.createdby,
       CreatedDateTime: row.createddatetime
         ? formatDate(row.createddatetime)
         : null,
 
-      ModifiedBy: row.modifiedby,
-      ModifiedDateTime: row.modifieddatetime
-        ? formatDate(row.modifieddatetime)
-        : null,
 
-      DeletedBy: row.deletedby,
-      DeletedDateTime: row.deleteddatetime
-        ? formatDate(row.deleteddatetime)
-        : null,
 
     }));
 
@@ -149,7 +177,11 @@ const getAllDepartments = async () => {
 
       success: true,
       message: "Departments fetched successfully",
-      Count: departments.length,
+      TotalCount: totalCount,
+      PageCount: departments.length,
+      CurrentPage: page,
+      PageSize: limit,
+      TotalPages: Math.ceil(totalCount / limit),
       data: departments,
 
     };

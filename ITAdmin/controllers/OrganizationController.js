@@ -41,8 +41,8 @@ exports.createOrganization = async (req, res) => {
       FinanceModuleCode,
       PosModule,
       BrandID,
-      CreatedBy,
     } = req.body;
+    const CreatedBy = req.user.UserID;
 
     if (!OrganizationName) {
       throw new AppError(
@@ -60,7 +60,7 @@ exports.createOrganization = async (req, res) => {
 
      if (!ShortName) {
       throw new AppError(
-        "Organization Code is required",
+        "ShortName Code is required",
         STATUS_CODES.BAD_REQUEST,
       );
     }
@@ -163,7 +163,39 @@ exports.createOrganization = async (req, res) => {
 // ======================================================Get All Organizations
 exports.getAllOrganizations = async (req, res) => {
   try {
-    const response = await OrganizationService.getAllOrganizations();
+    const page = Number(req.query.page || 1);
+    const { OrganizationID, City } = req.query;
+
+    if (!Number.isInteger(page) || page < 1) {
+      throw new AppError(
+        "Page must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (
+      OrganizationID
+      && (!/^\d+$/.test(OrganizationID) || Number(OrganizationID) < 1)
+    ) {
+      throw new AppError(
+        "Organization ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (City !== undefined && (typeof City !== "string" || !City.trim())) {
+      throw new AppError(
+        "City cannot be empty",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const currentPage = OrganizationID || City ? 1 : page;
+    const response = await OrganizationService.getAllOrganizations(
+      currentPage,
+      OrganizationID,
+      City?.trim()
+    );
 
     if (!response.success) {
       throw new AppError(
@@ -183,6 +215,7 @@ exports.updateOrganization = async (req, res) => {
   try {
 
     const {
+      OrganizationID,
       OrganizationName,
       OrganizationCode,
       ShortName,
@@ -209,8 +242,15 @@ exports.updateOrganization = async (req, res) => {
       FinanceModuleCode,
       PosModule,
       BrandID,
-      ModifiedBy,
     } = req.body;
+    const ModifiedBy = req.user.UserID;
+
+    if (!OrganizationID) {
+      throw new AppError(
+        "Organization ID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
 
     if (!OrganizationName) {
       throw new AppError(
@@ -259,7 +299,7 @@ exports.updateOrganization = async (req, res) => {
       {
         action: "UPDATE_ORGANIZATION",
         data: {
-          OrganizationID: req.params.id,
+          OrganizationID,
 
           OrganizationName,
           OrganizationCode,
@@ -328,14 +368,23 @@ exports.updateOrganization = async (req, res) => {
 // ========================================= Delete Organization
 exports.deleteOrganization = async (req, res) => {
   try {
+    const { OrganizationID } = req.body;
+
+    if (!OrganizationID) {
+      throw new AppError(
+        "Organization ID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
     const response = await producer.sendMessage(
       QUEUE.ORGANIZATION.REQUEST,
       QUEUE.ORGANIZATION.RESPONSE,
       {
         action: "DELETE_ORGANIZATION",
         data: {
-          OrganizationID: req.params.id,
-          DeletedBy: req.body.DeletedBy,
+          OrganizationID,
+          DeletedBy: req.user.UserID,
         },
       }
     );

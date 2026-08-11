@@ -14,7 +14,11 @@ const BrandMaster = require("../services/BrandMaster")
 // ====================================================Create Brand
 exports.createBrand = async (req, res) => {
   try {
-    const { BrandCode, BrandName, ShortName, Website, CreatedBy } = req.body;
+    const { BrandCode, BrandName, ShortName, Website } = req.body;
+    const CreatedBy = req.user.UserID;
+    if (typeof BrandCode !== "string" || !BrandCode.trim()) {
+      throw new AppError("Brand Code is required", STATUS_CODES.BAD_REQUEST);
+    }
     if (!BrandName) {
       throw new AppError("Brand Name is required", STATUS_CODES.BAD_REQUEST);
     }
@@ -60,9 +64,33 @@ exports.createBrand = async (req, res) => {
 // ====================================================Get All Brands
 exports.getAllBrands = async (req, res) => {
   try {
+    const page = Number(req.query.page || 1);
+    const { date } = req.query;
 
+    if (!Number.isInteger(page) || page < 1) {
+      throw new AppError(
+        "Page must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
 
-    const response = await BrandMaster.getAllBrands();
+    const isValidDate = (date) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+
+      const parsedDate = new Date(`${date}T00:00:00.000Z`);
+      return !Number.isNaN(parsedDate.getTime())
+        && parsedDate.toISOString().slice(0, 10) === date;
+    };
+
+    if (date && !isValidDate(date)) {
+      throw new AppError(
+        "Date must be in YYYY-MM-DD format",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const currentPage = date ? 1 : page;
+    const response = await BrandMaster.getAllBrands(currentPage, date);
 
     if (!response.success) {
       throw new AppError(
@@ -80,14 +108,19 @@ exports.getAllBrands = async (req, res) => {
 // ====================================================Update Brand
 exports.updateBrand = async (req, res) => {
   try {
-    const { BrandCode, BrandName, ShortName, Website, ModifiedBy } = req.body;
+    const { BrandID, BrandCode, BrandName, ShortName, Website } = req.body;
+    const ModifiedBy = req.user.UserID;
+
+    if (!BrandID) {
+      throw new AppError("Brand ID is required", STATUS_CODES.BAD_REQUEST);
+    }
 
     if (!BrandName) {
       throw new AppError("Brand Name is required", STATUS_CODES.BAD_REQUEST);
     }
 
     const data = {
-      BrandID: req.params.id,
+      BrandID,
       BrandCode,
       BrandName,
       ShortName,
@@ -123,14 +156,20 @@ exports.updateBrand = async (req, res) => {
 // ====================================================Delete Brand (Soft Delete)
 exports.deleteBrand = async (req, res) => {
   try {
+    const { BrandID } = req.body;
+
+    if (!BrandID) {
+      throw new AppError("Brand ID is required", STATUS_CODES.BAD_REQUEST);
+    }
+
     const response = await producer.sendMessage(
       QUEUE.BRAND.REQUEST,
       QUEUE.BRAND.RESPONSE,
       {
         action: "DELETE_BRAND",
         data: {
-          BrandID: req.params.id,
-          DeletedBy: req.body.DeletedBy,
+          BrandID,
+          DeletedBy: req.user.UserID,
         },
       },
     );
@@ -143,7 +182,6 @@ exports.deleteBrand = async (req, res) => {
     });
   }
 };
-
 // ====================================================Get Brand Dropdown
 exports.getBrandsDropdown = async (req, res) => {
   try {

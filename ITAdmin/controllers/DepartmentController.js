@@ -17,8 +17,8 @@ exports.createDepartment = async (req, res) => {
       DepartmentShortName,
       OrganizationID,
       DivisionID,
-      CreatedBy,
     } = req.body;
+    const CreatedBy = req.user.UserID;
 
     if (!DepartmentName) {
       throw new AppError(
@@ -81,9 +81,53 @@ exports.createDepartment = async (req, res) => {
 // ========================================= Get All Departments
 exports.getAllDepartments = async (req, res) => {
   try {
+    const page = Number(req.query.page || 1);
+    const { OrganizationID, DivisionID, DepartmentName } = req.query;
+
+    if (!Number.isInteger(page) || page < 1) {
+      throw new AppError(
+        "Page must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const isPositiveInteger = (value) => /^\d+$/.test(value) && Number(value) > 0;
+
+    if (OrganizationID && !isPositiveInteger(OrganizationID)) {
+      throw new AppError(
+        "Organization ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (DivisionID && !isPositiveInteger(DivisionID)) {
+      throw new AppError(
+        "Division ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (
+      DepartmentName !== undefined
+      && (typeof DepartmentName !== "string" || !DepartmentName.trim())
+    ) {
+      throw new AppError(
+        "Department Name cannot be empty",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const currentPage = OrganizationID || DivisionID || DepartmentName
+      ? 1
+      : page;
 
     const response =
-      await DepartmentService.getAllDepartments();
+      await DepartmentService.getAllDepartments(
+        currentPage,
+        OrganizationID,
+        DivisionID,
+        DepartmentName?.trim()
+      );
 
     if (!response.success) {
 
@@ -135,6 +179,14 @@ exports.getDepartmentsDropdown = async (req, res) => {
 // ========================================= Update Department
 exports.updateDepartment = async (req, res) => {
   try {
+    const { DepartmentID } = req.body;
+
+    if (!DepartmentID) {
+      throw new AppError(
+        "Department ID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
 
     const response = await producer.sendMessage(
       QUEUE.DEPARTMENT.REQUEST,
@@ -142,8 +194,9 @@ exports.updateDepartment = async (req, res) => {
       {
         action: "UPDATE_DEPARTMENT",
         data: {
-          DepartmentID: req.params.id,
           ...req.body,
+          DepartmentID,
+          ModifiedBy: req.user.UserID,
         },
       }
     );
@@ -166,6 +219,14 @@ exports.updateDepartment = async (req, res) => {
 // ========================================= Delete Department
 exports.deleteDepartment = async (req, res) => {
   try {
+    const { DepartmentID } = req.body;
+
+    if (!DepartmentID) {
+      throw new AppError(
+        "Department ID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
 
     const response = await producer.sendMessage(
       QUEUE.DEPARTMENT.REQUEST,
@@ -173,8 +234,8 @@ exports.deleteDepartment = async (req, res) => {
       {
         action: "DELETE_DEPARTMENT",
         data: {
-          DepartmentID: req.params.id,
-          DeletedBy: req.body.DeletedBy,
+          DepartmentID,
+          DeletedBy: req.user.UserID,
         },
       }
     );

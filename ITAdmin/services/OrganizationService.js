@@ -240,72 +240,120 @@ IsDeleted,
 
     console.log(error);
 
+    if (
+      error.code === "23505"
+      && error.constraint === "organization_master_organizationcode_key"
+    ) {
+      return {
+        success: false,
+        message: "Organization Code already exists",
+      };
+    }
+
+    if (
+      error.code === "23505"
+      && error.constraint === "uq_organization_name"
+    ) {
+      return {
+        success: false,
+        message: "Organization Name already exists",
+      };
+    }
+
     return {
       success: false,
-      message: error.message,
+      message: "Unable to create organization",
     };
   } finally {
     client.release();
   }
 };
 // ========================================== Get All Organizations
-const getAllOrganizations = async () => {
+const getAllOrganizations = async (page = 1, OrganizationID, City) => {
   try {
+    const limit = 10;
+    const offset = (page - 1) * limit;
+    const filters = ["IsDeleted = FALSE", "IsActive = TRUE"];
+    const filterValues = [];
+
+    if (OrganizationID) {
+      filterValues.push(OrganizationID);
+      filters.push(`OrganizationID = $${filterValues.length}`);
+    }
+
+    if (City) {
+      filterValues.push(`%${City}%`);
+      filters.push(`City ILIKE $${filterValues.length}`);
+    }
+
+    const whereClause = filters.join(" AND ");
+    const limitParameter = filterValues.length + 1;
+    const offsetParameter = filterValues.length + 2;
+
     const query = `
+      WITH paged_organizations AS (
+        SELECT
+          OrganizationID,
+          OrganizationName,
+          OrganizationCode,
+          ShortName,
+          Country,
+          State,
+          City,
+          Address,
+          Currency,
+          TimeZone,
+          Email,
+          AlternativeEmail,
+          Phone,
+          AlternativePhone,
+          Website,
+          TaxNumber,
+          PolicyDetails,
+          FinancialYearStart,
+          FinanceModule,
+          PostalCode,
+          PMS,
+          PMSIDCode,
+          LegalName,
+          ReviewSoftware,
+          FinanceModuleCode,
+          PosModule,
+          BrandID,
+          CreatedDateTime
+        FROM Organization_Master
+        WHERE ${whereClause}
+        ORDER BY OrganizationName ASC, OrganizationID ASC
+        LIMIT $${limitParameter} OFFSET $${offsetParameter}
+      )
       SELECT
-        om.OrganizationID,
-        om.OrganizationName,
-        om.OrganizationCode,
-        om.ShortName,
-        om.Country,
-        om.State,
-        om.City,
-        om.Address,
-        om.Currency,
-        om.TimeZone,
-        om.Email,
-        om.AlternativeEmail,
-        om.Phone,
-        om.AlternativePhone,
-        om.Website,
-        om.TaxNumber,
-        om.PolicyDetails,
-        om.ActivationStatus,
-        om.IsActive,
-        om.FinancialYearStart,
-        om.FinanceModule,
-        om.PostalCode,
-        om.PMS,
-        om.PMSIDCode,
-        om.LegalName,
-        om.ReviewSoftware,
-        om.FinanceModuleCode,
-        om.PosModule,
-        om.BrandID,
-        om.CreatedBy,
-        om.CreatedDateTime,
-        om.ModifiedBy,
-        om.ModifiedDateTime,
-        om.DeletedBy,
-        om.DeletedDateTime,
+        po.*,
 
         ol.LogoID,
         ol.LogoType,
         ol.LogoName
 
-      FROM Organization_Master om
+      FROM paged_organizations po
 
       LEFT JOIN Organization_Master_Logo ol
-      ON om.OrganizationID = ol.OrganizationID
+      ON po.OrganizationID = ol.OrganizationID
       AND ol.IsDeleted = FALSE
 
-      WHERE om.IsDeleted = FALSE
-      AND om.IsActive = TRUE
-
-      ORDER BY om.OrganizationName ASC;
+      ORDER BY po.OrganizationName ASC, po.OrganizationID ASC;
     `;
 
-    const result = await pool.query(query);
+    const countQuery = `
+      SELECT COUNT(*) AS TotalCount
+      FROM Organization_Master
+      WHERE ${whereClause};
+    `;
+
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [...filterValues, limit, offset]),
+      pool.query(countQuery, filterValues),
+    ]);
+
+    const totalCount = Number(countResult.rows[0].totalcount);
 
     const organizations = {};
 
@@ -336,9 +384,6 @@ const getAllOrganizations = async () => {
 
           PolicyDetails: row.policydetails,
 
-          ActivationStatus: row.activationstatus,
-          IsActive: row.isactive,
-
           FinancialYearStart: row.financialyearstart
             ? moment()
                 .month(row.financialyearstart - 1)
@@ -359,19 +404,8 @@ const getAllOrganizations = async () => {
 
           BrandID: row.brandid,
 
-          CreatedBy: row.createdby,
           CreatedDateTime: row.createddatetime
             ? formatDate(row.createddatetime)
-            : null,
-
-          ModifiedBy: row.modifiedby,
-          ModifiedDateTime: row.modifieddatetime
-            ? formatDate(row.modifieddatetime)
-            : null,
-
-          DeletedBy: row.deletedby,
-          DeletedDateTime: row.deleteddatetime
-            ? formatDate(row.deleteddatetime)
             : null,
 
           Logos: [],
@@ -390,7 +424,11 @@ const getAllOrganizations = async () => {
     return {
       success: true,
       message: "Organizations fetched successfully",
-      Count: Object.keys(organizations).length,
+      TotalCount: totalCount,
+      PageCount: Object.keys(organizations).length,
+      CurrentPage: page,
+      PageSize: limit,
+      TotalPages: Math.ceil(totalCount / limit),
       data: Object.values(organizations),
     };
   } catch (error) {
