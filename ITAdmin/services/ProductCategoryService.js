@@ -58,14 +58,29 @@ const createProductCategory = async (data) => {
 
     return {
       success: false,
-      message: error.message,
+      errorCode: "PRODUCT_CATEGORY_CREATION_FAILED",
+      message: "Unable to create the Product Category right now. Please verify the details and try again.",
     };
 
   }
 };
 // ========================================= Get All Product Categories
-const getAllProductCategories = async () => {
+const getAllProductCategories = async (
+  page = 1,
+  pageSize = 10,
+  CategoryName = ""
+) => {
   try {
+
+    const offset = (page - 1) * pageSize;
+    const categoryNameFilter = `%${CategoryName}%`;
+
+    const countQuery = `
+      SELECT COUNT(*)::INTEGER AS TotalCount
+      FROM product_category_master
+      WHERE IsDeleted = FALSE
+        AND CategoryName ILIKE $1;
+    `;
 
     const query = `
       SELECT
@@ -73,47 +88,41 @@ const getAllProductCategories = async () => {
         CategoryName,
         ShortName,
         DevelopmentLanguage,
-        IsActive,
-        CreatedBy,
-        CreatedDate,
-        ModifiedBy,
-        ModifiedDate,
-        DeletedBy,
-        DeletedDate
+        CreatedDate
+
       FROM product_category_master
       WHERE IsDeleted = FALSE
-      ORDER BY CategoryName ASC;
+        AND CategoryName ILIKE $1
+      ORDER BY CategoryName ASC
+      LIMIT $2 OFFSET $3;
     `;
 
-    const result = await pool.query(query);
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [categoryNameFilter, pageSize, offset]),
+      pool.query(countQuery, [categoryNameFilter]),
+    ]);
+
+    const totalCount = countResult.rows[0].totalcount;
 
     const categories = result.rows.map((row) => ({
       ProductCategoryID: row.productcategoryid,
       CategoryName: row.categoryname,
       ShortName: row.shortname,
       DevelopmentLanguage: row.developmentlanguage,
-      IsActive: row.isactive,
 
-      CreatedBy: row.createdby,
       CreatedDate: row.createddate
         ? formatDate(row.createddate)
-        : null,
-
-      ModifiedBy: row.modifiedby,
-      ModifiedDate: row.modifieddate
-        ? formatDate(row.modifieddate)
-        : null,
-
-      DeletedBy: row.deletedby,
-      DeletedDate: row.deleteddate
-        ? formatDate(row.deleteddate)
         : null,
     }));
 
     return {
       success: true,
       message: "Product Categories fetched successfully",
-      Count: categories.length,
+      TotalCount: totalCount,
+      PageCount: categories.length,
+      CurrentPage: page,
+      PageSize: pageSize,
+      TotalPages: Math.ceil(totalCount / pageSize),
       data: categories,
     };
 

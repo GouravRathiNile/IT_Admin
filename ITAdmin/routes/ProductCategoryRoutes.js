@@ -2,15 +2,16 @@ const express = require("express");
 const router = express.Router();
 
 const ProductCategoryController = require("../controllers/ProductCategoryController");
+const authenticateToken = require("../middleware/authMiddleware");
 
-router.post("/create", ProductCategoryController.createProductCategory);
+router.post("/create", authenticateToken, ProductCategoryController.createProductCategory);
 
-router.get("/getall", ProductCategoryController.getAllProductCategories);
+router.get("/ProductCategoryList", ProductCategoryController.getAllProductCategories);
 
-router.get("/dropdown", ProductCategoryController.getProductCategoryDropdown);
+router.get("/ProductCategoryNames", ProductCategoryController.getProductCategoryDropdown);
 
-router.put("/update/:id", ProductCategoryController.updateProductCategory);
+router.put("/update", authenticateToken, ProductCategoryController.updateProductCategory);
 
-router.delete("/delete/:id", ProductCategoryController.deleteProductCategory);
+router.delete("/delete", authenticateToken, ProductCategoryController.deleteProductCategory);
 
 module.exports = router;
