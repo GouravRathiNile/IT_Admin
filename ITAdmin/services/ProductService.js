@@ -60,29 +60,109 @@ const createProduct = async (data) => {
     if (retryResponse) return retryResponse;
 
     if (error.code === "23505") {
+      const duplicateField = `${error.constraint || ""} ${error.detail || ""}`.toLowerCase();
+
+      if (duplicateField.includes("productname")) {
+        return {
+          success: false,
+          errorCode: "DUPLICATE_PRODUCT",
+          field: "ProductName",
+          message: "This Product Name already exists. Please use a different Product Name.",
+        };
+      }
+
+      if (duplicateField.includes("productlabel")) {
+        return {
+          success: false,
+          errorCode: "DUPLICATE_PRODUCT",
+          field: "ProductLabel",
+          message: "This Product Label already exists. Please use a different Product Label.",
+        };
+      }
+
       return {
         success: false,
-        message: "Product Name or Product Label already exists",
+        errorCode: "DUPLICATE_PRODUCT",
+        message: "A product with these details already exists. Please use unique product details.",
       };
     }
 
     if (error.code === "23503") {
       return {
         success: false,
-        message: "Invalid Product Category",
+        errorCode: "INVALID_PRODUCT_CATEGORY",
+        field: "ProductCategoryID",
+        message: "The selected Product Category does not exist. Please select a valid category.",
+      };
+    }
+
+    if (error.code === "23502") {
+      const missingField = error.column
+        ? error.column.replace(/_/g, " ")
+        : "required product information";
+
+      return {
+        success: false,
+        errorCode: "MISSING_REQUIRED_FIELD",
+        field: error.column || null,
+        message: `Please provide ${missingField}.`,
+      };
+    }
+
+    if (error.code === "22P02") {
+      return {
+        success: false,
+        errorCode: "INVALID_FIELD_FORMAT",
+        message: "One or more values have an invalid format. Please check the product details.",
+      };
+    }
+
+    if (error.code === "22001") {
+      return {
+        success: false,
+        errorCode: "VALUE_TOO_LONG",
+        field: error.column || null,
+        message: "One or more product details are too long. Please shorten the entered values and try again.",
+      };
+    }
+
+    if (error.code === "23514") {
+      return {
+        success: false,
+        errorCode: "INVALID_FIELD_VALUE",
+        message: "One or more product details are not allowed. Please check the entered values.",
       };
     }
 
     return {
       success: false,
-      message: error.message,
+      errorCode: "PRODUCT_CREATION_FAILED",
+      message: "Unable to create the product right now. Please verify the details and try again.",
     };
 
   }
 };
 // ========================================= Get All Products
-const getAllProducts = async () => {
+const getAllProducts = async (
+  page = 1,
+  pageSize = 10,
+  ProductName = "",
+  ProductCategoryID = null
+) => {
   try {
+
+    const offset = (page - 1) * pageSize;
+    const productNameFilter = `%${ProductName}%`;
+
+    const countQuery = `
+      SELECT COUNT(*)::INTEGER AS TotalCount
+      FROM Product_Master pm
+      INNER JOIN Product_Category_Master pcm
+        ON pm.ProductCategoryID = pcm.ProductCategoryID
+      WHERE pm.IsDeleted = FALSE
+        AND pm.ProductName ILIKE $1
+        AND ($2::INTEGER IS NULL OR pm.ProductCategoryID = $2);
+    `;
 
     const query = `
       SELECT
@@ -94,17 +174,7 @@ const getAllProducts = async () => {
         pcm.CategoryName,
 
         pm.DevelopmentLanguage,
-
-        pm.IsActive,
-
-        pm.CreatedBy,
-        pm.CreatedDate,
-
-        pm.ModifiedBy,
-        pm.ModifiedDate,
-
-        pm.DeletedBy,
-        pm.DeletedDate
+        pm.CreatedDate
 
       FROM Product_Master pm
 
@@ -112,11 +182,24 @@ const getAllProducts = async () => {
       ON pm.ProductCategoryID = pcm.ProductCategoryID
 
       WHERE pm.IsDeleted = FALSE
+        AND pm.ProductName ILIKE $1
+        AND ($2::INTEGER IS NULL OR pm.ProductCategoryID = $2)
 
-      ORDER BY pm.ProductName ASC;
+      ORDER BY pm.ProductName ASC
+      LIMIT $3 OFFSET $4;
     `;
 
-    const result = await pool.query(query);
+    const [result, countResult] = await Promise.all([
+      pool.query(query, [
+        productNameFilter,
+        ProductCategoryID,
+        pageSize,
+        offset,
+      ]),
+      pool.query(countQuery, [productNameFilter, ProductCategoryID]),
+    ]);
+
+    const totalCount = countResult.rows[0].totalcount;
 
     const products = result.rows.map((row) => ({
       ProductID: row.productid,
@@ -128,28 +211,20 @@ const getAllProducts = async () => {
 
       DevelopmentLanguage: row.developmentlanguage,
 
-      IsActive: row.isactive,
-
-      CreatedBy: row.createdby,
       CreatedDate: row.createddate
         ? formatDate(row.createddate)
         : null,
 
-      ModifiedBy: row.modifiedby,
-      ModifiedDate: row.modifieddate
-        ? formatDate(row.modifieddate)
-        : null,
-
-      DeletedBy: row.deletedby,
-      DeletedDate: row.deleteddate
-        ? formatDate(row.deleteddate)
-        : null,
     }));
 
     return {
       success: true,
       message: "Products fetched successfully",
-      Count: products.length,
+      TotalCount: totalCount,
+      PageCount: products.length,
+      CurrentPage: page,
+      PageSize: pageSize,
+      TotalPages: Math.ceil(totalCount / pageSize),
       data: products,
     };
 
@@ -331,40 +406,9 @@ const deleteProduct = async (data) => {
 };
 
 // ========================================= Get Products By Category
-
-const getProductsByCategory = async (ProductCategoryID) => {
+const getProductsByCategory = async () => {
 
   try {
-
-    // ========================================================
-    // Validate Category ID
-    // ========================================================
-
-    if (
-      ProductCategoryID === undefined ||
-      ProductCategoryID === null ||
-      ProductCategoryID === ""
-    ) {
-      return {
-        success: false,
-        message: "Product Category ID is required",
-      };
-    }
-
-    // ========================================================
-    // Validate Number
-    // ========================================================
-
-    if (
-      !Number.isInteger(ProductCategoryID) ||
-      ProductCategoryID <= 0
-    ) {
-      return {
-        success: false,
-        message:
-          "Product Category ID must be a valid positive number",
-      };
-    }
 
     // ========================================================
     // Get Products
@@ -381,17 +425,13 @@ const getProductsByCategory = async (ProductCategoryID) => {
 
       FROM Product_Master
 
-      WHERE ProductCategoryID = $1
-        AND IsDeleted = FALSE
+      WHERE IsDeleted = FALSE
         AND IsActive = TRUE
 
-      ORDER BY ProductID ASC;
+      ORDER BY ProductCategoryID ASC, ProductID ASC;
     `;
 
-    const result = await pool.query(
-      query,
-      [ProductCategoryID]
-    );
+    const result = await pool.query(query);
 
     // ========================================================
     // Products Not Found

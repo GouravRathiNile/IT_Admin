@@ -2,35 +2,20 @@ const { v4: uuidv4 } = require("uuid");
 const { getChannel } = require("./rabbitmq");
 
 const pendingRequests = new Map();
-const responseConsumers = new Set();
-let activeChannel = null;
+let consumerStarted = false;
 
-// Har response queue ko current channel par sirf ek baar consume karega
+// Response Queue ko sirf ek baar consume karega
 const startResponseConsumer = async (responseQueue) => {
 
     const channel = getChannel();
 
-    if (!channel) {
-        throw new Error("RabbitMQ Channel Not Initialized");
-    }
-
-    // Reconnect ke baad naye channel par consumers dobara start honge
-    if (activeChannel !== channel) {
-        activeChannel = channel;
-        responseConsumers.clear();
-    }
-
-    if (responseConsumers.has(responseQueue)) {
+    if (!channel || consumerStarted) {
         return;
     }
 
-    // Concurrent requests ko duplicate consumer start karne se roke
-    responseConsumers.add(responseQueue);
-
-    try {
-        await channel.assertQueue(responseQueue, {
-            durable: true
-        });
+    await channel.assertQueue(responseQueue, {
+        durable: true
+    });
 
         await channel.consume(
             responseQueue,
@@ -64,11 +49,7 @@ const startResponseConsumer = async (responseQueue) => {
             }
         );
 
-        console.log(`Producer Response Consumer Started: ${responseQueue}`);
-    } catch (error) {
-        responseConsumers.delete(responseQueue);
-        throw error;
-    }
+    console.log("Producer Response Consumer Started");
 };
 
 const sendMessage = async (

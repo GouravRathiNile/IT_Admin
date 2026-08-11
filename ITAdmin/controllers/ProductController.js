@@ -16,26 +16,37 @@ exports.createProduct = async (req, res) => {
       ProductLabel,
       ProductCategoryID,
       DevelopmentLanguage,
-      CreatedBy,
-    } = req.body;
+    } = req.body || {};
 
-    if (!ProductName) {
+    const CreatedBy = req.user?.UserID;
+
+    if (!CreatedBy) {
       throw new AppError(
-        "Product Name is required",
+        "Invalid authentication token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
+    if (!ProductName || !String(ProductName).trim()) {
+      throw new AppError(
+        "Product Name is required. Please enter the product name.",
         STATUS_CODES.BAD_REQUEST
       );
     }
 
-    if (!ProductLabel) {
+    if (!ProductLabel || !String(ProductLabel).trim()) {
       throw new AppError(
-        "Product Label is required",
+        "Product Label is required. Please enter the product label.",
         STATUS_CODES.BAD_REQUEST
       );
     }
 
-    if (!ProductCategoryID) {
+    if (
+      !Number.isInteger(Number(ProductCategoryID)) ||
+      Number(ProductCategoryID) <= 0
+    ) {
       throw new AppError(
-        "Product Category is required",
+        "Please select a valid Product Category.",
         STATUS_CODES.BAD_REQUEST
       );
     }
@@ -46,9 +57,9 @@ exports.createProduct = async (req, res) => {
       {
         action: "CREATE_PRODUCT",
         data: {
-          ProductName,
-          ProductLabel,
-          ProductCategoryID,
+          ProductName: String(ProductName).trim(),
+          ProductLabel: String(ProductLabel).trim(),
+          ProductCategoryID: Number(ProductCategoryID),
           DevelopmentLanguage,
           CreatedBy,
           IsActive: true,
@@ -58,10 +69,11 @@ exports.createProduct = async (req, res) => {
     );
 
     if (!response.success) {
-      throw new AppError(
-        response.message,
-        STATUS_CODES.BAD_REQUEST
-      );
+      const statusCode = response.errorCode === "DUPLICATE_PRODUCT"
+        ? STATUS_CODES.CONFLICT
+        : STATUS_CODES.BAD_REQUEST;
+
+      return res.status(statusCode).json(response);
     }
 
     return res
@@ -69,6 +81,19 @@ exports.createProduct = async (req, res) => {
       .json(response);
 
   } catch (error) {
+    if (
+      error.message === "Response Timeout" ||
+      error.message === "RabbitMQ Channel Not Initialized"
+    ) {
+      return handleError(
+        new AppError(
+          "Product service is temporarily unavailable. Please try again shortly.",
+          STATUS_CODES.SERVICE_UNAVAILABLE
+        ),
+        res
+      );
+    }
+
     handleError(error, res);
   }
 };
@@ -76,8 +101,45 @@ exports.createProduct = async (req, res) => {
 exports.getAllProducts = async (req, res) => {
   try {
 
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 10);
+    const ProductName = String(req.query.ProductName || "").trim();
+    const categoryFilter = req.query.ProductCategoryID;
+    const ProductCategoryID = categoryFilter === undefined || categoryFilter === ""
+      ? null
+      : Number(categoryFilter);
+
+    if (!Number.isInteger(page) || page <= 0) {
+      throw new AppError(
+        "Page must be a valid positive number",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (!Number.isInteger(pageSize) || pageSize <= 0) {
+      throw new AppError(
+        "Page size must be a valid positive number",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (
+      ProductCategoryID !== null &&
+      (!Number.isInteger(ProductCategoryID) || ProductCategoryID <= 0)
+    ) {
+      throw new AppError(
+        "Product Category ID must be a valid positive number",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
     const response =
-      await ProductService.getAllProducts();
+      await ProductService.getAllProducts(
+        page,
+        pageSize,
+        ProductName,
+        ProductCategoryID
+      );
 
     if (!response.success) {
 
@@ -128,14 +190,23 @@ exports.getProductDropdown = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
 
+    const ModifiedBy = req.user?.UserID;
+
+    if (!ModifiedBy) {
+      throw new AppError(
+        "Invalid authentication token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
     const response = await producer.sendMessage(
       QUEUE.PRODUCT.REQUEST,
       QUEUE.PRODUCT.RESPONSE,
       {
         action: "UPDATE_PRODUCT",
         data: {
-          ProductID: req.params.id,
           ...req.body,
+          ModifiedBy,
         },
       }
     );
@@ -159,14 +230,23 @@ exports.updateProduct = async (req, res) => {
 exports.deleteProduct = async (req, res) => {
   try {
 
+    const DeletedBy = req.user?.UserID;
+
+    if (!DeletedBy) {
+      throw new AppError(
+        "Invalid authentication token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
     const response = await producer.sendMessage(
       QUEUE.PRODUCT.REQUEST,
       QUEUE.PRODUCT.RESPONSE,
       {
         action: "DELETE_PRODUCT",
         data: {
-          ProductID: req.params.id,
-          DeletedBy: req.body.DeletedBy,
+          ProductID: req.body.ProductID,
+          DeletedBy,
         },
       }
     );
@@ -192,102 +272,11 @@ exports.getProductsByCategory = async (req, res) => {
   try {
 
     // ========================================================
-    // Get Category ID
-    // ========================================================
-
-    let { id } = req.params;
-
-    console.log("Category Params:", req.params);
-
-    // ========================================================
-    // Missing Category ID
-    // ========================================================
-
-    if (
-      id === undefined ||
-      id === null ||
-      id === "" ||
-      (Array.isArray(id) && id.length === 0)
-    ) {
-      throw new AppError(
-        "Product Category ID is required",
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
-
-    // ========================================================
-    // Express 5 wildcard gives array
-    // Example:
-    // /getbycategory/2
-    // id = ["2"]
-    // ========================================================
-
-    if (Array.isArray(id)) {
-
-      // More than one path value
-      if (id.length !== 1) {
-        throw new AppError(
-          "Invalid Product Category ID",
-          STATUS_CODES.BAD_REQUEST
-        );
-      }
-
-      id = id[0];
-    }
-
-    // ========================================================
-    // Trim
-    // ========================================================
-
-    id = String(id).trim();
-
-    // ========================================================
-    // Empty ID
-    // ========================================================
-
-    if (!id) {
-      throw new AppError(
-        "Product Category ID is required",
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
-
-    // ========================================================
-    // Numeric Validation
-    // ========================================================
-
-    if (!/^\d+$/.test(id)) {
-      throw new AppError(
-        "Product Category ID must be a valid number",
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
-
-    // ========================================================
-    // Convert To Number
-    // ========================================================
-
-    const ProductCategoryID = Number(id);
-
-    // ========================================================
-    // Positive Number Validation
-    // ========================================================
-
-    if (ProductCategoryID <= 0) {
-      throw new AppError(
-        "Product Category ID must be greater than 0",
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
-
-    // ========================================================
     // Service Call
     // ========================================================
 
     const response =
-      await ProductService.getProductsByCategory(
-        ProductCategoryID
-      );
+      await ProductService.getProductsByCategory();
 
     // ========================================================
     // Service Error
