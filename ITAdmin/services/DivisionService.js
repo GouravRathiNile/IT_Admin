@@ -1,5 +1,6 @@
 const { pool } = require("../db");
 const {formatDate} = require("../utils/dateFormatter");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 // ========================================= Create Division
 const createDivision = async (data) => {
@@ -48,6 +49,9 @@ const createDivision = async (data) => {
     };
 
   } catch (error) {
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     if (error.code === "23505") {
       return {
@@ -265,6 +269,9 @@ const updateDivision = async (data) => {
         await client.query("ROLLBACK");
 
         console.log("Update Division Error :", error.message);
+
+        const retryResponse = retryableDatabaseResponse(error);
+        if (retryResponse) return retryResponse;
 
         return {
             success: false,

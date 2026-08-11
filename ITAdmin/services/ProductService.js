@@ -1,6 +1,7 @@
 const { pool } = require("../db");
 const moment = require("moment");
 const {formatDate} = require("../utils/dateFormatter");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 // ========================================= Create Product
 const createProduct = async (data) => {
@@ -54,6 +55,9 @@ const createProduct = async (data) => {
   } catch (error) {
 
     console.log("Create Product Error :", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     if (error.code === "23505") {
       return {
@@ -250,6 +254,9 @@ const updateProduct = async (data) => {
   } catch (error) {
 
     console.log("Update Product Error :", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     if (error.code === "23505") {
       return {

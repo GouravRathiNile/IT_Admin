@@ -1,4 +1,5 @@
 const BrandMaster = require("../services/BrandMaster");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 const BrandMasterConsumer = async (payload) => {
     try {
@@ -31,6 +32,9 @@ const BrandMasterConsumer = async (payload) => {
         }
 
     } catch (error) {
+
+        const retryResponse = retryableDatabaseResponse(error);
+        if (retryResponse) return retryResponse;
 
         return {
 

@@ -65,11 +65,19 @@ exports.createBrand = async (req, res) => {
 exports.getAllBrands = async (req, res) => {
   try {
     const page = Number(req.query.page || 1);
-    const { date } = req.query;
+    const limit = Number(req.query.PageSize || 10);
+    const { date, BrandName } = req.query;
 
     if (!Number.isInteger(page) || page < 1) {
       throw new AppError(
         "Page must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new AppError(
+        "Page Size must be a positive integer",
         STATUS_CODES.BAD_REQUEST
       );
     }
@@ -89,8 +97,23 @@ exports.getAllBrands = async (req, res) => {
       );
     }
 
-    const currentPage = date ? 1 : page;
-    const response = await BrandMaster.getAllBrands(currentPage, date);
+    if (
+      BrandName !== undefined
+      && (typeof BrandName !== "string" || !BrandName.trim())
+    ) {
+      throw new AppError(
+        "Brand Name cannot be empty",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const currentPage = date || BrandName ? 1 : page;
+    const response = await BrandMaster.getAllBrands(
+      currentPage,
+      date,
+      limit,
+      BrandName?.trim()
+    );
 
     if (!response.success) {
       throw new AppError(
@@ -113,6 +136,10 @@ exports.updateBrand = async (req, res) => {
 
     if (!BrandID) {
       throw new AppError("Brand ID is required", STATUS_CODES.BAD_REQUEST);
+    }
+
+    if (typeof BrandCode !== "string" || !BrandCode.trim()) {
+      throw new AppError("Brand Code is required", STATUS_CODES.BAD_REQUEST);
     }
 
     if (!BrandName) {

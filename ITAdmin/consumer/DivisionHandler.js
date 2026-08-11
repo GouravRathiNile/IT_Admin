@@ -1,4 +1,5 @@
 const DivisionService = require("../services/DivisionService");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 const DivisionHandler = async (message) => {
 
@@ -34,6 +35,9 @@ const DivisionHandler = async (message) => {
   } catch (error) {
 
     console.log(error);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     return {
       success: false,

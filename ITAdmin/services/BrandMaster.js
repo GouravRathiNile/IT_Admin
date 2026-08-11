@@ -1,6 +1,7 @@
 const { pool } = require("../db");
 const generateUrl = require("../AzurConfigration/BrandMaster/AzureGetData");
 const {formatDate} = require("../utils/dateFormatter");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 //=========================================== Create Brand
 const createBrand = async (data) => {
   try {
@@ -50,6 +51,9 @@ const createBrand = async (data) => {
       message: "Brand Created Successfully",
     };
   } catch (error) {
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
+
     if (error.code === "23505") {
       return {
         success: false,
@@ -71,9 +75,8 @@ const createBrand = async (data) => {
   }
 };
 // =========================================Get All Brands
-const getAllBrands = async (page = 1, date) => {
+const getAllBrands = async (page = 1, date, limit = 10, BrandName) => {
   try {
-    const limit = 2;
     const offset = (page - 1) * limit;
     const filters = ["IsDeleted = FALSE", "IsActive = TRUE"];
     const filterValues = [];
@@ -84,6 +87,11 @@ const getAllBrands = async (page = 1, date) => {
       filters.push(
         `CreatedDateTime < ($${filterValues.length}::date + INTERVAL '1 day')`
       );
+    }
+
+    if (BrandName) {
+      filterValues.push(`%${BrandName}%`);
+      filters.push(`BrandName ILIKE $${filterValues.length}`);
     }
 
     const whereClause = filters.join(" AND ");
@@ -108,15 +116,24 @@ const getAllBrands = async (page = 1, date) => {
     const countQuery = `
       SELECT COUNT(*) AS TotalCount
       FROM Brand_Master
+      WHERE IsDeleted = FALSE
+      AND IsActive = TRUE;
+    `;
+
+    const filteredCountQuery = `
+      SELECT COUNT(*) AS FilteredCount
+      FROM Brand_Master
       WHERE ${whereClause};
     `;
-// console.log(countQuery);
-    const [result, countResult] = await Promise.all([
+
+    const [result, countResult, filteredCountResult] = await Promise.all([
       pool.query(query, [...filterValues, limit, offset]),
-      pool.query(countQuery, filterValues),
+      pool.query(countQuery),
+      pool.query(filteredCountQuery, filterValues),
     ]);
 
     const totalCount = Number(countResult.rows[0].totalcount);
+    const filteredCount = Number(filteredCountResult.rows[0].filteredcount);
     const brands = result.rows.map((brand) => ({
         ...brand,
         brandlogo: brand.brandlogo ? generateUrl(brand.brandlogo) : null,
@@ -132,7 +149,7 @@ const getAllBrands = async (page = 1, date) => {
       PageCount: brands.length,
       CurrentPage: page,
       PageSize: limit,
-      TotalPages: Math.ceil(totalCount / limit),
+      TotalPages: Math.ceil(filteredCount / limit),
       data: brands,
     };
   } catch (error) {
@@ -219,9 +236,26 @@ const updateBrand = async (data) => {
   } catch (error) {
     console.log("Update Brand Error :", error.message);
 
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
+
+    if (error.code === "23502" && error.column === "brandcode") {
+      return {
+        success: false,
+        message: "Brand Code is required",
+      };
+    }
+
+    if (error.code === "23505") {
+      return {
+        success: false,
+        message: "Brand Code already exists",
+      };
+    }
+
     return {
       success: false,
-      message: error.message,
+      message: "Unable to update brand",
     };
   }
 };

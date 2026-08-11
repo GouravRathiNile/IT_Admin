@@ -2,6 +2,7 @@ const { pool } = require("../db");
 const generateUrl = require("../AzurConfigration/OrganizationMaster/AzureGetData");
 const moment = require("moment");
 const {formatDate} = require("../utils/dateFormatter");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 // =========================================Create Organization
 const createOrganization = async (data) => {
   const client = await pool.connect();
@@ -239,6 +240,9 @@ IsDeleted,
     await client.query("ROLLBACK");
 
     console.log(error);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     if (
       error.code === "23505"
@@ -642,6 +646,9 @@ const updateOrganization = async (data) => {
     await client.query("ROLLBACK");
 
     console.log("Update Organization Error :", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     return {
       success: false,

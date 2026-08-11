@@ -1,5 +1,6 @@
 const { pool } = require("../db");
 const {formatDate} = require("../utils/dateFormatter");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 // ========================================= Create Department
 const createDepartment = async (data) => {
@@ -54,6 +55,9 @@ const createDepartment = async (data) => {
     await client.query("ROLLBACK");
 
     console.log("Create Department Error :", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     // Duplicate Department Name / Short Name
     if (error.code === "23505") {
@@ -296,6 +300,9 @@ const updateDepartment = async (data) => {
   } catch (error) {
 
     console.log("Update Department Error :", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     if (error.code === "23505") {
       return {

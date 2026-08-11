@@ -2,6 +2,7 @@ const { pool } = require("../db");
 const generateUrl = require("../AzurConfigration/UserMaster/AzureGetData");
 const { formatDate } = require("../utils/dateFormatter");
 const bcrypt = require("bcrypt");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 // ============================================================Create User
 const createUser = async (data) => {
@@ -280,6 +281,9 @@ const createUser = async (data) => {
     await client.query("ROLLBACK");
 
     console.log("Create User Error :", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     // PostgreSQL Duplicate
     if (error.code === "23505") {
@@ -1576,6 +1580,9 @@ const updateUser = async (data) => {
 
     console.log("Update User Error :", error.message);
 
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
+
     // Duplicate
     if (error.code === "23505") {
       return {
@@ -1792,6 +1799,9 @@ const updateUserPersonalDetails = async (data) => {
       "Update User Personal Details Error:",
       error.message
     );
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     // ========================================================
     // Duplicate
@@ -2043,6 +2053,9 @@ const updateUserOrganizations = async (
       error.message
     );
 
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
+
     if (error.code === "23505") {
 
       return {
@@ -2274,6 +2287,9 @@ const updateUserProducts = async (
       "Update User Products Error:",
       error.message
     );
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     if (error.code === "23505") {
       return {

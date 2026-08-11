@@ -1,4 +1,5 @@
 const DepartmentService = require("../services/DepartmentService");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 const DepartmentHandler = async (message) => {
   try {
@@ -22,6 +23,9 @@ const DepartmentHandler = async (message) => {
     }
 
   } catch (error) {
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     return {
       success: false,

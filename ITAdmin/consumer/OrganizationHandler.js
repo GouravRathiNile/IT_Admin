@@ -1,4 +1,5 @@
 const OrganizationService = require("../services/OrganizationService");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 const OrganizationHandler = async (message) => {
   try {
@@ -19,6 +20,9 @@ const OrganizationHandler = async (message) => {
     }
   } catch (error) {
     console.log(error);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     return {
       success: false,

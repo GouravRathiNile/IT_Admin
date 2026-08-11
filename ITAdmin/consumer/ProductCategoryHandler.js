@@ -1,4 +1,5 @@
 const ProductCategoryService = require("../services/ProductCategoryService");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 const ProductCategoryHandler = async (message) => {
   try {
@@ -30,6 +31,9 @@ const ProductCategoryHandler = async (message) => {
   } catch (error) {
 
     console.log(error);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     return {
       success: false,

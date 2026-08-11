@@ -1,4 +1,5 @@
 const UserService = require("../services/UserService");
+const { retryableDatabaseResponse } = require("../utils/retryableDatabaseError");
 
 const UserHandler = async (message) => {
   try {
@@ -58,6 +59,9 @@ const UserHandler = async (message) => {
       "User Handler Error :",
       error.message
     );
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
 
     return {
       success: false,
