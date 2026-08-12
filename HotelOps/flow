@@ -1,0 +1,66 @@
+Postman
+    │
+    ▼
+BrandRoutes
+    │
+    ▼
+BrandController
+    │
+    ▼
+Producer.sendMessage()
+    │
+    ▼
+brand_request_queue
+    │
+    ▼
+Consumer
+    │
+    ▼
+BrandHandler
+    │
+    ▼
+BrandService
+    │
+    ▼
+PostgreSQL
+    │
+    ▼
+BrandHandler
+    │
+    ▼
+brand_response_queue
+    │
+    ▼
+Producer
+    │
+    ▼
+Controller
+    │
+    ▼
+Postman Response
+
+
+
+
+
+
+
+
+
+
+==============multiple tabel for one thing 
+Organization
+1.OrganizationMaster
+2.OrganizationLogoMaster
+
+user
+1.User_master
+2.user_org_mapping
+3.user_product_mapping
+4.user_device
+
+=========================================Pending
+1.login apis shi krni with all 7 pints
+2.user apis shi krna with all 7 pints
+3.Azure url public set krna name etc update krna
+
