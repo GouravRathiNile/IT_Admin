@@ -164,6 +164,7 @@ exports.createOrganization = async (req, res) => {
 exports.getAllOrganizations = async (req, res) => {
   try {
     const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.PageSize || 10);
     const { OrganizationID, BrandID, City } = req.query;
 
     if (!Number.isInteger(page) || page < 1) {
@@ -183,6 +184,13 @@ exports.getAllOrganizations = async (req, res) => {
       );
     }
 
+    if (!Number.isInteger(pageSize) || pageSize < 1) {
+      throw new AppError(
+        "Page Size must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
     if (BrandID && (!/^\d+$/.test(BrandID) || Number(BrandID) < 1)) {
       throw new AppError(
         "Brand ID must be a positive integer",
@@ -190,19 +198,15 @@ exports.getAllOrganizations = async (req, res) => {
       );
     }
 
-    if (City !== undefined && (typeof City !== "string" || !City.trim())) {
-      throw new AppError(
-        "City cannot be empty",
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
+    const cityFilter = typeof City === "string" ? City.trim() : "";
 
-    const currentPage = OrganizationID || BrandID || City ? 1 : page;
+    const currentPage = OrganizationID || BrandID || cityFilter ? 1 : page;
     const response = await OrganizationService.getAllOrganizations(
       currentPage,
       OrganizationID,
       BrandID,
-      City?.trim()
+      cityFilter,
+      pageSize
     );
 
     if (!response.success) {
@@ -413,7 +417,18 @@ exports.deleteOrganization = async (req, res) => {
 // ======================================================Get All Organizations
 exports.getOrganizationsDropdown = async (req, res) => {
   try {
-    const response = await OrganizationService.getOrganizationsDropdown();
+    const { BrandID } = req.query;
+
+    if (BrandID && (!/^\d+$/.test(BrandID) || Number(BrandID) < 1)) {
+      throw new AppError(
+        "Brand ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const response = await OrganizationService.getOrganizationsDropdown(
+      BrandID
+    );
 
     if (!response.success) {
       throw new AppError(

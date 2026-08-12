@@ -82,11 +82,19 @@ exports.createDepartment = async (req, res) => {
 exports.getAllDepartments = async (req, res) => {
   try {
     const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.PageSize || 10);
     const { OrganizationID, DivisionID, DepartmentName } = req.query;
 
     if (!Number.isInteger(page) || page < 1) {
       throw new AppError(
         "Page must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (!Number.isInteger(pageSize) || pageSize < 1) {
+      throw new AppError(
+        "Page Size must be a positive integer",
         STATUS_CODES.BAD_REQUEST
       );
     }
@@ -107,17 +115,11 @@ exports.getAllDepartments = async (req, res) => {
       );
     }
 
-    if (
-      DepartmentName !== undefined
-      && (typeof DepartmentName !== "string" || !DepartmentName.trim())
-    ) {
-      throw new AppError(
-        "Department Name cannot be empty",
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
+    const departmentNameFilter = typeof DepartmentName === "string"
+      ? DepartmentName.trim()
+      : "";
 
-    const currentPage = OrganizationID || DivisionID || DepartmentName
+    const currentPage = OrganizationID || DivisionID || departmentNameFilter
       ? 1
       : page;
 
@@ -126,7 +128,8 @@ exports.getAllDepartments = async (req, res) => {
         currentPage,
         OrganizationID,
         DivisionID,
-        DepartmentName?.trim()
+        departmentNameFilter,
+        pageSize
       );
 
     if (!response.success) {
@@ -152,9 +155,28 @@ exports.getAllDepartments = async (req, res) => {
 exports.getDepartmentsDropdown = async (req, res) => {
 
   try {
+    const { OrganizationID, DivisionID } = req.query;
+    const isPositiveInteger = (value) => /^\d+$/.test(value) && Number(value) > 0;
+
+    if (OrganizationID && !isPositiveInteger(OrganizationID)) {
+      throw new AppError(
+        "Organization ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (DivisionID && !isPositiveInteger(DivisionID)) {
+      throw new AppError(
+        "Division ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
 
     const response =
-      await DepartmentService.getDepartmentsDropdown();
+      await DepartmentService.getDepartmentsDropdown(
+        OrganizationID,
+        DivisionID
+      );
 
     if (!response.success) {
 

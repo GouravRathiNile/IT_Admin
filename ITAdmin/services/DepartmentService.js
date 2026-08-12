@@ -89,10 +89,10 @@ const getAllDepartments = async (
   page = 1,
   OrganizationID,
   DivisionID,
-  DepartmentName
+  DepartmentName,
+  limit = 10
 ) => {
   try {
-    const limit = 10;
     const offset = (page - 1) * limit;
     const filters = ["dm.IsDeleted = FALSE"];
     const filterValues = [];
@@ -204,27 +204,43 @@ const getAllDepartments = async (
   }
 };
 // ========================================= Department Dropdown
-const getDepartmentsDropdown = async () => {
+const getDepartmentsDropdown = async (OrganizationID, DivisionID) => {
   try {
+    const filters = ["IsDeleted = FALSE"];
+    const values = [];
+
+    if (OrganizationID) {
+      values.push(OrganizationID);
+      filters.push(`OrganizationID = $${values.length}`);
+    }
+
+    if (DivisionID) {
+      values.push(DivisionID);
+      filters.push(`DivisionID = $${values.length}`);
+    }
+
+    const whereClause = filters.join(" AND ");
 
     const query = `
       SELECT
         DepartmentID,
         DepartmentName,
         DepartmentShortName,
-        OrganizationID
+        OrganizationID,
+        DivisionID
       FROM Department_Master
-      WHERE IsDeleted = FALSE
+      WHERE ${whereClause}
       ORDER BY DepartmentName ASC;
     `;
 
-    const result = await pool.query(query);
+    const result = await pool.query(query, values);
 
     const departments = result.rows.map((row) => ({
       DepartmentID: row.departmentid,
       DepartmentName: row.departmentname,
       DepartmentShortName: row.departmentshortname,
       OrganizationID: row.organizationid,
+      DivisionID: row.divisionid,
     }));
 
     return {

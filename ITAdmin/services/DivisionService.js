@@ -69,10 +69,9 @@ const createDivision = async (data) => {
   }
 };
 // ========================================= Get All Divisions
-const getAllDivisions = async (page = 1, DivisionName) => {
+const getAllDivisions = async (page = 1, DivisionName, limit = 10) => {
 
     try {
-        const limit = 10;
         const offset = (page - 1) * limit;
         const filters = ["IsDeleted = FALSE"];
         const filterValues = [];

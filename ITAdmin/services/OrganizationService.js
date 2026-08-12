@@ -273,9 +273,14 @@ IsDeleted,
   }
 };
 // ========================================== Get All Organizations
-const getAllOrganizations = async (page = 1, OrganizationID, BrandID, City) => {
+const getAllOrganizations = async (
+  page = 1,
+  OrganizationID,
+  BrandID,
+  City,
+  limit = 10
+) => {
   try {
-    const limit = 10;
     const offset = (page - 1) * limit;
     const filters = ["IsDeleted = FALSE", "IsActive = TRUE"];
     const filterValues = [];
@@ -655,9 +660,29 @@ const updateOrganization = async (data) => {
     const retryResponse = retryableDatabaseResponse(error);
     if (retryResponse) return retryResponse;
 
+    if (
+      error.code === "23505"
+      && error.constraint === "organization_master_organizationcode_key"
+    ) {
+      return {
+        success: false,
+        message: "Organization Code already exists",
+      };
+    }
+
+    if (
+      error.code === "23505"
+      && error.constraint === "uq_organization_name"
+    ) {
+      return {
+        success: false,
+        message: "Organization Name already exists",
+      };
+    }
+
     return {
       success: false,
-      message: error.message,
+      message: "Unable to update organization",
     };
   } finally {
     client.release();
@@ -740,8 +765,16 @@ const deleteOrganization = async (data) => {
 
 };
 // ==========================================Get OrganizationList for Dropdown
-const getOrganizationsDropdown = async () => {
+const getOrganizationsDropdown = async (BrandID) => {
   try {
+    const values = [];
+    let brandFilter = "";
+
+    if (BrandID) {
+      values.push(BrandID);
+      brandFilter = `AND om.BrandID = $${values.length}`;
+    }
+
     const query = `
       SELECT
         om.OrganizationID,
@@ -761,11 +794,12 @@ const getOrganizationsDropdown = async () => {
 
       WHERE om.IsDeleted = FALSE
         AND om.IsActive = TRUE
+        ${brandFilter}
 
       ORDER BY om.OrganizationName ASC;
     `;
 
-    const result = await pool.query(query);
+    const result = await pool.query(query, values);
 
     const organizations = {};
 

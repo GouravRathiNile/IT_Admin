@@ -66,6 +66,7 @@ exports.createDivision = async (req, res) => {
 exports.getAllDivisions = async (req, res) => {
   try {
     const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.PageSize || 10);
     const { DivisionName } = req.query;
 
     if (!Number.isInteger(page) || page < 1) {
@@ -75,20 +76,22 @@ exports.getAllDivisions = async (req, res) => {
       );
     }
 
-    if (
-      DivisionName !== undefined
-      && (typeof DivisionName !== "string" || !DivisionName.trim())
-    ) {
+    if (!Number.isInteger(pageSize) || pageSize < 1) {
       throw new AppError(
-        "Division Name cannot be empty",
+        "Page Size must be a positive integer",
         STATUS_CODES.BAD_REQUEST
       );
     }
 
-    const currentPage = DivisionName ? 1 : page;
+    const divisionNameFilter = typeof DivisionName === "string"
+      ? DivisionName.trim()
+      : "";
+
+    const currentPage = divisionNameFilter ? 1 : page;
     const response = await DivisionService.getAllDivisions(
       currentPage,
-      DivisionName?.trim()
+      divisionNameFilter,
+      pageSize
     );
 
     if (!response.success) {
