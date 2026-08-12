@@ -164,7 +164,7 @@ exports.createOrganization = async (req, res) => {
 exports.getAllOrganizations = async (req, res) => {
   try {
     const page = Number(req.query.page || 1);
-    const { OrganizationID, City } = req.query;
+    const { OrganizationID, BrandID, City } = req.query;
 
     if (!Number.isInteger(page) || page < 1) {
       throw new AppError(
@@ -183,6 +183,13 @@ exports.getAllOrganizations = async (req, res) => {
       );
     }
 
+    if (BrandID && (!/^\d+$/.test(BrandID) || Number(BrandID) < 1)) {
+      throw new AppError(
+        "Brand ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
     if (City !== undefined && (typeof City !== "string" || !City.trim())) {
       throw new AppError(
         "City cannot be empty",
@@ -190,10 +197,11 @@ exports.getAllOrganizations = async (req, res) => {
       );
     }
 
-    const currentPage = OrganizationID || City ? 1 : page;
+    const currentPage = OrganizationID || BrandID || City ? 1 : page;
     const response = await OrganizationService.getAllOrganizations(
       currentPage,
       OrganizationID,
+      BrandID,
       City?.trim()
     );
 

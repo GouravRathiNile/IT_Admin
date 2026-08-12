@@ -273,7 +273,7 @@ IsDeleted,
   }
 };
 // ========================================== Get All Organizations
-const getAllOrganizations = async (page = 1, OrganizationID, City) => {
+const getAllOrganizations = async (page = 1, OrganizationID, BrandID, City) => {
   try {
     const limit = 10;
     const offset = (page - 1) * limit;
@@ -283,6 +283,11 @@ const getAllOrganizations = async (page = 1, OrganizationID, City) => {
     if (OrganizationID) {
       filterValues.push(OrganizationID);
       filters.push(`OrganizationID = $${filterValues.length}`);
+    }
+
+    if (BrandID) {
+      filterValues.push(BrandID);
+      filters.push(`BrandID = $${filterValues.length}`);
     }
 
     if (City) {
