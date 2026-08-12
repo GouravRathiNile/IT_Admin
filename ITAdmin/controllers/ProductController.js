@@ -191,11 +191,38 @@ exports.updateProduct = async (req, res) => {
   try {
 
     const ModifiedBy = req.user?.UserID;
+    const { ProductID, ProductCategoryID } = req.body || {};
 
     if (!ModifiedBy) {
       throw new AppError(
         "Invalid authentication token",
         STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
+    if (
+      ProductID === undefined ||
+      ProductID === null ||
+      String(ProductID).trim() === "" ||
+      !/^\d+$/.test(String(ProductID).trim()) ||
+      Number(ProductID) <= 0
+    ) {
+      throw new AppError(
+        "Please provide a valid Product ID.",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (
+      ProductCategoryID === undefined ||
+      ProductCategoryID === null ||
+      String(ProductCategoryID).trim() === "" ||
+      !/^\d+$/.test(String(ProductCategoryID).trim()) ||
+      Number(ProductCategoryID) <= 0
+    ) {
+      throw new AppError(
+        "Please select a valid Product Category.",
+        STATUS_CODES.BAD_REQUEST
       );
     }
 
@@ -205,7 +232,7 @@ exports.updateProduct = async (req, res) => {
       {
         action: "UPDATE_PRODUCT",
         data: {
-          ...req.body,
+          ...(req.body || {}),
           ModifiedBy,
         },
       }
