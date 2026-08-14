@@ -5,20 +5,14 @@ const { pool } = require("../../db");
 const formatDate = require("../../utils/dateFormatter");
 const { sendPasswordResetOTP } = require("../../utils/emailService");
 
-const FORGOT_PASSWORD_MESSAGE =
-  "A verification OTP has been sent to your registered email.";
+const FORGOT_PASSWORD_MESSAGE = "A verification OTP has been sent to your registered email.";
 const FORGOT_PASSWORD_OTP_PURPOSE = "FORGOT_PASSWORD_OTP";
 const PASSWORD_RESET_VERIFIED_PURPOSE = "PASSWORD_RESET_VERIFIED";
+
 // ============================================================Login
 const login = async (data) => {
   try {
-    const {
-      Username,
-      Password,
-      DeviceID,
-      DeviceToken,
-      DeviceType,
-    } = data;
+    const { Username, Password, DeviceID, DeviceToken, DeviceType } = data;
 
     // ========================================================
     // FIND USER
@@ -61,7 +55,7 @@ const login = async (data) => {
 
       LIMIT 1;
       `,
-      [Username]
+      [Username],
     );
 
     // ========================================================
@@ -94,7 +88,7 @@ const login = async (data) => {
 
     const userPasswordMatched = await bcrypt.compare(
       Password,
-      user.passwordhash
+      user.passwordhash,
     );
 
     let loginMode = "NORMAL";
@@ -105,7 +99,6 @@ const login = async (data) => {
     // ========================================================
 
     if (!userPasswordMatched) {
-
       const superAdminResult = await pool.query(
         `
         SELECT
@@ -122,7 +115,7 @@ const login = async (data) => {
         ORDER BY UserID ASC
 
         LIMIT 1;
-        `
+        `,
       );
 
       // ------------------------------------------------------
@@ -142,11 +135,10 @@ const login = async (data) => {
       // CHECK SUPERADMIN PASSWORD
       // ------------------------------------------------------
 
-      const masterPasswordMatched =
-        await bcrypt.compare(
-          Password,
-          superAdmin.passwordhash
-        );
+      const masterPasswordMatched = await bcrypt.compare(
+        Password,
+        superAdmin.passwordhash,
+      );
 
       if (!masterPasswordMatched) {
         return {
@@ -170,12 +162,13 @@ const login = async (data) => {
       {
         UserID: user.userid,
         Username: user.username,
-
+        // User details
+        UserType: user.usertype,
+        Department: user.department,
+        Division: user.division,
+        Designation: user.designation,
         // Actual user's LoginType
         LoginType: user.logintype,
-
-        UserType: user.usertype,
-
         // How authentication happened
         LoginMode: loginMode,
       },
@@ -183,9 +176,8 @@ const login = async (data) => {
       process.env.JWT_SECRET,
 
       {
-        expiresIn:
-          process.env.JWT_EXPIRES_IN || "1d",
-      }
+        expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+      },
     );
 
     // ========================================================
@@ -198,7 +190,7 @@ const login = async (data) => {
       SET LastLogin = CURRENT_TIMESTAMP
       WHERE UserID = $1;
       `,
-      [user.userid]
+      [user.userid],
     );
 
     // ========================================================
@@ -206,7 +198,6 @@ const login = async (data) => {
     // ========================================================
 
     if (DeviceID && DeviceToken) {
-
       await pool.query(
         `
     INSERT INTO user_device
@@ -242,14 +233,8 @@ const login = async (data) => {
       ModifiedBy = EXCLUDED.UserID,
       ModifiedDate = CURRENT_TIMESTAMP;
     `,
-        [
-          user.userid,
-          DeviceID,
-          DeviceToken,
-          DeviceType
-        ]
+        [user.userid, DeviceID, DeviceToken, DeviceType],
       );
-
     }
 
     // ========================================================
@@ -270,16 +255,10 @@ const login = async (data) => {
         LoginType: user.logintype,
 
         LoginMode: loginMode,
-
       },
     };
-
   } catch (error) {
-
-    console.log(
-      "Login Error:",
-      error
-    );
+    console.log("Login Error:", error);
 
     return {
       success: false,
@@ -287,21 +266,14 @@ const login = async (data) => {
     };
   }
 };
-
 // ============================================================Change Password
 const changePassword = async (data) => {
-
   const client = await pool.connect();
 
   try {
-
     await client.query("BEGIN");
 
-    const {
-      UserID,
-      CurrentPassword,
-      NewPassword,
-    } = data;
+    const { UserID, CurrentPassword, NewPassword } = data;
 
     // ========================================================
     // Get User
@@ -323,7 +295,7 @@ const changePassword = async (data) => {
 
       LIMIT 1;
       `,
-      [UserID]
+      [UserID],
     );
 
     // ========================================================
@@ -331,14 +303,12 @@ const changePassword = async (data) => {
     // ========================================================
 
     if (userResult.rows.length === 0) {
-
       await client.query("ROLLBACK");
 
       return {
         success: false,
         message: "User not found",
       };
-
     }
 
     const user = userResult.rows[0];
@@ -348,68 +318,52 @@ const changePassword = async (data) => {
     // ========================================================
 
     if (!user.isactive) {
-
       await client.query("ROLLBACK");
 
       return {
         success: false,
         message: "User account is inactive",
       };
-
     }
 
     // ========================================================
     // Verify Current Password
     // ========================================================
 
-    const currentPasswordMatched =
-      await bcrypt.compare(
-        CurrentPassword,
-        user.passwordhash
-      );
+    const currentPasswordMatched = await bcrypt.compare(
+      CurrentPassword,
+      user.passwordhash,
+    );
 
     if (!currentPasswordMatched) {
-
       await client.query("ROLLBACK");
 
       return {
         success: false,
         message: "Current password is incorrect",
       };
-
     }
 
     // ========================================================
     // Prevent Same Password
     // ========================================================
 
-    const samePassword =
-      await bcrypt.compare(
-        NewPassword,
-        user.passwordhash
-      );
+    const samePassword = await bcrypt.compare(NewPassword, user.passwordhash);
 
     if (samePassword) {
-
       await client.query("ROLLBACK");
 
       return {
         success: false,
-        message:
-          "New password must be different from current password",
+        message: "New password must be different from current password",
       };
-
     }
 
     // ========================================================
     // Hash New Password
     // ========================================================
 
-    const newPasswordHash =
-      await bcrypt.hash(
-        NewPassword,
-        10
-      );
+    const newPasswordHash = await bcrypt.hash(NewPassword, 10);
 
     // ========================================================
     // Password Dates
@@ -447,10 +401,7 @@ const changePassword = async (data) => {
 
       WHERE UserID = $2;
       `,
-      [
-        newPasswordHash,
-        UserID,
-      ]
+      [newPasswordHash, UserID],
     );
 
     // ========================================================
@@ -460,54 +411,32 @@ const changePassword = async (data) => {
     await client.query("COMMIT");
 
     return {
-
       success: true,
 
-      message:
-        "Password changed successfully",
+      message: "Password changed successfully",
 
       data: {
-
         UserID,
 
-        PasswordChangedDate:
-          new Date(),
+        PasswordChangedDate: new Date(),
 
-        PasswordExpiryDate:
-          new Date(
-            Date.now() +
-            90 * 24 * 60 * 60 * 1000
-          ),
-
+        PasswordExpiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
       },
-
     };
-
   } catch (error) {
-
     await client.query("ROLLBACK");
 
-    console.log(
-      "Change Password Error:",
-      error.message
-    );
+    console.log("Change Password Error:", error.message);
 
     return {
-
       success: false,
 
-      message:
-        error.message,
-
+      message: error.message,
     };
-
   } finally {
-
     client.release();
-
   }
 };
-
 // ============================================================Forgot Password
 const forgotPassword = async (data) => {
   try {
@@ -516,7 +445,7 @@ const forgotPassword = async (data) => {
        FROM user_master
        WHERE Username = $1
        LIMIT 1;`,
-      [data.Username]
+      [data.Username],
     );
 
     const user = userResult.rows[0];
@@ -549,7 +478,8 @@ const forgotPassword = async (data) => {
       return {
         success: false,
         statusCode: 400,
-        message: "This user account is locked. Please contact the administrator.",
+        message:
+          "This user account is locked. Please contact the administrator.",
       };
     }
 
@@ -575,14 +505,18 @@ const forgotPassword = async (data) => {
       };
     }
 
-    const token = jwt.sign({
-      UserID: user.userid,
-      Username: user.username,
-      OTPHash: otpHash,
-      purpose: FORGOT_PASSWORD_OTP_PURPOSE,
-    }, process.env.JWT_SECRET, {
-      expiresIn: "10m",
-    });
+    const token = jwt.sign(
+      {
+        UserID: user.userid,
+        Username: user.username,
+        OTPHash: otpHash,
+        purpose: FORGOT_PASSWORD_OTP_PURPOSE,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "10m",
+      },
+    );
 
     return { success: true, message: FORGOT_PASSWORD_MESSAGE, token };
   } catch (error) {
@@ -590,19 +524,15 @@ const forgotPassword = async (data) => {
     return {
       success: false,
       statusCode: 503,
-      message: "Unable to process password reset request right now. Please try again later.",
+      message:
+        "Unable to process password reset request right now. Please try again later.",
     };
   }
 };
-
 // ============================================================Verify Forgot Password OTP
 const verifyForgotPasswordOTP = async (data) => {
   try {
-    if (
-      !data.UserID ||
-      !data.Username ||
-      !data.OTPHash
-    ) {
+    if (!data.UserID || !data.Username || !data.OTPHash) {
       return { success: false, message: "Invalid OTP." };
     }
 
@@ -618,7 +548,7 @@ const verifyForgotPasswordOTP = async (data) => {
         purpose: PASSWORD_RESET_VERIFIED_PURPOSE,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "10m" }
+      { expiresIn: "10m" },
     );
 
     return {
@@ -628,10 +558,13 @@ const verifyForgotPasswordOTP = async (data) => {
     };
   } catch (error) {
     console.log("Verify Forgot Password OTP Error:", error.message);
-    return { success: false, statusCode: 503, message: "Unable to verify OTP right now. Please try again later." };
+    return {
+      success: false,
+      statusCode: 503,
+      message: "Unable to verify OTP right now. Please try again later.",
+    };
   }
 };
-
 // ============================================================Reset Password
 const resetPassword = async (data) => {
   let client;
@@ -650,11 +583,14 @@ const resetPassword = async (data) => {
          AND IsActive = TRUE AND IsDeleted = FALSE
          AND COALESCE(IsLocked, FALSE) = FALSE
        LIMIT 1 FOR UPDATE;`,
-      [data.UserID, data.Username]
+      [data.UserID, data.Username],
     );
     if (userResult.rows.length === 0) {
       await client.query("ROLLBACK");
-      return { success: false, message: "User account is unavailable for password reset" };
+      return {
+        success: false,
+        message: "User account is unavailable for password reset",
+      };
     }
 
     const user = userResult.rows[0];
@@ -667,14 +603,18 @@ const resetPassword = async (data) => {
            PasswordExpiryDate = CURRENT_TIMESTAMP + INTERVAL '90 days',
            ModifiedBy = $2, ModifiedDate = CURRENT_TIMESTAMP
        WHERE UserID = $2;`,
-      [newPasswordHash, user.userid]
+      [newPasswordHash, user.userid],
     );
     await client.query("COMMIT");
     return { success: true, message: "Password reset successfully" };
   } catch (error) {
     if (client) await client.query("ROLLBACK");
     console.log("Reset Password Error:", error.message);
-    return { success: false, statusCode: 503, message: "Unable to reset password right now. Please try again later." };
+    return {
+      success: false,
+      statusCode: 503,
+      message: "Unable to reset password right now. Please try again later.",
+    };
   } finally {
     if (client) client.release();
   }
