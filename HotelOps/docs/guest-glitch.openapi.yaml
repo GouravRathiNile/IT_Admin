@@ -1,0 +1,181 @@
+openapi: 3.0.3
+info:
+  title: HotelOps Guest Glitch API
+  version: 1.0.0
+servers:
+  - url: /api/GuestGlitch
+security:
+  - bearerAuth: []
+    organizationHeader: []
+paths:
+  /create:
+    post:
+      summary: Create a guest glitch
+      x-permission: GuestGlitch.Create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GuestGlitchCreate' }
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/GuestGlitchCreate' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /list:
+    post:
+      summary: Filter and paginate guest glitches
+      x-permission: GuestGlitch.View
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GuestGlitchList' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /get:
+    post:
+      summary: Get one organization-scoped guest glitch
+      x-permission: GuestGlitch.View
+      requestBody: { $ref: '#/components/requestBodies/IDBody' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /update:
+    post:
+      summary: Update a guest glitch using a body ID
+      x-permission: GuestGlitch.Update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/ID'
+                - $ref: '#/components/schemas/GuestGlitchCreate'
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /delete:
+    post:
+      summary: Soft-delete a guest glitch
+      x-permission: GuestGlitch.Delete
+      requestBody: { $ref: '#/components/requestBodies/IDBody' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /status-update:
+    post:
+      summary: Move a guest glitch to its next configured status
+      x-permission: GuestGlitch.StatusUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ID, Status]
+              properties:
+                ID: { type: integer, format: int64, minimum: 1 }
+                Status: { type: string, enum: [In Progress, Resolved, Closed] }
+                ResolvedBy: { type: string, maxLength: 60 }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /options/list:
+    post:
+      summary: List active organization Guest Glitch options
+      x-permission: GuestGlitch.View
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /options/upsert:
+    post:
+      summary: Create or update an organization Guest Glitch option
+      x-permission: GuestGlitch.OptionManage
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    organizationHeader: { type: apiKey, in: header, name: X-Organization-ID }
+  requestBodies:
+    IDBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ID' }
+  schemas:
+    ID:
+      type: object
+      required: [ID]
+      properties:
+        ID: { type: integer, format: int64, minimum: 1 }
+    HODComment:
+      type: object
+      required: [departmentId, comment]
+      properties:
+        departmentId: { type: integer, format: int64, minimum: 1 }
+        comment: { type: string, maxLength: 500 }
+    GuestGlitchCreate:
+      type: object
+      required: [GuestStatus, RoomNumber, GuestName, Complaint, DepartmentIDs, ReceivedByIDs, InformedToIDs, Time]
+      properties:
+        GuestStatus: { type: string }
+        RoomNumber: { type: string, maxLength: 60 }
+        GuestName: { type: string, maxLength: 60 }
+        Complaint: { type: string }
+        DepartmentIDs: { type: array, minItems: 1, uniqueItems: true, items: { type: integer, minimum: 1 } }
+        ReceivedByIDs: { type: array, minItems: 1, uniqueItems: true, items: { type: integer, minimum: 1 } }
+        InformedToIDs: { type: array, minItems: 1, uniqueItems: true, items: { type: integer, minimum: 1 } }
+        DepartmentHODComments: { type: array, items: { $ref: '#/components/schemas/HODComment' } }
+        Time: { type: string, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' }
+        EntryDate: { type: string, format: date }
+        CompanyName: { type: string, maxLength: 150 }
+        Rate: { type: number, minimum: 0 }
+        CheckInDate: { type: string, format: date }
+        CheckOutDate: { type: string, format: date }
+        Attachment: { type: string, format: binary }
+    GuestGlitchList:
+      type: object
+      properties:
+        page: { type: integer, minimum: 1, default: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        search: { type: string }
+        fromDate: { type: string, format: date }
+        toDate: { type: string, format: date }
+        status: { type: string }
+        departmentIds: { type: array, items: { type: integer } }
+        sortBy: { type: string, enum: [ID, EntryDate, Status, RoomNumber, GuestName, CreatedDate, ModifyDate] }
+        sortDirection: { type: string, enum: [ASC, DESC] }
+  responses:
+    Success:
+      description: Successful response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { success: { type: boolean }, message: { type: string }, data: {} }
+    ValidationError:
+      description: Validation or business-rule failure
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              message: { type: string, example: Validation failed. }
+              errors: { type: array, items: { type: object } }
+    Unauthorized: { description: Missing or invalid authentication token }
+    Forbidden: { description: Permission or organization access denied }
+    NotFound: { description: Guest glitch record not found }
+    Unavailable: { description: Service temporarily unavailable }

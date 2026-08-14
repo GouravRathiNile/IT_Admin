@@ -1,7 +1,14 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const { pool } = require("../../db");
 const formatDate = require("../../utils/dateFormatter");
+const { sendPasswordResetOTP } = require("../../utils/emailService");
+
+const FORGOT_PASSWORD_MESSAGE =
+  "A verification OTP has been sent to your registered email.";
+const FORGOT_PASSWORD_OTP_PURPOSE = "FORGOT_PASSWORD_OTP";
+const PASSWORD_RESET_VERIFIED_PURPOSE = "PASSWORD_RESET_VERIFIED";
 // ============================================================Login
 const login = async (data) => {
   try {
@@ -501,7 +508,182 @@ const changePassword = async (data) => {
   }
 };
 
+// ============================================================Forgot Password
+const forgotPassword = async (data) => {
+  try {
+    const userResult = await pool.query(
+      `SELECT UserID, Username, Email, IsActive, IsDeleted, IsLocked
+       FROM user_master
+       WHERE Username = $1
+       LIMIT 1;`,
+      [data.Username]
+    );
+
+    const user = userResult.rows[0];
+
+    if (!user) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: "Username not found. Please enter a registered username.",
+      };
+    }
+
+    if (!user.isactive) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: "This user account is inactive.",
+      };
+    }
+
+    if (user.isdeleted) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: "This user account is no longer available.",
+      };
+    }
+
+    if (user.islocked) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: "This user account is locked. Please contact the administrator.",
+      };
+    }
+
+    if (!user.email || !String(user.email).trim()) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: "No registered email address was found for this user.",
+      };
+    }
+
+    const otp = String(crypto.randomInt(100000, 1000000));
+    const otpHash = await bcrypt.hash(otp, 10);
+
+    try {
+      await sendPasswordResetOTP(user.email, otp);
+    } catch (error) {
+      console.log("Password Reset Email Error:", error.message);
+      return {
+        success: false,
+        statusCode: 503,
+        message: "Unable to send the verification OTP. Please try again later.",
+      };
+    }
+
+    const token = jwt.sign({
+      UserID: user.userid,
+      Username: user.username,
+      OTPHash: otpHash,
+      purpose: FORGOT_PASSWORD_OTP_PURPOSE,
+    }, process.env.JWT_SECRET, {
+      expiresIn: "10m",
+    });
+
+    return { success: true, message: FORGOT_PASSWORD_MESSAGE, token };
+  } catch (error) {
+    console.log("Forgot Password Error:", error.message);
+    return {
+      success: false,
+      statusCode: 503,
+      message: "Unable to process password reset request right now. Please try again later.",
+    };
+  }
+};
+
+// ============================================================Verify Forgot Password OTP
+const verifyForgotPasswordOTP = async (data) => {
+  try {
+    if (
+      !data.UserID ||
+      !data.Username ||
+      !data.OTPHash
+    ) {
+      return { success: false, message: "Invalid OTP." };
+    }
+
+    const otpMatched = await bcrypt.compare(data.OTP, data.OTPHash);
+    if (!otpMatched) {
+      return { success: false, message: "Invalid OTP." };
+    }
+
+    const verifiedToken = jwt.sign(
+      {
+        UserID: data.UserID,
+        Username: data.Username,
+        purpose: PASSWORD_RESET_VERIFIED_PURPOSE,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "10m" }
+    );
+
+    return {
+      success: true,
+      message: "OTP verified successfully",
+      verifiedToken,
+    };
+  } catch (error) {
+    console.log("Verify Forgot Password OTP Error:", error.message);
+    return { success: false, statusCode: 503, message: "Unable to verify OTP right now. Please try again later." };
+  }
+};
+
+// ============================================================Reset Password
+const resetPassword = async (data) => {
+  let client;
+  try {
+    if (!data.UserID || !data.Username) {
+      return { success: false, message: "Invalid verified reset token" };
+    }
+
+    client = await pool.connect();
+    await client.query("BEGIN");
+
+    const userResult = await client.query(
+      `SELECT UserID, Username, PasswordHash FROM user_master
+       WHERE UserID = $1
+         AND Username = $2
+         AND IsActive = TRUE AND IsDeleted = FALSE
+         AND COALESCE(IsLocked, FALSE) = FALSE
+       LIMIT 1 FOR UPDATE;`,
+      [data.UserID, data.Username]
+    );
+    if (userResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return { success: false, message: "User account is unavailable for password reset" };
+    }
+
+    const user = userResult.rows[0];
+
+    const newPasswordHash = await bcrypt.hash(data.NewPassword, 10);
+    await client.query(
+      `UPDATE user_master
+       SET PasswordHash = $1,
+           LastPasswordChangedDate = CURRENT_TIMESTAMP,
+           PasswordExpiryDate = CURRENT_TIMESTAMP + INTERVAL '90 days',
+           ModifiedBy = $2, ModifiedDate = CURRENT_TIMESTAMP
+       WHERE UserID = $2;`,
+      [newPasswordHash, user.userid]
+    );
+    await client.query("COMMIT");
+    return { success: true, message: "Password reset successfully" };
+  } catch (error) {
+    if (client) await client.query("ROLLBACK");
+    console.log("Reset Password Error:", error.message);
+    return { success: false, statusCode: 503, message: "Unable to reset password right now. Please try again later." };
+  } finally {
+    if (client) client.release();
+  }
+};
+
 module.exports = {
   login,
   changePassword,
+  forgotPassword,
+  verifyForgotPasswordOTP,
+  resetPassword,
 };
