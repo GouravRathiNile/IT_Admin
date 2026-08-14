@@ -22,6 +22,7 @@ const ProductCategoryRoutes = require("./routes/ITAdminRoutes/ProductCategoryRou
 const ProductRoutes = require("./routes/ITAdminRoutes/ProductRoutes");
 const UserRoutes = require("./routes/ITAdminRoutes/UserRoutes");
 const HotelOpsLoginRoutes = require("./routes/ITAdminRoutes/HotelOpsLoginRoutes");
+const GuestGlitchRoutes = require("./routes/GuestGlitchRoutes/GuestGlitchRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
 const OrganizationHandler = require("./consumer/ITAdminConsumer/OrganizationHandler");
@@ -31,6 +32,7 @@ const ProductCategoryHandler = require("./consumer/ITAdminConsumer/ProductCatego
 const ProductHandler = require("./consumer/ITAdminConsumer/ProductHandler");
 const UserHandler = require("./consumer/ITAdminConsumer/UserHandler");
 const HotelOpsLoginHandler = require("./consumer/ITAdminConsumer/HotelOpsLoginHandler");
+const GuestGlitchHandler = require("./consumer/GuestGlitchConsumer/GuestGlitchHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -47,6 +49,7 @@ app.use("/api/ProductCategoryMaster", ProductCategoryRoutes);
 app.use("/api/ProductMaster", ProductRoutes);
 app.use("/api/UserMaster", UserRoutes);
 app.use("/api/HotelOpsLogin", HotelOpsLoginRoutes);
+app.use("/api/GuestGlitch", GuestGlitchRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -110,6 +113,11 @@ const startServer = async () => {
       QUEUE.AUTH.REQUEST,
       QUEUE.AUTH.RESPONSE,
       HotelOpsLoginHandler
+    );
+    await startConsumer(
+      QUEUE.GUEST_GLITCH.REQUEST,
+      QUEUE.GUEST_GLITCH.RESPONSE,
+      GuestGlitchHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;

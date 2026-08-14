@@ -23,6 +23,15 @@ const HotelOpsLoginHandler = async (message) => {
       case "CHANGE_PASSWORD":
         return await HotelOpsLoginService.changePassword(data);
 
+      case "FORGOT_PASSWORD":
+        return await HotelOpsLoginService.forgotPassword(data);
+
+      case "VERIFY_FORGOT_PASSWORD_OTP":
+        return await HotelOpsLoginService.verifyForgotPasswordOTP(data);
+
+      case "RESET_PASSWORD":
+        return await HotelOpsLoginService.resetPassword(data);
+
       // ======================================================
       // DEFAULT
       // ======================================================

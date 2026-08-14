@@ -123,6 +123,112 @@ exports.logout = async (req, res) => {
   }
 };
 
+// ============================================================Forgot Password
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { Username } = req.body || {};
+
+    if (!Username || !String(Username).trim()) {
+      throw new AppError("Username is required", STATUS_CODES.BAD_REQUEST);
+    }
+
+    const response = await producer.sendMessage(
+      QUEUE.AUTH.REQUEST,
+      QUEUE.AUTH.RESPONSE,
+      {
+        action: "FORGOT_PASSWORD",
+        data: { Username: String(Username).trim() },
+      }
+    );
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to process password reset request",
+        response.statusCode || STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    handleError(error, res);
+  }
+};
+
+// ============================================================Verify Forgot Password OTP
+exports.verifyForgotPasswordOTP = async (req, res) => {
+  try {
+    const { OTP } = req.body || {};
+    const { UserID, Username, OTPHash } = req.otpUser;
+
+    if (OTP === undefined || OTP === null || String(OTP).trim() === "") {
+      throw new AppError("OTP is required", STATUS_CODES.BAD_REQUEST);
+    }
+
+    const otp = String(OTP).trim();
+    if (!/^\d{6}$/.test(otp)) {
+      throw new AppError("OTP must be exactly 6 digits", STATUS_CODES.BAD_REQUEST);
+    }
+
+    const response = await producer.sendMessage(
+      QUEUE.AUTH.REQUEST,
+      QUEUE.AUTH.RESPONSE,
+      {
+        action: "VERIFY_FORGOT_PASSWORD_OTP",
+        data: { UserID, Username, OTPHash, OTP: otp },
+      }
+    );
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to verify OTP",
+        response.statusCode || STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    handleError(error, res);
+  }
+};
+
+// ============================================================Reset Password
+exports.resetPassword = async (req, res) => {
+  try {
+    const { NewPassword } = req.body || {};
+    const { UserID, Username } = req.otpUser;
+
+    if (!NewPassword) {
+      throw new AppError("New password is required", STATUS_CODES.BAD_REQUEST);
+    }
+
+    const passwordRegex =
+      /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$#!%*?&])[A-Za-z\d@$!#%*?&]{6,}$/;
+    if (!passwordRegex.test(NewPassword)) {
+      throw new AppError("Password does not meet the required password policy", STATUS_CODES.BAD_REQUEST);
+    }
+
+    const response = await producer.sendMessage(
+      QUEUE.AUTH.REQUEST,
+      QUEUE.AUTH.RESPONSE,
+      {
+        action: "RESET_PASSWORD",
+        data: { UserID, Username, NewPassword },
+      }
+    );
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to reset password",
+        response.statusCode || STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    handleError(error, res);
+  }
+};
+
 // ============================================================Change Password
 exports.changePassword = async (req, res) => {
   try {

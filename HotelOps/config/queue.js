@@ -30,8 +30,12 @@ module.exports = {
     RESPONSE: "user_response_queue",
   },
   
-   AUTH: {
+  AUTH: {
     REQUEST: "Login_request_queue",
     RESPONSE: "Login_response_queue",
+  },
+  GUEST_GLITCH: {
+    REQUEST: "guest_glitch_request_queue",
+    RESPONSE: "guest_glitch_response_queue",
   },
 };
