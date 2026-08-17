@@ -1,9 +1,11 @@
 const CapexService = require("../../services/CapexService/CapexService");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
 
+// Dispatch RabbitMQ actions to the matching CAPEX service operation.
 const CapexHandler = async (message) => {
   try {
     switch (message.action) {
+      // ====================================================== CRUD
       case "CREATE_CAPEX":
         return await CapexService.createCapex(message.data);
 
@@ -19,9 +21,11 @@ const CapexHandler = async (message) => {
       case "DELETE_CAPEX":
         return await CapexService.deleteCapex(message.data);
 
+      // ====================================================== Approval Workflow
       case "PROCESS_CAPEX_APPROVAL":
         return await CapexService.processCapexApproval(message.data);
 
+      // ====================================================== Reports
       case "GET_CAPEX_SUMMARY_REPORT":
         return await CapexService.getCapexSummaryReport(message.data);
 
@@ -34,6 +38,7 @@ const CapexHandler = async (message) => {
       case "GET_CAPEX_ORGANIZATION_REPORT":
         return await CapexService.getCapexOrganizationReport(message.data);
 
+      // Reject unknown queue actions instead of calling any service.
       default:
         return {
           success: false,
@@ -42,6 +47,7 @@ const CapexHandler = async (message) => {
         };
     }
   } catch (error) {
+    // Retry only transient database failures handled by the shared consumer.
     console.error("CAPEX Handler Error:", error.message);
 
     const retryResponse = retryableDatabaseResponse(error);

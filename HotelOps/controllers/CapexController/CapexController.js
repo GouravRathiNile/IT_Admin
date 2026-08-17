@@ -1,13 +1,14 @@
+//==================================================RabbitMq
 const producer = require("../../producer/producer");
 const QUEUE = require("../../config/queue");
+//==================================================Error Handling
 const STATUS_CODES = require("../../utils/statusCodes");
 const AppError = require("../../utils/AppError");
 const handleError = require("../../utils/errorHandler");
-const {
-  uploadDocuments,
-  deleteDocuments,
-} = require("../../AzurConfigration/CAPEX/AzureDocuments");
+//==================================================Azur
+const uploadToAzure = require("../../AzurConfigration/Capex/AzureUpload");
 
+// ============================================================ Validation Helpers
 const isPositiveInteger = (value) => {
   const normalized = String(value ?? "").trim();
   return /^\d+$/.test(normalized)
@@ -40,6 +41,7 @@ const requiredText = (value, fieldName) => {
   return value.trim();
 };
 
+// Read identity and role data only from the verified JWT payload.
 const authenticatedUser = (req) => {
   const userID = Number(req.user?.UserID);
 
@@ -57,6 +59,7 @@ const authenticatedUser = (req) => {
   };
 };
 
+// Send CAPEX commands/queries through the shared RabbitMQ RPC producer.
 const sendQueueResponse = async (res, action, data) => {
   const response = await producer.sendMessage(
     QUEUE.CAPEX.REQUEST,
@@ -75,6 +78,7 @@ const sendQueueResponse = async (res, action, data) => {
   return res.status(STATUS_CODES.SUCCESS).json(response);
 };
 
+// Normalize RabbitMQ availability failures into the shared error format.
 const handleControllerError = (error, res) => {
   if (["Response Timeout", "RabbitMQ Channel Not Initialized"].includes(error.message)) {
     return handleError(
@@ -89,6 +93,7 @@ const handleControllerError = (error, res) => {
   return handleError(error, res);
 };
 
+// ============================================================ Create CAPEX
 exports.createCapex = async (req, res) => {
   let uploadedDocuments = [];
 
@@ -101,39 +106,33 @@ exports.createCapex = async (req, res) => {
       Make,
       Qty,
       Rate,
+      Total,
     } = req.body || {};
 
-    if (!isPositiveInteger(OrganizationID)) {
-      throw new AppError(
-        "Organization ID must be a positive integer",
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
-
-    const userID = Number(req.user?.UserID);
-    if (!Number.isSafeInteger(userID) || userID < 1) {
-      throw new AppError(
-        "Authenticated user is invalid",
-        STATUS_CODES.UNAUTHORIZED
-      );
-    }
-
+    const userID = req.user.UserID;
     const data = {
-      OrganizationID: Number(OrganizationID),
-      Department: requiredText(Department, "Department"),
-      Item: requiredText(Item, "Item"),
-      Description: typeof Description === "string" && Description.trim()
-        ? Description.trim()
-        : null,
-      Make: typeof Make === "string" && Make.trim() ? Make.trim() : null,
-      Qty: positiveNumber(Qty, "Qty"),
-      Rate: positiveNumber(Rate, "Rate"),
+      OrganizationID,
+      Department,
+      Item,
+      Description,
+      Make,
+      Qty,
+      Rate,
+      Total,
       UserID: userID,
       CreatedBy: userID,
       Documents: [],
     };
 
-    uploadedDocuments = await uploadDocuments(req.files || []);
+    for (const file of req.files || []) {
+      const filePath = await uploadToAzure(file);
+      uploadedDocuments.push({
+        FileName: file.originalname,
+        FilePath: filePath,
+        FileType: file.mimetype,
+        FileSize: file.size,
+      });
+    }
     data.Documents = uploadedDocuments;
 
     const response = await producer.sendMessage(
@@ -146,9 +145,6 @@ exports.createCapex = async (req, res) => {
     );
 
     if (!response.success) {
-      await deleteDocuments(uploadedDocuments);
-      uploadedDocuments = [];
-
       throw new AppError(
         response.message || "Unable to create CAPEX",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
@@ -160,11 +156,6 @@ exports.createCapex = async (req, res) => {
       .status(response.queued ? 202 : STATUS_CODES.CREATED)
       .json(response);
   } catch (error) {
-    // A timeout is ambiguous: the queued request may still be processed.
-    if (error.message !== "Response Timeout" && uploadedDocuments.length > 0) {
-      await deleteDocuments(uploadedDocuments);
-    }
-
     if (["Response Timeout", "RabbitMQ Channel Not Initialized"].includes(error.message)) {
       return handleError(
         new AppError(
@@ -179,15 +170,35 @@ exports.createCapex = async (req, res) => {
   }
 };
 
+// ============================================================ Get All CAPEX
+// ============================================================ Get All CAPEX
 exports.getAllCapex = async (req, res) => {
   try {
     const user = authenticatedUser(req);
-    return await sendQueueResponse(res, "GET_ALL_CAPEX", user);
+
+    let OrganizationID = null;
+
+    if (req.query.OrganizationID !== undefined) {
+      if (!isPositiveInteger(req.query.OrganizationID)) {
+        throw new AppError(
+          "Organization ID must be a positive integer",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+
+      OrganizationID = Number(req.query.OrganizationID);
+    }
+
+    return await sendQueueResponse(res, "GET_ALL_CAPEX", {
+      ...user,
+      OrganizationID,
+    });
   } catch (error) {
     return handleControllerError(error, res);
   }
 };
 
+// ============================================================ Get CAPEX By ID
 exports.getCapexById = async (req, res) => {
   try {
     if (!isPositiveInteger(req.params.id)) {
@@ -207,6 +218,7 @@ exports.getCapexById = async (req, res) => {
   }
 };
 
+// ============================================================ Partial Update Helpers
 const optionalText = (body, fieldName) => {
   if (!Object.prototype.hasOwnProperty.call(body, fieldName)) return undefined;
   const value = body[fieldName];
@@ -227,6 +239,7 @@ const optionalBoolean = (body, fieldName) => {
   );
 };
 
+// Parse selected document IDs from JSON arrays or comma-separated form data.
 const parseDocumentIDs = (value) => {
   if (value === undefined || value === null || value === "") return [];
 
@@ -262,6 +275,7 @@ const parseDocumentIDs = (value) => {
   return [...new Set(documentIDs)];
 };
 
+// ============================================================ Update CAPEX
 exports.updateCapex = async (req, res) => {
   let uploadedDocuments = [];
 
@@ -323,7 +337,15 @@ exports.updateCapex = async (req, res) => {
     }
 
     const deleteDocumentIDs = parseDocumentIDs(body.DeleteDocumentIDs);
-    uploadedDocuments = await uploadDocuments(req.files || []);
+    for (const file of req.files || []) {
+      const filePath = await uploadToAzure(file);
+      uploadedDocuments.push({
+        FileName: file.originalname,
+        FilePath: filePath,
+        FileType: file.mimetype,
+        FileSize: file.size,
+      });
+    }
 
     if (
       Object.keys(changes).length === 0
@@ -349,8 +371,6 @@ exports.updateCapex = async (req, res) => {
     );
 
     if (!response.success) {
-      await deleteDocuments(uploadedDocuments);
-      uploadedDocuments = [];
       throw new AppError(
         response.message || "Unable to update CAPEX",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
@@ -360,13 +380,11 @@ exports.updateCapex = async (req, res) => {
 
     return res.status(response.queued ? 202 : STATUS_CODES.SUCCESS).json(response);
   } catch (error) {
-    if (error.message !== "Response Timeout" && uploadedDocuments.length > 0) {
-      await deleteDocuments(uploadedDocuments);
-    }
     return handleControllerError(error, res);
   }
 };
 
+// ============================================================ Soft Delete CAPEX
 exports.deleteCapex = async (req, res) => {
   try {
     if (!isPositiveInteger(req.params.id)) {
@@ -399,6 +417,7 @@ exports.deleteCapex = async (req, res) => {
   }
 };
 
+// ============================================================ Approval Action
 exports.approveCapex = async (req, res) => {
   try {
     if (!isPositiveInteger(req.params.id)) {
@@ -454,6 +473,7 @@ exports.approveCapex = async (req, res) => {
   }
 };
 
+// ============================================================ Report Helpers
 const validDate = (value) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -461,6 +481,7 @@ const validDate = (value) => {
     && parsed.toISOString().slice(0, 10) === value;
 };
 
+// Validate optional report filters without trusting organization access.
 const reportFilters = (req) => {
   const {
     OrganizationID,
@@ -517,6 +538,7 @@ const reportFilters = (req) => {
   };
 };
 
+// All reports use the same JWT context and RabbitMQ request flow.
 const getReport = async (req, res, action) => {
   try {
     const user = authenticatedUser(req);
@@ -529,24 +551,28 @@ const getReport = async (req, res, action) => {
   }
 };
 
+// ============================================================ Summary Report
 exports.getCapexSummaryReport = (req, res) => getReport(
   req,
   res,
   "GET_CAPEX_SUMMARY_REPORT"
 );
 
+// ============================================================ Status Report
 exports.getCapexStatusReport = (req, res) => getReport(
   req,
   res,
   "GET_CAPEX_STATUS_REPORT"
 );
 
+// ============================================================ Department Report
 exports.getCapexDepartmentReport = (req, res) => getReport(
   req,
   res,
   "GET_CAPEX_DEPARTMENT_REPORT"
 );
 
+// ============================================================ Organization Report
 exports.getCapexOrganizationReport = (req, res) => getReport(
   req,
   res,

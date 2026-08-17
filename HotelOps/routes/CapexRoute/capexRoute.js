@@ -1,30 +1,25 @@
 const express = require("express");
 const authenticateToken = require("../../middleware/authMiddleware");
-const capexUpload = require("../../middleware/capexUpload");
-const CapexController = require("../../controllers/CapexController/CapexController");
+const upload = require("../../middleware/upload");
+const { createCapex,getAllCapex,getCapexById,updateCapex,deleteCapex,approveCapex,getCapexSummaryReport,getCapexStatusReport,getCapexDepartmentReport,getCapexOrganizationReport } = require("../../controllers/CapexController/CapexController");
 
 const router = express.Router();
 
-router.post(
-  "/create",
-  authenticateToken,
-  capexUpload,
-  CapexController.createCapex
-);
-
-router.get("/getall", authenticateToken, CapexController.getAllCapex);
-router.get("/getbyid/:id", authenticateToken, CapexController.getCapexById);
-router.put(
-  "/update/:id",
-  authenticateToken,
-  capexUpload,
-  CapexController.updateCapex
-);
-router.delete("/delete/:id", authenticateToken, CapexController.deleteCapex);
-router.put("/approve/:id", authenticateToken, CapexController.approveCapex);
-router.get("/reports/summary", authenticateToken, CapexController.getCapexSummaryReport);
-router.get("/reports/status", authenticateToken, CapexController.getCapexStatusReport);
-router.get("/reports/department", authenticateToken, CapexController.getCapexDepartmentReport);
-router.get("/reports/organization", authenticateToken, CapexController.getCapexOrganizationReport);
+// ============================================================ Create CAPEX
+router.post("/Create",authenticateToken,upload.array("Documents", 10),createCapex);
+// ============================================================ Read CAPEX
+router.get("/getall", authenticateToken, getAllCapex);
+router.get("/getbyid/:id", authenticateToken, getCapexById);
+// ============================================================ Update CAPEX
+router.put("/update/:id",authenticateToken,upload.array("Documents", 10),updateCapex);
+// ============================================================ Soft Delete CAPEX
+router.delete("/delete/:id", authenticateToken, deleteCapex);
+// ============================================================ Approval Action
+router.put("/approve/:id", authenticateToken, approveCapex);
+// ============================================================ CAPEX Reports
+router.get("/reports/summary",authenticateToken,getCapexSummaryReport,);
+router.get("/reports/status",authenticateToken,getCapexStatusReport,);
+router.get("/reports/department",authenticateToken,getCapexDepartmentReport,);
+router.get("/reports/organization",authenticateToken,getCapexOrganizationReport,);
 
 module.exports = router;
