@@ -171,6 +171,9 @@ LIMIT 1;
     // GENERATE JWT
     // ========================================================
     // console.log('login data:', user.usertype);
+
+    const jti = crypto.randomUUID();
+
     const token = jwt.sign(
       {
         UserID: user.userid,
@@ -194,6 +197,8 @@ LIMIT 1;
 
       {
         expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+
+        jwtid: jti,
       },
     );
 
@@ -643,16 +648,20 @@ const resetPassword = async (data) => {
 
 const logout = async (data) => {
   try {
+
     const {
       UserID,
+      JTI,
+      TokenIssuedAt,
+      TokenExpiresAt,
       DeviceID,
+      RevokedBy,
+      RevocationReason,
     } = data;
 
-    // --------------------------------------------------------
-    // Validate authenticated user
-    // UserID must come from authenticated JWT/middleware.
-    // Do not accept UserID directly from client body.
-    // --------------------------------------------------------
+    // ========================================================
+    // Validate Authentication
+    // ========================================================
 
     if (!UserID) {
       return {
@@ -662,11 +671,80 @@ const logout = async (data) => {
       };
     }
 
-    // --------------------------------------------------------
-    // Deactivate device session if DeviceID is provided
-    // --------------------------------------------------------
+    if (!JTI) {
+      return {
+        success: false,
+        statusCode: 401,
+        message: "Invalid authentication token",
+      };
+    }
+
+    if (!TokenIssuedAt || !TokenExpiresAt) {
+      return {
+        success: false,
+        statusCode: 401,
+        message: "Invalid authentication token",
+      };
+    }
+
+    // ========================================================
+    // Blacklist Current JWT
+    // ========================================================
+
+    await pool.query(
+      `
+      INSERT INTO auth_token_blacklist
+      (
+        UserID,
+        JTI,
+        TokenIssuedAt,
+        TokenExpiresAt,
+        RevokedAt,
+        RevokedBy,
+        RevocationReason,
+        DeviceID,
+        IsActive,
+        CreatedDate
+      )
+      VALUES
+      (
+        $1,
+        $2,
+        $3,
+        $4,
+        CURRENT_TIMESTAMP,
+        $5,
+        $6,
+        $7,
+        TRUE,
+        CURRENT_TIMESTAMP
+      )
+
+      ON CONFLICT (JTI)
+      DO UPDATE SET
+        IsActive = TRUE,
+        RevokedAt = CURRENT_TIMESTAMP,
+        RevokedBy = EXCLUDED.RevokedBy,
+        RevocationReason = EXCLUDED.RevocationReason,
+        DeviceID = EXCLUDED.DeviceID;
+      `,
+      [
+        UserID,
+        JTI,
+        TokenIssuedAt,
+        TokenExpiresAt,
+        RevokedBy || UserID,
+        RevocationReason || "LOGOUT",
+        DeviceID || null,
+      ]
+    );
+
+    // ========================================================
+    // Deactivate Current Device
+    // ========================================================
 
     if (DeviceID) {
+
       await pool.query(
         `
         UPDATE user_device
@@ -683,11 +761,12 @@ const logout = async (data) => {
           DeviceID,
         ]
       );
+
     }
 
-    // --------------------------------------------------------
-    // Logout successful
-    // --------------------------------------------------------
+    // ========================================================
+    // Logout Successful
+    // ========================================================
 
     return {
       success: true,
@@ -695,7 +774,11 @@ const logout = async (data) => {
     };
 
   } catch (error) {
-    console.log("Logout Error:", error.message);
+
+    console.log(
+      "Logout Error:",
+      error.message
+    );
 
     return {
       success: false,

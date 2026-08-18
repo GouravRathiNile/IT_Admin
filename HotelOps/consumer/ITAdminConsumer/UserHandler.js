@@ -9,8 +9,8 @@ const UserHandler = async (message) => {
       case "CREATE_USER":
         return await UserService.createUser(
           message.data
-        ); 
-         // =========================================DELETE USER
+        );
+      // =========================================DELETE USER
       case "DELETE_USER":
         return await UserService.deleteUser(
           message.data
@@ -34,12 +34,14 @@ const UserHandler = async (message) => {
         );
       // ===================================================== UPDATE USER ORGANIZATIONS
       case "UPDATE_USER_ORGANIZATIONS":
+
         return await UserService.updateUserOrganizations(
           message.data.UserID,
           message.data.Organizations,
-          message.data.ModifiedBy
+          message.data.ModifiedBy,
+          message.data.AllOrganizationAccess
         );
-     
+
       // =========================================
       // INVALID ACTION
       // =========================================
