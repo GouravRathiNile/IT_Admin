@@ -118,10 +118,17 @@ exports.logout = async (req, res) => {
   try {
 
     // ========================================================
-    // Get UserID from authenticated JWT
+    // Get Authentication Details From JWT
     // ========================================================
 
     const UserID = req.user?.UserID;
+    const JTI = req.user?.jti;
+    const IssuedAt = req.user?.iat;
+    const ExpiresAt = req.user?.exp;
+
+    // ========================================================
+    // Validate Authentication Token
+    // ========================================================
 
     if (!UserID) {
       throw new AppError(
@@ -130,15 +137,42 @@ exports.logout = async (req, res) => {
       );
     }
 
+    if (!JTI) {
+      throw new AppError(
+        "Invalid authentication token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
+    if (!IssuedAt || !ExpiresAt) {
+      throw new AppError(
+        "Invalid authentication token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
     // ========================================================
     // Device ID
-    // Same DeviceID used during login
     // ========================================================
+    // Same DeviceID which was used during login
 
     const DeviceID = req.headers["deviceid"];
 
     // ========================================================
-    // Send Logout Request to RabbitMQ
+    // Convert JWT timestamps
+    // JWT iat / exp are UNIX timestamps in seconds
+    // ========================================================
+
+    const TokenIssuedAt = new Date(
+      IssuedAt * 1000
+    );
+
+    const TokenExpiresAt = new Date(
+      ExpiresAt * 1000
+    );
+
+    // ========================================================
+    // Send Logout Request To RabbitMQ
     // ========================================================
 
     const response = await producer.sendMessage(
@@ -149,9 +183,20 @@ exports.logout = async (req, res) => {
 
         data: {
           UserID,
+
+          JTI,
+
+          TokenIssuedAt,
+
+          TokenExpiresAt,
+
           DeviceID: DeviceID
             ? String(DeviceID).trim()
             : null,
+
+          RevokedBy: UserID,
+
+          RevocationReason: "LOGOUT",
         },
       }
     );

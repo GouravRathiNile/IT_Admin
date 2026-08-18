@@ -5,29 +5,29 @@ const authenticateToken = require("../../middleware/authMiddleware");
 const { createUser,getAllUsers,getUserById,getUserDropdown,updateUser,deleteUser,getUserOrganizations, getUserProducts,getUserPersonalDetails,getAllUsersTabel,updateUserPersonalDetails,updateUserOrganizations,updateUserProducts } = require("../../controllers/ITAdminController/UserController");
 
 // ========================================= Create User
-router.post("/create",upload.single("ProfilePhoto"),createUser);
+router.post("/Create", authenticateToken, upload.single("ProfilePhoto"),createUser);
 // ========================================= Delete User
-router.delete("/delete/:id",deleteUser);
+router.delete("/Delete", authenticateToken, deleteUser);
 // ========================================= Get All Users
-router.get("/getdata",getAllUsers);
+router.get("/GetUserList", authenticateToken, getAllUsers);
 // ========================================= Get User By ID
-router.get("/getsingleuser/:id",getUserById);
+router.get("/GetUserDetail/:id", authenticateToken, getUserById);
 // ========================================= User Dropdown
-router.get("/getdropdowndata",getUserDropdown);
+router.get("/GetUserNames", authenticateToken, getUserDropdown);
 // ===========================================User Organizations
-router.get("/getuserorganizations",authenticateToken,getUserOrganizations);
+router.get("/GetUserOrganizations",authenticateToken,getUserOrganizations);
 // ===========================================User Products
-router.get("/getuserproducts",authenticateToken,getUserProducts);
+router.get("/GetUserProducts",authenticateToken,getUserProducts);
 // ===========================================User Personal Details
-router.get("/getuserpersonaldetails",authenticateToken,getUserPersonalDetails);
+router.get("/GetUserPersonalDetails",authenticateToken, getUserPersonalDetails);
 // ========================================= User Tabel
-router.get("/getusersdatatable",getAllUsersTabel);
+router.get("/GetAllUserInfo", authenticateToken, getAllUsersTabel);
 // ========================================= Update User
-router.put("/update/:id",upload.single("ProfilePhoto"),updateUser);
+router.put("/Update", authenticateToken, upload.single("ProfilePhoto"),updateUser);
 // ============================================================UPDATE Personal Details
-router.put("/updateuserdetails",authenticateToken,upload.single("ProfilePhoto"),updateUserPersonalDetails);
+router.put("/UpdateUserDetails",authenticateToken,upload.single("ProfilePhoto"),updateUserPersonalDetails);
 // ============================================================ UPDATE USER ORGANIZATIONS
-router.put("/updateuserorganizations",authenticateToken,updateUserOrganizations);
+router.put("/UpdateUserOrganizations",authenticateToken,updateUserOrganizations);
 // ============================================================UPDATE USER PRODUCTS
-router.put("/updateuserproducts",authenticateToken,updateUserProducts);
+router.put("/UpdateUserProducts",authenticateToken,updateUserProducts);
 module.exports = router;

@@ -19,8 +19,8 @@ exports.createUser = async (req, res) => {
       PasswordHash,
       FullName,
       Designation,
-      Department,
-      Division,
+      DepartmentID,
+      DivisionID,
       LoginType,
       UserType,
       Email,
@@ -30,9 +30,12 @@ exports.createUser = async (req, res) => {
       PasswordExpiryDate,
       DateOfJoining,
       CreatedBy,
+      BrandID,
+      AllOrganizationAccess,
       Organizations,
       Products,
     } = req.body;
+
     // ========================================= Validation
 
     if (!Username) {
@@ -67,6 +70,19 @@ exports.createUser = async (req, res) => {
       ProfilePhoto = await uploadToAzure(req.file);
     }
 
+    if (
+      LoginType === "SuperAdmin" &&
+      AllOrganizationAccess === undefined
+    ) {
+      throw new AppError(
+        "AllOrganizationAccess is required for SuperAdmin",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const normalizedAllOrganizationAccess =
+      String(AllOrganizationAccess).toLowerCase() === "true";
+
     // ========================================= Parse Mapping Data
     let organizationMappings = [];
     let productMappings = [];
@@ -83,6 +99,119 @@ exports.createUser = async (req, res) => {
         typeof Products === "string" ? JSON.parse(Products) : Products;
     }
 
+    // ========================================================
+    // LOGIN TYPE VALIDATION
+    // ========================================================
+
+    if (
+      !["SuperAdmin", "Organization", "Brand"].includes(LoginType)
+    ) {
+      throw new AppError(
+        "LoginType must be SuperAdmin, Organization or Brand",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+
+    // ========================================================
+    // SUPER ADMIN
+    // ========================================================
+
+    if (LoginType === "SuperAdmin") {
+
+      if (AllOrganizationAccess === undefined) {
+        throw new AppError(
+          "AllOrganizationAccess is required for SuperAdmin",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+
+      // ALL ORGANIZATIONS
+      if (normalizedAllOrganizationAccess === true) {
+
+        if (
+          Array.isArray(organizationMappings) &&
+          organizationMappings.length > 0
+        ) {
+          throw new AppError(
+            "Organizations should not be provided when AllOrganizationAccess is true",
+            STATUS_CODES.BAD_REQUEST
+          );
+        }
+
+      }
+
+      // SELECTED ORGANIZATIONS
+      else {
+
+        if (
+          !Array.isArray(organizationMappings) ||
+          organizationMappings.length === 0
+        ) {
+          throw new AppError(
+            "At least one organization is required for limited SuperAdmin access",
+            STATUS_CODES.BAD_REQUEST
+          );
+        }
+      }
+
+      if (BrandID) {
+        throw new AppError(
+          "BrandID should not be provided for SuperAdmin",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+    }
+
+
+    // ========================================================
+    // ORGANIZATION
+    // ========================================================
+
+    if (LoginType === "Organization") {
+
+      if (BrandID) {
+        throw new AppError(
+          "BrandID should not be provided for Organization login",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+
+      if (
+        !Array.isArray(organizationMappings) ||
+        organizationMappings.length !== 1
+      ) {
+        throw new AppError(
+          "Organization user must have exactly one organization",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+    }
+
+
+    // ========================================================
+    // BRAND
+    // ========================================================
+
+    if (LoginType === "Brand") {
+
+      if (!BrandID) {
+        throw new AppError(
+          "BrandID is required for Brand login",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+
+      if (
+        !Array.isArray(organizationMappings) ||
+        organizationMappings.length === 0
+      ) {
+        throw new AppError(
+          "At least one organization is required for Brand login",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+    }
     // ========================================= Send To RabbitMQ
     const response = await producer.sendMessage(
       QUEUE.USER.REQUEST,
@@ -96,8 +225,8 @@ exports.createUser = async (req, res) => {
           PasswordHash,
           FullName,
           Designation,
-          Department,
-          Division,
+          DepartmentID,
+          DivisionID,
           LoginType,
           UserType,
           Email,
@@ -111,6 +240,8 @@ exports.createUser = async (req, res) => {
           IsActive: true,
           IsDeleted: false,
           CreatedBy,
+          BrandID,
+          AllOrganizationAccess: normalizedAllOrganizationAccess,
           Organizations: organizationMappings,
           Products: productMappings,
         },
@@ -129,41 +260,95 @@ exports.createUser = async (req, res) => {
     handleError(error, res);
   }
 };
-// ========================================= Delete User
+// ============================================================
+// DELETE USER
+// ============================================================
 exports.deleteUser = async (req, res) => {
+
   try {
-    const { id } = req.params;
 
-    const { DeletedBy } = req.body;
+    // ========================================================
+    // USER ID FROM BODY
+    // ========================================================
 
-    if (!id) {
-      throw new AppError("User ID is required", STATUS_CODES.BAD_REQUEST);
+    const UserID = req.body?.UserID;
+
+    if (!UserID) {
+
+      throw new AppError(
+        "UserID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+
     }
 
-    const response = await producer.sendMessage(
-      QUEUE.USER.REQUEST,
-      QUEUE.USER.RESPONSE,
-      {
-        action: "DELETE_USER",
 
-        data: {
-          UserID: id,
-          DeletedBy,
-        },
-      },
-    );
+    // ========================================================
+    // DELETED BY FROM JWT
+    // ========================================================
+
+    const DeletedBy =
+      req.user?.UserID || UserID;
+
+
+    // ========================================================
+    // SEND TO RABBITMQ
+    // ========================================================
+
+    const response =
+      await producer.sendMessage(
+        QUEUE.USER.REQUEST,
+        QUEUE.USER.RESPONSE,
+        {
+
+          action: "DELETE_USER",
+
+          data: {
+
+            UserID: Number(UserID),
+
+            DeletedBy: Number(DeletedBy)
+
+          }
+
+        }
+      );
+
+
+    // ========================================================
+    // ERROR
+    // ========================================================
 
     if (!response.success) {
+
       throw new AppError(
-        response.message || "Unable to delete user",
-        response.statusCode || STATUS_CODES.BAD_REQUEST,
+
+        response.message ||
+        "Unable to delete user",
+
+        response.statusCode ||
+        STATUS_CODES.BAD_REQUEST
+
       );
+
     }
 
-    return res.status(STATUS_CODES.SUCCESS).json(response);
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+
   } catch (error) {
+
     handleError(error, res);
+
   }
+
 };
 // ========================================= Get All Users
 exports.getAllUsers = async (req, res) => {
@@ -249,7 +434,7 @@ exports.getUserOrganizations = async (req, res) => {
 
       throw new AppError(
         response.message ||
-          "Unable to fetch organizations",
+        "Unable to fetch organizations",
         STATUS_CODES.BAD_REQUEST
       );
 
@@ -293,7 +478,7 @@ exports.getUserProducts = async (req, res) => {
 
       throw new AppError(
         response.message ||
-          "Unable to fetch user products",
+        "Unable to fetch user products",
 
         STATUS_CODES.BAD_REQUEST
       );
@@ -311,16 +496,18 @@ exports.getUserProducts = async (req, res) => {
 
   }
 };
-// =========================================User wise personal details
+// ============================================================
+// GET USER PERSONAL DETAILS
+// ============================================================
 exports.getUserPersonalDetails = async (req, res) => {
+
   try {
 
     // ========================================================
-    // UserID JWT se milegi
+    // USER ID FROM JWT
     // ========================================================
 
-    const UserID = req.user.UserID;
-
+    const UserID = req.user?.UserID;
 
     if (!UserID) {
 
@@ -333,24 +520,35 @@ exports.getUserPersonalDetails = async (req, res) => {
 
 
     // ========================================================
-    // Service
+    // SERVICE
     // ========================================================
 
     const response =
-      await UserService.getUserPersonalDetails(UserID);
+      await UserService.getUserPersonalDetails(
+        Number(UserID)
+      );
 
+
+    // ========================================================
+    // ERROR
+    // ========================================================
 
     if (!response.success) {
 
       throw new AppError(
         response.message ||
-          "Unable to fetch user personal details",
+        "Unable to fetch user personal details",
 
+        response.statusCode ||
         STATUS_CODES.BAD_REQUEST
       );
 
     }
 
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
 
     return res
       .status(STATUS_CODES.SUCCESS)
@@ -361,6 +559,224 @@ exports.getUserPersonalDetails = async (req, res) => {
     handleError(error, res);
 
   }
+
+};
+// ============================================================
+// UPDATE USER PERSONAL DETAILS
+// ============================================================
+exports.updateUserPersonalDetails = async (req, res) => {
+
+  try {
+
+    // ========================================================
+    // 1. USER ID FROM JWT
+    // ========================================================
+
+    const UserID = req.user?.UserID;
+
+    if (!UserID) {
+
+      throw new AppError(
+        "User ID not found in token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+
+    }
+
+
+    // ========================================================
+    // 2. MODIFIED BY FROM JWT
+    // ========================================================
+
+    const ModifiedBy = req.user?.UserID;
+
+
+    // ========================================================
+    // 3. PROFILE PHOTO
+    // ========================================================
+
+    let ProfilePhoto;
+
+    if (req.file) {
+
+      ProfilePhoto =
+        await uploadToAzure(req.file);
+
+    }
+
+
+    // ========================================================
+    // 4. REQUEST BODY
+    // ========================================================
+
+    const {
+
+      EmployeeCode,
+      Username,
+      FullName,
+
+      Designation,
+
+      DepartmentID,
+      DivisionID,
+
+      Email,
+      PhoneNumber,
+      Gender,
+
+      DateOfJoining,
+
+      IsLocked,
+      IsActive,
+
+    } = req.body;
+
+
+    // ========================================================
+    // 5. BASIC VALIDATION
+    // ========================================================
+
+    if (
+      DepartmentID !== undefined &&
+      DepartmentID !== null &&
+      DepartmentID !== "" &&
+      isNaN(Number(DepartmentID))
+    ) {
+
+      throw new AppError(
+        "DepartmentID must be a valid number",
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    if (
+      DivisionID !== undefined &&
+      DivisionID !== null &&
+      DivisionID !== "" &&
+      isNaN(Number(DivisionID))
+    ) {
+
+      throw new AppError(
+        "DivisionID must be a valid number",
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    // ========================================================
+    // 6. SEND TO RABBITMQ
+    // ========================================================
+
+    const response =
+      await producer.sendMessage(
+
+        QUEUE.USER.REQUEST,
+
+        QUEUE.USER.RESPONSE,
+
+        {
+
+          action:
+            "UPDATE_USER_PERSONAL_DETAILS",
+
+          data: {
+
+            UserID:
+              Number(UserID),
+
+            EmployeeCode,
+            Username,
+            FullName,
+
+            Designation,
+
+            DepartmentID:
+              DepartmentID !== undefined &&
+              DepartmentID !== ""
+                ? Number(DepartmentID)
+                : undefined,
+
+            DivisionID:
+              DivisionID !== undefined &&
+              DivisionID !== ""
+                ? Number(DivisionID)
+                : undefined,
+
+            Email,
+            PhoneNumber,
+            Gender,
+
+            ...(ProfilePhoto !== undefined && {
+              ProfilePhoto
+            }),
+
+            DateOfJoining,
+
+            IsLocked:
+              IsLocked !== undefined
+                ? (
+                    typeof IsLocked === "string"
+                      ? IsLocked.toLowerCase() === "true"
+                      : IsLocked
+                  )
+                : undefined,
+
+            IsActive:
+              IsActive !== undefined
+                ? (
+                    typeof IsActive === "string"
+                      ? IsActive.toLowerCase() === "true"
+                      : IsActive
+                  )
+                : undefined,
+
+            ModifiedBy:
+              Number(ModifiedBy),
+
+          }
+
+        }
+
+      );
+
+
+    // ========================================================
+    // 7. RABBITMQ ERROR
+    // ========================================================
+
+    if (!response.success) {
+
+      throw new AppError(
+
+        response.message ||
+        "Unable to update user personal details",
+
+        response.statusCode ||
+        STATUS_CODES.BAD_REQUEST
+
+      );
+
+    }
+
+
+    // ========================================================
+    // 8. RESPONSE
+    // ========================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+
+  } catch (error) {
+
+    handleError(error, res);
+
+  }
+
 };
 // =========================================Get All Users Tabel
 exports.getAllUsersTabel = async (req, res) => {
@@ -379,78 +795,157 @@ exports.getAllUsersTabel = async (req, res) => {
     handleError(error, res);
   }
 };
-// ========================================= Update User
+// ============================================================
+// UPDATE USER
+// ============================================================
 exports.updateUser = async (req, res) => {
+
   try {
-    const { id } = req.params;
-    if (!id) {
-      throw new AppError("User ID is required", STATUS_CODES.BAD_REQUEST);
+
+    // ========================================================
+    // USER ID FROM BODY
+    // ========================================================
+
+    const UserID = req.body?.UserID;
+
+    if (!UserID) {
+
+      throw new AppError(
+        "UserID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+
     }
 
-    const { Organizations, Products, ...userData } = req.body;
+    // ========================================================
+    // ORGANIZATIONS + PRODUCTS
+    // ========================================================
 
-    // ========================================= Profile Photo
+    const {
+      Organizations,
+      Products,
+      ...userData
+    } = req.body;
+
+
+    // ========================================================
+    // PROFILE PHOTO
+    // ========================================================
 
     let ProfilePhoto;
 
     if (req.file) {
-      ProfilePhoto = await uploadToAzure(req.file);
+
+      ProfilePhoto =
+        await uploadToAzure(req.file);
+
     }
 
-    // ========================================= Parse Organizations
+
+    // ========================================================
+    // PARSE ORGANIZATIONS
+    // ========================================================
 
     let organizationMappings = [];
 
     if (Organizations) {
+
       organizationMappings =
         typeof Organizations === "string"
           ? JSON.parse(Organizations)
           : Organizations;
+
     }
 
-    // ========================================= Parse Products
+
+    // ========================================================
+    // PARSE PRODUCTS
+    // ========================================================
 
     let productMappings = [];
 
     if (Products) {
+
       productMappings =
-        typeof Products === "string" ? JSON.parse(Products) : Products;
+        typeof Products === "string"
+          ? JSON.parse(Products)
+          : Products;
+
     }
 
-    // ========================================= Send Update
 
-    const response = await producer.sendMessage(
-      QUEUE.USER.REQUEST,
-      QUEUE.USER.RESPONSE,
-      {
-        action: "UPDATE_USER",
+    // ========================================================
+    // SEND TO RABBITMQ
+    // ========================================================
 
-        data: {
-          UserID: id,
+    const response =
+      await producer.sendMessage(
+        QUEUE.USER.REQUEST,
+        QUEUE.USER.RESPONSE,
+        {
 
-          ...userData,
+          action: "UPDATE_USER",
 
-          ...(ProfilePhoto !== undefined && {
-            ProfilePhoto,
-          }),
+          data: {
 
-          Organizations: organizationMappings,
-          Products: productMappings,
-        },
-      },
-    );
+            UserID: Number(UserID),
+
+            ...userData,
+
+            ...(ProfilePhoto !== undefined && {
+              ProfilePhoto
+            }),
+
+            Organizations:
+              organizationMappings,
+
+            Products:
+              productMappings,
+
+            // ModifiedBy JWT se
+            ModifiedBy:
+              Number(req.user?.UserID || UserID)
+
+          }
+
+        }
+      );
+
+
+    // ========================================================
+    // ERROR
+    // ========================================================
 
     if (!response.success) {
+
       throw new AppError(
-        response.message || "Unable to update user",
-        response.statusCode || STATUS_CODES.BAD_REQUEST,
+
+        response.message ||
+        "Unable to update user",
+
+        response.statusCode ||
+        STATUS_CODES.BAD_REQUEST
+
       );
+
     }
 
-    return res.status(STATUS_CODES.SUCCESS).json(response);
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+
   } catch (error) {
+
     handleError(error, res);
+
   }
+
 };
 // ============================================================UPDATE USER PERSONAL DETAILS
 exports.updateUserPersonalDetails = async (req, res) => {
@@ -516,10 +1011,10 @@ exports.updateUserPersonalDetails = async (req, res) => {
     if (!response.success) {
       throw new AppError(
         response.message ||
-          "Unable to update user personal details",
+        "Unable to update user personal details",
 
         response.statusCode ||
-          STATUS_CODES.BAD_REQUEST
+        STATUS_CODES.BAD_REQUEST
       );
     }
 
@@ -537,89 +1032,167 @@ exports.updateUserPersonalDetails = async (req, res) => {
 
   }
 };
-// ============================================================UPDATE USER ORGANIZATIONS
+// ============================================================
+// UPDATE USER ORGANIZATIONS
+// ============================================================
 exports.updateUserOrganizations = async (req, res) => {
+
   try {
 
     // ========================================================
-    // UserID JWT se
+    // 1. USER ID FROM JWT
     // ========================================================
 
     const UserID = req.user?.UserID;
 
     if (!UserID) {
+
       throw new AppError(
         "User ID not found in token",
         STATUS_CODES.UNAUTHORIZED
       );
+
     }
 
+
     // ========================================================
-    // Organizations
+    // 2. REQUEST DATA
     // ========================================================
 
-    const { Organizations } = req.body;
+    const {
+      Organizations,
+      AllOrganizationAccess
+    } = req.body;
+
+
+    // ========================================================
+    // 3. VALIDATE ORGANIZATIONS
+    // ========================================================
 
     if (!Array.isArray(Organizations)) {
+
       throw new AppError(
         "Organizations must be an array",
         STATUS_CODES.BAD_REQUEST
       );
+
     }
 
-    // ========================================================
-    // ModifiedBy JWT se
-    // ========================================================
-
-    const ModifiedBy = req.user?.UserID;
 
     // ========================================================
-    // Send To RabbitMQ
+    // 4. NORMALIZE ALL ORGANIZATION ACCESS
     // ========================================================
 
-    const response = await producer.sendMessage(
-      QUEUE.USER.REQUEST,
-      QUEUE.USER.RESPONSE,
-      {
-        action: "UPDATE_USER_ORGANIZATIONS",
+    let normalizedAllOrganizationAccess =
+      AllOrganizationAccess;
 
-        data: {
-          UserID: Number(UserID),
 
-          Organizations,
+    if (
+      typeof normalizedAllOrganizationAccess === "string"
+    ) {
 
-          ModifiedBy: Number(ModifiedBy),
-        },
-      }
-    );
+      normalizedAllOrganizationAccess =
+        normalizedAllOrganizationAccess.toLowerCase() === "true";
+
+    }
+
 
     // ========================================================
-    // RabbitMQ Error
+    // 5. VALIDATE VALUE
+    // ========================================================
+
+    if (
+      normalizedAllOrganizationAccess !== true &&
+      normalizedAllOrganizationAccess !== false &&
+      normalizedAllOrganizationAccess !== undefined
+    ) {
+
+      throw new AppError(
+        "AllOrganizationAccess must be true or false",
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    // ========================================================
+    // 6. MODIFIED BY FROM JWT
+    // ========================================================
+
+    const ModifiedBy =
+      req.user?.UserID;
+
+
+    // ========================================================
+    // 7. SEND TO RABBITMQ
+    // ========================================================
+
+    const response =
+      await producer.sendMessage(
+
+        QUEUE.USER.REQUEST,
+
+        QUEUE.USER.RESPONSE,
+
+        {
+
+          action:
+            "UPDATE_USER_ORGANIZATIONS",
+
+          data: {
+
+            UserID:
+              Number(UserID),
+
+            Organizations,
+
+            AllOrganizationAccess:
+              normalizedAllOrganizationAccess,
+
+            ModifiedBy:
+              Number(ModifiedBy),
+
+          }
+
+        }
+
+      );
+
+
+    // ========================================================
+    // 8. RABBITMQ ERROR
     // ========================================================
 
     if (!response.success) {
+
       throw new AppError(
+
         response.message ||
-          "Unable to update user organizations",
+        "Unable to update user organizations",
 
         response.statusCode ||
-          STATUS_CODES.BAD_REQUEST
+        STATUS_CODES.BAD_REQUEST
+
       );
+
     }
 
+
     // ========================================================
-    // Response
+    // 9. RESPONSE
     // ========================================================
 
     return res
       .status(STATUS_CODES.SUCCESS)
       .json(response);
 
+
   } catch (error) {
 
     handleError(error, res);
 
   }
+
 };
 // ============================================================UPDATE USER PRODUCTS
 exports.updateUserProducts = async (req, res) => {
