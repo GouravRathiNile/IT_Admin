@@ -21,39 +21,52 @@ const login = async (data) => {
     const userResult = await pool.query(
       `
       SELECT
-        UserID,
-        EmployeeCode,
-        Username,
-        PasswordHash,
-        FullName,
-        Designation,
-        Department,
-        Division,
-        LoginType,
-        UserType,
-        Email,
-        PhoneNumber,
-        Gender,
-        ProfilePhoto,
-        LastPasswordChangedDate,
-        PasswordExpiryDate,
-        LastLogin,
-        IsLocked,
-        IsActive,
-        IsDeleted,
-        DateOfJoining,
-        CreatedBy,
-        CreatedDate,
-        ModifiedBy,
-        ModifiedDate
+    um.UserID,
+    um.EmployeeCode,
+    um.Username,
+    um.PasswordHash,
+    um.FullName,
+    um.Designation,
 
-      FROM user_master
+    um.DepartmentID,
+    dm.DepartmentName,
 
-      WHERE Username = $1
-        AND IsDeleted = FALSE
-        AND IsActive = TRUE
+    um.DivisionID,
+    dv.DivisionName,
 
-      LIMIT 1;
+    um.LoginType,
+    um.UserType,
+
+    um.Email,
+    um.PhoneNumber,
+    um.Gender,
+
+    um.ProfilePhoto,
+
+    um.LastPasswordChangedDate,
+    um.PasswordExpiryDate,
+    um.LastLogin,
+
+    um.IsLocked,
+    um.IsActive,
+    um.IsDeleted,
+
+    um.DateOfJoining,
+
+    um.AllOrganizationAccess
+
+FROM user_master um
+
+LEFT JOIN Department_Master dm
+    ON um.DepartmentID = dm.DepartmentID
+
+LEFT JOIN Division_Master dv
+    ON um.DivisionID = dv.DivisionID
+
+WHERE um.Username = $1
+  AND um.IsDeleted = FALSE
+  AND um.IsActive = TRUE
+LIMIT 1;
       `,
       [Username],
     );
@@ -157,20 +170,24 @@ const login = async (data) => {
     // ========================================================
     // GENERATE JWT
     // ========================================================
-// console.log('login data:', user.usertype);
+    // console.log('login data:', user.usertype);
     const token = jwt.sign(
       {
         UserID: user.userid,
         Username: user.username,
         // User details
         UserType: user.usertype,
-        Department: user.department,
-        Division: user.division,
+        DepartmentID: user.departmentid,
+        DepartmentName: user.departmentname,
+
+        DivisionID: user.divisionid,
+        DivisionName: user.divisionname,
         Designation: user.designation,
         // Actual user's LoginType
         LoginType: user.logintype,
         // How authentication happened
         LoginMode: loginMode,
+        AllOrganizationAccess: user.allorganizationaccess,
       },
 
       process.env.JWT_SECRET,
@@ -620,8 +637,77 @@ const resetPassword = async (data) => {
   }
 };
 
+// ============================================================
+// Logout
+// ============================================================
+
+const logout = async (data) => {
+  try {
+    const {
+      UserID,
+      DeviceID,
+    } = data;
+
+    // --------------------------------------------------------
+    // Validate authenticated user
+    // UserID must come from authenticated JWT/middleware.
+    // Do not accept UserID directly from client body.
+    // --------------------------------------------------------
+
+    if (!UserID) {
+      return {
+        success: false,
+        statusCode: 401,
+        message: "Authentication token is required",
+      };
+    }
+
+    // --------------------------------------------------------
+    // Deactivate device session if DeviceID is provided
+    // --------------------------------------------------------
+
+    if (DeviceID) {
+      await pool.query(
+        `
+        UPDATE user_device
+        SET
+          IsActive = FALSE,
+          ModifiedBy = $1,
+          ModifiedDate = CURRENT_TIMESTAMP
+        WHERE UserID = $1
+          AND DeviceID = $2
+          AND IsDeleted = FALSE;
+        `,
+        [
+          UserID,
+          DeviceID,
+        ]
+      );
+    }
+
+    // --------------------------------------------------------
+    // Logout successful
+    // --------------------------------------------------------
+
+    return {
+      success: true,
+      message: "Logout successful",
+    };
+
+  } catch (error) {
+    console.log("Logout Error:", error.message);
+
+    return {
+      success: false,
+      statusCode: 503,
+      message: "Unable to logout right now. Please try again later.",
+    };
+  }
+};
+
 module.exports = {
   login,
+  logout,
   changePassword,
   forgotPassword,
   verifyForgotPasswordOTP,

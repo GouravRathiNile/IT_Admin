@@ -110,16 +110,75 @@ exports.login = async (req, res) => {
 };
 
 
-// ============================================================Logout
+// ============================================================
+// Logout
+// ============================================================
+
 exports.logout = async (req, res) => {
   try {
-    return res.status(STATUS_CODES.SUCCESS).json({
-      success: true,
-      message: "Logout successful",
-    });
+
+    // ========================================================
+    // Get UserID from authenticated JWT
+    // ========================================================
+
+    const UserID = req.user?.UserID;
+
+    if (!UserID) {
+      throw new AppError(
+        "Invalid authentication token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+    }
+
+    // ========================================================
+    // Device ID
+    // Same DeviceID used during login
+    // ========================================================
+
+    const DeviceID = req.headers["deviceid"];
+
+    // ========================================================
+    // Send Logout Request to RabbitMQ
+    // ========================================================
+
+    const response = await producer.sendMessage(
+      QUEUE.AUTH.REQUEST,
+      QUEUE.AUTH.RESPONSE,
+      {
+        action: "LOGOUT",
+
+        data: {
+          UserID,
+          DeviceID: DeviceID
+            ? String(DeviceID).trim()
+            : null,
+        },
+      }
+    );
+
+    // ========================================================
+    // RabbitMQ / Service Error
+    // ========================================================
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to logout",
+        response.statusCode || STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ========================================================
+    // Response
+    // ========================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
 
   } catch (error) {
+
     handleError(error, res);
+
   }
 };
 
