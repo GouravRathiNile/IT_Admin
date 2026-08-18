@@ -171,14 +171,19 @@ exports.createCapex = async (req, res) => {
 };
 
 // ============================================================ Get All CAPEX
-// ============================================================ Get All CAPEX
 exports.getAllCapex = async (req, res) => {
   try {
     const user = authenticatedUser(req);
 
     let OrganizationID = null;
 
-    if (req.query.OrganizationID !== undefined) {
+    // ================= OrganizationID =================
+
+    if (
+      req.query.OrganizationID !== undefined &&
+      req.query.OrganizationID !== null &&
+      String(req.query.OrganizationID).trim() !== ""
+    ) {
       if (!isPositiveInteger(req.query.OrganizationID)) {
         throw new AppError(
           "Organization ID must be a positive integer",
@@ -189,10 +194,54 @@ exports.getAllCapex = async (req, res) => {
       OrganizationID = Number(req.query.OrganizationID);
     }
 
+    // ================= Status =================
+
+    let Status = null;
+
+    if (
+      req.query.Status !== undefined &&
+      req.query.Status !== null &&
+      String(req.query.Status).trim() !== ""
+    ) {
+      Status = String(req.query.Status).trim().toUpperCase();
+
+      if (!["PENDING", "APPROVED", "REJECTED"].includes(Status)) {
+        throw new AppError(
+          "Status must be Pending, Approved, or Rejected",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+    }
+
+    // ================= Pagination =================
+
+    const page = Number(req.query.page) || 1;
+    const PageSize = Number(req.query.PageSize) || 10;
+
+    if (!Number.isInteger(page) || page < 1) {
+      throw new AppError(
+        "Page must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (!Number.isInteger(PageSize) || PageSize < 1) {
+      throw new AppError(
+        "PageSize must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    // ================= Send To Queue =================
+
     return await sendQueueResponse(res, "GET_ALL_CAPEX", {
       ...user,
       OrganizationID,
+      Status,
+      page,
+      PageSize,
     });
+
   } catch (error) {
     return handleControllerError(error, res);
   }
@@ -280,44 +329,112 @@ exports.updateCapex = async (req, res) => {
   let uploadedDocuments = [];
 
   try {
-    if (!isPositiveInteger(req.params.id)) {
-      throw new AppError("CAPEX ID must be a positive integer", STATUS_CODES.BAD_REQUEST);
-    }
-
     const body = req.body || {};
+
+    // ============================================================
+    // CAPEX ID FROM BODY
+    // ============================================================
+
+   
+
+    const CapexID = body.CapexID;
+
+    // ============================================================
+    // USER
+    // ============================================================
+
     const user = authenticatedUser(req);
+
     const changes = {};
 
-    if (Object.prototype.hasOwnProperty.call(body, "OrganizationID")) {
-      if (!isPositiveInteger(body.OrganizationID)) {
-        throw new AppError(
-          "Organization ID must be a positive integer",
-          STATUS_CODES.BAD_REQUEST
+    // ============================================================
+    // ORGANIZATION ID
+    // ============================================================
+    // Organization update is NOT allowed.
+    // So we do not take OrganizationID from frontend.
+
+    // ============================================================
+    // BASIC CAPEX FIELDS
+    // ============================================================
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        body,
+        "Department"
+      )
+    ) {
+      changes.Department = requiredText(
+        body.Department,
+        "Department"
+      );
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        body,
+        "Item"
+      )
+    ) {
+      changes.Item = requiredText(
+        body.Item,
+        "Item"
+      );
+    }
+
+    // ============================================================
+    // OPTIONAL TEXT FIELDS
+    // ============================================================
+
+    for (
+      const field of [
+        "Description",
+        "Make",
+        "VoidRemarks"
+      ]
+    ) {
+      const value = optionalText(body, field);
+
+      if (value !== undefined) {
+        changes[field] = value;
+      }
+    }
+
+    // ============================================================
+    // QTY / RATE
+    // ============================================================
+
+    for (
+      const field of ["Qty", "Rate", "Total"]
+    ) {
+      if (
+        Object.prototype.hasOwnProperty.call(
+          body,
+          field
+        )
+      ) {
+        changes[field] = positiveNumber(
+          body[field],
+          field
         );
       }
-      changes.OrganizationID = Number(body.OrganizationID);
     }
 
-    if (Object.prototype.hasOwnProperty.call(body, "Department")) {
-      changes.Department = requiredText(body.Department, "Department");
-    }
-    if (Object.prototype.hasOwnProperty.call(body, "Item")) {
-      changes.Item = requiredText(body.Item, "Item");
+    // ============================================================
+    // IS VOID
+    // ============================================================
+
+    const isVoid = optionalBoolean(
+      body,
+      "IsVoid"
+    );
+
+    if (isVoid !== undefined) {
+      changes.IsVoid = isVoid;
     }
 
-    for (const field of ["Description", "Make", "VoidRemarks"]) {
-      const value = optionalText(body, field);
-      if (value !== undefined) changes[field] = value;
-    }
-
-    for (const field of ["Qty", "Rate"]) {
-      if (Object.prototype.hasOwnProperty.call(body, field)) {
-        changes[field] = positiveNumber(body[field], field);
-      }
-    }
-
-    const isVoid = optionalBoolean(body, "IsVoid");
-    if (isVoid !== undefined) changes.IsVoid = isVoid;
+    // ============================================================
+    // APPROVAL FIELDS NOT ALLOWED
+    // ============================================================
 
     const forbiddenApprovalFields = [
       "CapexApprovalID",
@@ -329,16 +446,29 @@ exports.updateCapex = async (req, res) => {
       "Remarks",
       "Approvals",
     ];
-    if (forbiddenApprovalFields.some((field) => Object.prototype.hasOwnProperty.call(body, field))) {
+
+    if (
+      forbiddenApprovalFields.some(
+        (field) =>
+          Object.prototype.hasOwnProperty.call(
+            body,
+            field
+          )
+      )
+    ) {
       throw new AppError(
         "Approval fields cannot be changed through the CAPEX update API",
         STATUS_CODES.BAD_REQUEST
       );
     }
 
-    const deleteDocumentIDs = parseDocumentIDs(body.DeleteDocumentIDs);
+    // ============================================================
+    // UPLOAD NEW DOCUMENTS
+    // ============================================================
+
     for (const file of req.files || []) {
       const filePath = await uploadToAzure(file);
+
       uploadedDocuments.push({
         FileName: file.originalname,
         FilePath: filePath,
@@ -347,48 +477,98 @@ exports.updateCapex = async (req, res) => {
       });
     }
 
+    // ============================================================
+    // DELETE OLD DOCUMENTS
+    // ============================================================
+
+    const deleteDocumentIDs =
+      parseDocumentIDs(
+        body.DeleteDocumentIDs
+      );
+
+    // ============================================================
+    // AT LEAST ONE CHANGE REQUIRED
+    // ============================================================
+
     if (
-      Object.keys(changes).length === 0
-      && uploadedDocuments.length === 0
-      && deleteDocumentIDs.length === 0
+      Object.keys(changes).length === 0 &&
+      uploadedDocuments.length === 0 &&
+      deleteDocumentIDs.length === 0
     ) {
-      throw new AppError("No CAPEX changes were provided", STATUS_CODES.BAD_REQUEST);
+      throw new AppError(
+        "No CAPEX changes were provided",
+        STATUS_CODES.BAD_REQUEST
+      );
     }
 
-    const response = await producer.sendMessage(
-      QUEUE.CAPEX.REQUEST,
-      QUEUE.CAPEX.RESPONSE,
-      {
-        action: "UPDATE_CAPEX",
-        data: {
-          CapexID: Number(req.params.id),
-          ...user,
-          Changes: changes,
-          Documents: uploadedDocuments,
-          DeleteDocumentIDs: deleteDocumentIDs,
-        },
-      }
-    );
+    // ============================================================
+    // SEND TO CAPEX QUEUE
+    // ============================================================
+
+    const response =
+      await producer.sendMessage(
+        QUEUE.CAPEX.REQUEST,
+        QUEUE.CAPEX.RESPONSE,
+        {
+          action: "UPDATE_CAPEX",
+
+          data: {
+            CapexID,
+
+            ...user,
+
+            Changes: changes,
+
+            Documents: uploadedDocuments,
+
+            DeleteDocumentIDs:
+              deleteDocumentIDs,
+          },
+        }
+      );
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to update CAPEX",
-        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.message ||
+          "Unable to update CAPEX",
+
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+
         response.errors
       );
     }
 
-    return res.status(response.queued ? 202 : STATUS_CODES.SUCCESS).json(response);
+    return res
+      .status(
+        response.queued
+          ? 202
+          : STATUS_CODES.SUCCESS
+      )
+      .json(response);
+
   } catch (error) {
-    return handleControllerError(error, res);
+    return handleControllerError(
+      error,
+      res
+    );
   }
 };
 
 // ============================================================ Soft Delete CAPEX
 exports.deleteCapex = async (req, res) => {
   try {
-    if (!isPositiveInteger(req.params.id)) {
-      throw new AppError("CAPEX ID must be a positive integer", STATUS_CODES.BAD_REQUEST);
+    const CapexID = req.body.CapexID;
+
+    if (!isPositiveInteger(CapexID)) {
+      throw new AppError(
+        "CAPEX ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
     }
 
     const response = await producer.sendMessage(
@@ -397,7 +577,7 @@ exports.deleteCapex = async (req, res) => {
       {
         action: "DELETE_CAPEX",
         data: {
-          CapexID: Number(req.params.id),
+          CapexID: Number(CapexID),
           ...authenticatedUser(req),
         },
       }
@@ -411,7 +591,10 @@ exports.deleteCapex = async (req, res) => {
       );
     }
 
-    return res.status(STATUS_CODES.SUCCESS).json(response);
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
   } catch (error) {
     return handleControllerError(error, res);
   }
@@ -420,11 +603,19 @@ exports.deleteCapex = async (req, res) => {
 // ============================================================ Approval Action
 exports.approveCapex = async (req, res) => {
   try {
-    if (!isPositiveInteger(req.params.id)) {
-      throw new AppError("CAPEX ID must be a positive integer", STATUS_CODES.BAD_REQUEST);
+    const CapexID = req.body?.CapexID;
+
+    if (!isPositiveInteger(Number(CapexID))) {
+      throw new AppError(
+        "CAPEX ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
     }
 
-    const action = String(req.body?.Action || "").trim().toUpperCase();
+    const action = String(req.body?.Action || "")
+      .trim()
+      .toUpperCase();
+
     if (!["APPROVE", "REJECT", "RETURN"].includes(action)) {
       throw new AppError(
         "Action must be APPROVE, REJECT, or RETURN",
@@ -432,11 +623,15 @@ exports.approveCapex = async (req, res) => {
       );
     }
 
-    const remarks = typeof req.body?.Remarks === "string"
-      ? req.body.Remarks.trim()
-      : "";
+    const remarks =
+      typeof req.body?.Remarks === "string"
+        ? req.body.Remarks.trim()
+        : "";
 
-    if (["REJECT", "RETURN"].includes(action) && !remarks) {
+    if (
+      ["REJECT", "RETURN"].includes(action) &&
+      !remarks
+    ) {
       throw new AppError(
         `Remarks are required when the action is ${action}`,
         STATUS_CODES.BAD_REQUEST
@@ -444,13 +639,15 @@ exports.approveCapex = async (req, res) => {
     }
 
     const user = authenticatedUser(req);
+
     const response = await producer.sendMessage(
       QUEUE.CAPEX.REQUEST,
       QUEUE.CAPEX.RESPONSE,
       {
         action: "PROCESS_CAPEX_APPROVAL",
+
         data: {
-          CapexID: Number(req.params.id),
+          CapexID: Number(CapexID),
           Action: action,
           Remarks: remarks || null,
           UserID: user.UserID,
@@ -461,13 +658,18 @@ exports.approveCapex = async (req, res) => {
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to process CAPEX approval",
-        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.message ||
+          "Unable to process CAPEX approval",
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
         response.errors
       );
     }
 
-    return res.status(STATUS_CODES.SUCCESS).json(response);
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
   } catch (error) {
     return handleControllerError(error, res);
   }

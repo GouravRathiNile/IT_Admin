@@ -157,7 +157,7 @@ const login = async (data) => {
     // ========================================================
     // GENERATE JWT
     // ========================================================
-
+// console.log('login data:', user.usertype);
     const token = jwt.sign(
       {
         UserID: user.userid,

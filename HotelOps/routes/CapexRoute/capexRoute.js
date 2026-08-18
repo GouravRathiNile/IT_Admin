@@ -8,14 +8,14 @@ const router = express.Router();
 // ============================================================ Create CAPEX
 router.post("/Create",authenticateToken,upload.array("Documents", 10),createCapex);
 // ============================================================ Read CAPEX
-router.get("/getall", authenticateToken, getAllCapex);
-router.get("/getbyid/:id", authenticateToken, getCapexById);
+router.get("/CapexList", authenticateToken, getAllCapex);
+router.get("/CapexById/:id", authenticateToken, getCapexById);
 // ============================================================ Update CAPEX
-router.put("/update/:id",authenticateToken,upload.array("Documents", 10),updateCapex);
+router.put("/Update",authenticateToken,upload.array("Documents", 10),updateCapex);
 // ============================================================ Soft Delete CAPEX
-router.delete("/delete/:id", authenticateToken, deleteCapex);
+router.delete("/Delete", authenticateToken, deleteCapex);
 // ============================================================ Approval Action
-router.put("/approve/:id", authenticateToken, approveCapex);
+router.put("/CapexApprovalSystem", authenticateToken, approveCapex);
 // ============================================================ CAPEX Reports
 router.get("/reports/summary",authenticateToken,getCapexSummaryReport,);
 router.get("/reports/status",authenticateToken,getCapexStatusReport,);
