@@ -1649,7 +1649,754 @@ const deleteCapex = async (data) => {
 
 // ============================================================ Approval Workflow
 // Lock and process only the current configured approval stage.
+const processCapexApproval = async (data) => {
+  let client;
+  let transactionStarted = false;
 
+  console.log("PROCESS CAPEX APPROVAL DATA:", JSON.stringify(data));
+
+  try {
+    // ============================================================
+    // 1. Normalize input
+    // ============================================================
+
+    const approverRole = String(data.UserType || "")
+      .trim()
+      .toUpperCase();
+
+    const action = String(data.Action || "")
+      .trim()
+      .toUpperCase();
+
+    const remarks = String(data.Remarks || "").trim();
+
+    // ============================================================
+    // 2. Validate action
+    // ============================================================
+
+    if (!["APPROVE", "REJECT", "RETURN"].includes(action)) {
+      return fail("Invalid CAPEX approval action.", 400);
+    }
+
+    // ============================================================
+    // 3. Remarks required for REJECT / RETURN
+    // ============================================================
+
+    if (["REJECT", "RETURN"].includes(action) && !remarks) {
+      return fail(`Remarks are required when the action is ${action}.`, 400);
+    }
+
+    // ============================================================
+    // 4. Validate role
+    // ============================================================
+
+    if (!APPROVAL_ROLES.has(approverRole)) {
+      return fail("Your role is not authorized for CAPEX approval.", 403);
+    }
+
+    // ============================================================
+    // 5. DB Connection
+    // ============================================================
+
+    client = await pool.connect();
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    // ============================================================
+    // 6. Get CAPEX
+    // ============================================================
+
+    const masterResult = await client.query(
+      `
+      SELECT
+        cm.CapexID,
+        cm.CapexNumber,
+        cm.OrganizationID,
+        cm.ModifiedDate
+      FROM Capex_Master cm
+      WHERE cm.CapexID = $1
+        AND cm.IsDeleted = FALSE
+      LIMIT 1
+      FOR UPDATE OF cm;
+      `,
+      [data.CapexID],
+    );
+
+    // ============================================================
+    // 7. CAPEX not found
+    // ============================================================
+
+    if (masterResult.rows.length === 0) {
+      const exists = await capexExists(client, data.CapexID);
+
+      await rollback(client, transactionStarted);
+
+      transactionStarted = false;
+
+      return exists
+        ? fail("CAPEX record is not available for approval.", 400)
+        : fail("CAPEX record not found.", 404);
+    }
+
+    const capex = masterResult.rows[0];
+
+    // ============================================================
+    // 8. Get organization-specific / default approval config
+    //
+    // getMergedApprovals() should:
+    // 1. First check organization configuration
+    // 2. If not found, use default configuration
+    // ============================================================
+
+    const configuredStages = await getMergedApprovals(
+      client,
+      capex.organizationid,
+    );
+
+    if (!configuredStages || configuredStages.length === 0) {
+      await rollback(client, transactionStarted);
+
+      transactionStarted = false;
+
+      return fail("CAPEX approval configuration not found.", 400);
+    }
+
+    if (!approvalConfigurationIsValid(configuredStages)) {
+      await rollback(client, transactionStarted);
+
+      transactionStarted = false;
+
+      return fail(
+        "CAPEX approval configuration contains an invalid approval role.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // 9. Get CAPEX Approval
+    // ============================================================
+
+    const approvalResult = await client.query(
+      `
+      SELECT
+        CapexApprovalID,
+
+        GMStatus,
+        GMStatusDateTime,
+        GMStatusApprovedBy,
+        GMRemarks,
+
+        CEOStatus,
+        CEOStatusDateTime,
+        CEOStatusApprovedBy,
+        CEORemarks,
+
+        OwnerStatus,
+        OwnerStatusDateTime,
+        OwnerStatusApprovedBy,
+        OwnerRemarks,
+
+        FinalStatus,
+        FinalStatusDateTime
+
+      FROM Capex_Approval
+
+      WHERE CapexID = $1
+        AND IsDeleted = FALSE
+
+      LIMIT 1
+
+      FOR UPDATE;
+      `,
+      [data.CapexID],
+    );
+
+    // ============================================================
+    // 10. Approval row not found
+    // ============================================================
+
+    if (approvalResult.rows.length === 0) {
+      await rollback(client, transactionStarted);
+
+      transactionStarted = false;
+
+      return fail("CAPEX approval record not found.", 404);
+    }
+
+    const approval = approvalResult.rows[0];
+
+    // ============================================================
+    // 11. Get role-specific approval data
+    // ============================================================
+
+    const getRoleData = (role) => {
+      switch (String(role).trim().toUpperCase()) {
+        case "GM":
+          return {
+            status: approval.gmstatus,
+            statusDateTime: approval.gmstatusdatetime,
+            approvedBy: approval.gmstatusapprovedby,
+            remarks: approval.gmremarks,
+          };
+
+        case "CEO":
+          return {
+            status: approval.ceostatus,
+            statusDateTime: approval.ceostatusdatetime,
+            approvedBy: approval.ceostatusapprovedby,
+            remarks: approval.ceoremarks,
+          };
+
+        case "OWNER":
+          return {
+            status: approval.ownerstatus,
+            statusDateTime: approval.ownerstatusdatetime,
+            approvedBy: approval.ownerstatusapprovedby,
+            remarks: approval.ownerremarks,
+          };
+
+        default:
+          return null;
+      }
+    };
+
+    // ============================================================
+    // 12. Build stages
+    // ============================================================
+
+    const stages = configuredStages.map((stage) => {
+      const role = String(stage.ApprovalRole).trim().toUpperCase();
+
+      const roleData = getRoleData(role);
+
+      return {
+        configured: stage,
+        role,
+        approval: roleData,
+
+        status: String(roleData?.status || "Pending")
+          .trim()
+          .toUpperCase(),
+      };
+    });
+
+    console.log("CAPEX APPROVAL STAGES:", JSON.stringify(stages));
+
+    // ============================================================
+    // 13. Final status already completed
+    // ============================================================
+
+    if (
+      ["APPROVED", "REJECTED"].includes(
+        String(approval.finalstatus || "")
+          .trim()
+          .toUpperCase(),
+      )
+    ) {
+      await rollback(client, transactionStarted);
+
+      transactionStarted = false;
+
+      return fail(
+        `This CAPEX record is already ${String(
+          approval.finalstatus,
+        ).toLowerCase()}.`,
+        400,
+      );
+    }
+
+    // ============================================================
+    // 14. Find current pending stage
+    //
+    // Example:
+    //
+    // GM      = Approved
+    // CEO     = Pending
+    // OWNER   = Pending
+    //
+    // currentIndex = CEO
+    // currentRole  = CEO
+    // ============================================================
+
+    const currentIndex = stages.findIndex(
+      (stage) => !["APPROVED"].includes(stage.status),
+    );
+
+    // ============================================================
+    // 15. All stages approved
+    // ============================================================
+
+    if (currentIndex === -1) {
+      await rollback(client, transactionStarted);
+
+      transactionStarted = false;
+
+      return fail("This CAPEX record is already finally approved.", 400);
+    }
+
+    const currentStage = stages[currentIndex];
+
+    const currentRole = currentStage.role;
+
+    const currentStatus = currentStage.status;
+
+    // ============================================================
+    // 16. Find user's own approval stage
+    // ============================================================
+
+    const userStageIndex = stages.findIndex(
+      (stage) => stage.role === approverRole,
+    );
+
+    if (userStageIndex === -1) {
+      await rollback(client, transactionStarted);
+
+      transactionStarted = false;
+
+      return fail(
+        `Approval stage not configured for role ${approverRole}.`,
+        403,
+      );
+    }
+
+    const userStage = stages[userStageIndex];
+
+    const userStatus = userStage.status;
+
+    // ============================================================
+    // 17. Determine whether user can perform action
+    //
+    // RULE:
+    //
+    // A. Current pending role can perform APPROVE/REJECT/RETURN
+    //
+    // B. Previous APPROVED role can ALSO perform
+    //    REJECT/RETURN while next stage is PENDING.
+    //
+    // Example:
+    //
+    // GM APPROVED
+    // CEO PENDING
+    //
+    // GM => APPROVE  ❌
+    // GM => REJECT   ✅
+    // GM => RETURN   ✅
+    //
+    // CEO => APPROVE  ✅
+    // CEO => REJECT   ✅
+    // CEO => RETURN   ✅
+    // ============================================================
+
+    let canPerformAction = false;
+
+    // ------------------------------------------------------------
+    // CASE 1:
+    // User is the current pending stage
+    // ------------------------------------------------------------
+
+    if (
+      userStageIndex === currentIndex &&
+      ["PENDING", "RETURNED"].includes(userStatus)
+    ) {
+      canPerformAction = true;
+    }
+
+    // ------------------------------------------------------------
+    // CASE 2:
+    // User is previous approved stage
+    //
+    // User can REJECT / RETURN while next stage is pending.
+    //
+    // GM Approved -> CEO Pending
+    // GM can Reject/Return
+    //
+    // CEO Approved -> OWNER Pending
+    // CEO can Reject/Return
+    // ------------------------------------------------------------
+
+    const nextStage = stages[userStageIndex + 1];
+
+    if (
+      userStageIndex < currentIndex &&
+      userStatus === "APPROVED" &&
+      nextStage &&
+      nextStage.status === "PENDING" &&
+      ["REJECT", "RETURN"].includes(action)
+    ) {
+      canPerformAction = true;
+    }
+
+    // ============================================================
+    // 18. Permission denied
+    // ============================================================
+
+    if (!canPerformAction) {
+      await rollback(client, transactionStarted);
+
+      transactionStarted = false;
+
+      return fail(`You cannot perform ${action} action at this stage.`, 403);
+    }
+
+    // ============================================================
+    // IMPORTANT:
+    //
+    // Action role is user's role, NOT currentRole.
+    //
+    // Example:
+    //
+    // GM Approved
+    // CEO Pending
+    // GM Reject
+    //
+    // We must update GM column, NOT CEO column.
+    // ============================================================
+
+    const actionRole = approverRole;
+
+    // ============================================================
+    // 19. Convert action to DB status
+    // ============================================================
+
+    const newStatus =
+      action === "APPROVE"
+        ? "Approved"
+        : action === "REJECT"
+          ? "Rejected"
+          : "Returned";
+
+    // ============================================================
+    // 20. Update role status helper
+    // ============================================================
+
+    const updateRoleApproval = async (role, status, userId, roleRemarks) => {
+      let query = "";
+      let params = [
+        status,
+        userId,
+        roleRemarks || null,
+        approval.capexapprovalid,
+      ];
+
+      switch (role) {
+        case "GM":
+          query = `
+            UPDATE Capex_Approval
+            SET
+              GMStatus = $1,
+              GMStatusDateTime = CURRENT_TIMESTAMP,
+              GMStatusApprovedBy = $2,
+              GMRemarks = $3,
+              ModifiedBy = $2,
+              ModifiedDate = CURRENT_TIMESTAMP
+            WHERE CapexApprovalID = $4
+              AND IsDeleted = FALSE;
+          `;
+
+          break;
+
+        case "CEO":
+          query = `
+            UPDATE Capex_Approval
+            SET
+              CEOStatus = $1,
+              CEOStatusDateTime = CURRENT_TIMESTAMP,
+              CEOStatusApprovedBy = $2,
+              CEORemarks = $3,
+              ModifiedBy = $2,
+              ModifiedDate = CURRENT_TIMESTAMP
+            WHERE CapexApprovalID = $4
+              AND IsDeleted = FALSE;
+          `;
+
+          break;
+
+        case "OWNER":
+          query = `
+            UPDATE Capex_Approval
+            SET
+              OwnerStatus = $1,
+              OwnerStatusDateTime = CURRENT_TIMESTAMP,
+              OwnerStatusApprovedBy = $2,
+              OwnerRemarks = $3,
+              ModifiedBy = $2,
+              ModifiedDate = CURRENT_TIMESTAMP
+            WHERE CapexApprovalID = $4
+              AND IsDeleted = FALSE;
+          `;
+
+          break;
+
+        default:
+          throw new Error(`Unsupported approval role: ${role}`);
+      }
+
+      await client.query(query, params);
+    };
+
+    // ============================================================
+    // 21. APPROVE
+    //
+    // Only CURRENT stage can APPROVE.
+    //
+    // GM Approved -> CEO Pending
+    // GM cannot approve again.
+    //
+    // CEO can approve.
+    // ============================================================
+
+    if (action === "APPROVE") {
+      if (userStageIndex !== currentIndex) {
+        await rollback(client, transactionStarted);
+
+        transactionStarted = false;
+
+        return fail(
+          `Only the current ${currentRole} approval stage can approve this CAPEX.`,
+          403,
+        );
+      }
+
+      // ----------------------------------------------------------
+      // Update current user's stage
+      // ----------------------------------------------------------
+
+      await updateRoleApproval(actionRole, "Approved", data.UserID, remarks);
+
+      // ----------------------------------------------------------
+      // Check next stage
+      // ----------------------------------------------------------
+
+      const followingStage = stages[currentIndex + 1];
+
+      // ----------------------------------------------------------
+      // More approval pending
+      // ----------------------------------------------------------
+
+      if (followingStage) {
+        await client.query(
+          `
+          UPDATE Capex_Approval
+          SET
+            FinalStatus = NULL,
+            FinalStatusDateTime = NULL,
+            ModifiedBy = $1,
+            ModifiedDate = CURRENT_TIMESTAMP
+          WHERE CapexApprovalID = $2
+            AND IsDeleted = FALSE;
+          `,
+          [data.UserID, approval.capexapprovalid],
+        );
+
+        await client.query("COMMIT");
+
+        transactionStarted = false;
+
+        return {
+          success: true,
+
+          message: "CAPEX approved successfully.",
+
+          data: {
+            CapexID: Number(capex.capexid),
+
+            CapexNumber: Number(capex.capexnumber),
+
+            CurrentStatus: "Pending",
+
+            CurrentApprovalRole: followingStage.role,
+
+            Action: "APPROVE",
+          },
+        };
+      }
+
+      // ----------------------------------------------------------
+      // No next stage = FINAL APPROVAL
+      // ----------------------------------------------------------
+
+      await client.query(
+        `
+        UPDATE Capex_Approval
+        SET
+          FinalStatus = 'Approved',
+          FinalStatusDateTime = CURRENT_TIMESTAMP,
+          ModifiedBy = $1,
+          ModifiedDate = CURRENT_TIMESTAMP
+        WHERE CapexApprovalID = $2
+          AND IsDeleted = FALSE;
+        `,
+        [data.UserID, approval.capexapprovalid],
+      );
+
+      await client.query("COMMIT");
+
+      transactionStarted = false;
+
+      return {
+        success: true,
+
+        message: "CAPEX finally approved successfully.",
+
+        data: {
+          CapexID: Number(capex.capexid),
+
+          CapexNumber: Number(capex.capexnumber),
+
+          CurrentStatus: "Approved",
+
+          CurrentApprovalRole: null,
+
+          Action: "APPROVE",
+        },
+      };
+    }
+
+    // ============================================================
+    // 22. REJECT
+    //
+    // Current pending role can reject.
+    //
+    // Previous approved role can ALSO reject while
+    // next stage is pending.
+    //
+    // Example:
+    //
+    // GM Approved
+    // CEO Pending
+    //
+    // GM Reject => GM becomes Rejected
+    // FinalStatus = Rejected
+    // ============================================================
+
+    if (action === "REJECT") {
+      await updateRoleApproval(actionRole, "Rejected", data.UserID, remarks);
+
+      await client.query(
+        `
+        UPDATE Capex_Approval
+        SET
+          FinalStatus = 'Rejected',
+          FinalStatusDateTime = CURRENT_TIMESTAMP,
+          ModifiedBy = $1,
+          ModifiedDate = CURRENT_TIMESTAMP
+        WHERE CapexApprovalID = $2
+          AND IsDeleted = FALSE;
+        `,
+        [data.UserID, approval.capexapprovalid],
+      );
+
+      await client.query("COMMIT");
+
+      transactionStarted = false;
+
+      return {
+        success: true,
+
+        message: "CAPEX rejected successfully.",
+
+        data: {
+          CapexID: Number(capex.capexid),
+
+          CapexNumber: Number(capex.capexnumber),
+
+          CurrentStatus: "Rejected",
+
+          CurrentApprovalRole: null,
+
+          Action: "REJECT",
+        },
+      };
+    }
+
+    // ============================================================
+    // 23. RETURN
+    //
+    // If current stage returns:
+    //
+    // CEO Pending -> CEO Returned
+    //
+    // If previous approved stage returns:
+    //
+    // GM Approved -> CEO Pending
+    // GM Return
+    //
+    // GM becomes Returned
+    // Then GM becomes current stage again.
+    // ============================================================
+
+    if (action === "RETURN") {
+      await updateRoleApproval(actionRole, "Returned", data.UserID, remarks);
+
+      // ----------------------------------------------------------
+      // Reset FinalStatus
+      // ----------------------------------------------------------
+
+      await client.query(
+        `
+        UPDATE Capex_Approval
+        SET
+          FinalStatus = 'Returned',
+          FinalStatusDateTime = CURRENT_TIMESTAMP,
+          ModifiedBy = $1,
+          ModifiedDate = CURRENT_TIMESTAMP
+        WHERE CapexApprovalID = $2
+          AND IsDeleted = FALSE;
+        `,
+        [data.UserID, approval.capexapprovalid],
+      );
+
+      await client.query("COMMIT");
+
+      transactionStarted = false;
+
+      return {
+        success: true,
+
+        message: "CAPEX returned successfully.",
+
+        data: {
+          CapexID: Number(capex.capexid),
+
+          CapexNumber: Number(capex.capexnumber),
+
+          CurrentStatus: "Returned",
+
+          CurrentApprovalRole: actionRole,
+
+          Action: "RETURN",
+        },
+      };
+    }
+
+    // ============================================================
+    // Should never reach here
+    // ============================================================
+
+    await rollback(client, transactionStarted);
+
+    transactionStarted = false;
+
+    return fail("Unable to process CAPEX approval.", 400);
+  } catch (error) {
+    await rollback(client, transactionStarted);
+
+    console.error("CAPEX Approval Error:", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return fail("Unable to process CAPEX approval at this time.", 500);
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+};
 // ============================================================ Report SQL
 // PostgreSQL derives effective status and aggregates authorized CAPEX records.
 const REPORT_DATA_CTE = `
