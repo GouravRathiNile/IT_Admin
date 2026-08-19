@@ -2616,7 +2616,8 @@ const getAllUsersTabel = async (
   limit = 10,
   FullName,
   DepartmentID,
-  UserType
+  UserType,
+  OrganizationID
 ) => {
 
   try {
@@ -2652,8 +2653,6 @@ const getAllUsersTabel = async (
 
     // ========================================================
     // FULL NAME FILTER
-    // Partial Search
-    // Example: Mohit -> Mohit Solanki
     // ========================================================
 
     if (
@@ -2675,7 +2674,6 @@ const getAllUsersTabel = async (
 
     // ========================================================
     // DEPARTMENT ID FILTER
-    // Exact Match
     // ========================================================
 
     if (
@@ -2697,7 +2695,6 @@ const getAllUsersTabel = async (
 
     // ========================================================
     // USER TYPE FILTER
-    // Exact Match
     // ========================================================
 
     if (
@@ -2713,6 +2710,35 @@ const getAllUsersTabel = async (
       filters.push(
         `um.UserType = $${filterValues.length}`
       );
+
+    }
+
+
+    // ========================================================
+    // ORGANIZATION ID FILTER
+    // Using user_org_mapping
+    // ========================================================
+
+    if (
+      OrganizationID !== undefined &&
+      OrganizationID !== null &&
+      String(OrganizationID).trim() !== ""
+    ) {
+
+      filterValues.push(
+        Number(OrganizationID)
+      );
+
+      filters.push(`
+        EXISTS (
+          SELECT 1
+          FROM user_org_mapping uom
+          WHERE uom.UserID = um.UserID
+            AND uom.OrganizationID = $${filterValues.length}
+            AND uom.IsDeleted = FALSE
+            AND uom.IsActive = TRUE
+        )
+      `);
 
     }
 
@@ -2782,8 +2808,7 @@ const getAllUsersTabel = async (
 
     // ========================================================
     // COUNT QUERY
-    // IMPORTANT:
-    // Same filters should be applied here
+    // Same filters applied
     // ========================================================
 
     const countQuery = `
@@ -2797,7 +2822,7 @@ const getAllUsersTabel = async (
 
 
     // ========================================================
-    // EXECUTE BOTH QUERIES
+    // EXECUTE QUERIES
     // ========================================================
 
     const [result, countResult] =
@@ -2852,13 +2877,11 @@ const getAllUsersTabel = async (
         Designation:
           row.designation,
 
-
         DepartmentID:
           row.departmentid,
 
         DepartmentName:
           row.departmentname,
-
 
         DivisionID:
           row.divisionid,
@@ -2866,13 +2889,11 @@ const getAllUsersTabel = async (
         DivisionName:
           row.divisionname,
 
-
         LoginType:
           row.logintype,
 
         UserType:
           row.usertype,
-
 
         Email:
           row.email,
@@ -2897,33 +2918,22 @@ const getAllUsersTabel = async (
       message:
         "Users fetched successfully",
 
-
-      // Total records after applying filters
       TotalCount:
         totalCount,
 
-
-      // Records returned on current page
       PageCount:
         users.length,
 
-
-      // Current page
       CurrentPage:
         page,
 
-
-      // Records per page
       PageSize:
         limit,
 
-
-      // Total pages after applying filters
       TotalPages:
         Math.ceil(
           totalCount / limit
         ),
-
 
       data:
         users,
@@ -2937,7 +2947,6 @@ const getAllUsersTabel = async (
       "Get All Users Table Error:",
       error.message
     );
-
 
     return {
 
