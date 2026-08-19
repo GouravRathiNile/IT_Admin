@@ -36,14 +36,22 @@ exports.createUser = async (req, res) => {
       Products,
     } = req.body;
 
-    // ========================================= Validation
+    // =========================================
+    // VALIDATION
+    // =========================================
 
     if (!Username) {
-      throw new AppError("Username is required", STATUS_CODES.BAD_REQUEST);
+      throw new AppError(
+        "Username is required",
+        STATUS_CODES.BAD_REQUEST
+      );
     }
 
     if (!PasswordHash) {
-      throw new AppError("Password is required", STATUS_CODES.BAD_REQUEST);
+      throw new AppError(
+        "Password is required",
+        STATUS_CODES.BAD_REQUEST
+      );
     }
 
     const passwordRegex =
@@ -52,56 +60,125 @@ exports.createUser = async (req, res) => {
     if (!passwordRegex.test(PasswordHash)) {
       throw new AppError(
         "Password must be 6+ characters with uppercase, lowercase, number & special character",
-        STATUS_CODES.BAD_REQUEST,
+        STATUS_CODES.BAD_REQUEST
       );
     }
+
     if (!FullName) {
-      throw new AppError("Full Name is required", STATUS_CODES.BAD_REQUEST);
+      throw new AppError(
+        "Full Name is required",
+        STATUS_CODES.BAD_REQUEST
+      );
     }
 
     if (!LoginType) {
-      throw new AppError("Login Type is required", STATUS_CODES.BAD_REQUEST);
+      throw new AppError(
+        "Login Type is required",
+        STATUS_CODES.BAD_REQUEST
+      );
     }
 
-    // ========================================= Profile Photo Upload
+    // =========================================
+    // PROFILE PHOTO
+    // =========================================
+
     let ProfilePhoto = null;
 
     if (req.file) {
       ProfilePhoto = await uploadToAzure(req.file);
     }
 
-    if (
-      LoginType === "SuperAdmin" &&
-      AllOrganizationAccess === undefined
-    ) {
-      throw new AppError(
-        "AllOrganizationAccess is required for SuperAdmin",
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
+    // =========================================
+    // SUPER ADMIN ACCESS
+    // =========================================
+
+    // if (
+    //   LoginType === "SuperAdmin" &&
+    //   AllOrganizationAccess === undefined
+    // ) {
+    //   throw new AppError(
+    //     "AllOrganizationAccess is required for SuperAdmin",
+    //     STATUS_CODES.BAD_REQUEST
+    //   );
+    // }
 
     const normalizedAllOrganizationAccess =
       String(AllOrganizationAccess).toLowerCase() === "true";
 
-    // ========================================= Parse Mapping Data
+    // =========================================
+    // PARSE ORGANIZATIONS
+    // =========================================
+
     let organizationMappings = [];
-    let productMappings = [];
 
     if (Organizations) {
-      organizationMappings =
-        typeof Organizations === "string"
-          ? JSON.parse(Organizations)
-          : Organizations;
+      try {
+        organizationMappings =
+          typeof Organizations === "string"
+            ? JSON.parse(Organizations)
+            : Organizations;
+      } catch (error) {
+        throw new AppError(
+          "Invalid Organizations JSON",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
     }
+
+    // =========================================
+    // PARSE PRODUCTS
+    // =========================================
+
+    let productMappings = [];
 
     if (Products) {
-      productMappings =
-        typeof Products === "string" ? JSON.parse(Products) : Products;
+
+      try {
+
+        productMappings =
+          typeof Products === "string"
+            ? JSON.parse(Products)
+            : Products;
+
+      } catch (error) {
+
+        throw new AppError(
+          "Invalid Products JSON",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
+
+      if (!Array.isArray(productMappings)) {
+
+        throw new AppError(
+          "Products must be an array",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
+
+      // Only validate ProductID presence
+      for (const product of productMappings) {
+
+        if (
+          !product ||
+          !product.ProductID
+        ) {
+
+          throw new AppError(
+            "ProductID is required for every product",
+            STATUS_CODES.BAD_REQUEST
+          );
+
+        }
+
+      }
     }
 
-    // ========================================================
+    // =========================================
     // LOGIN TYPE VALIDATION
-    // ========================================================
+    // =========================================
 
     if (
       !["SuperAdmin", "Organization", "Brand"].includes(LoginType)
@@ -112,21 +189,12 @@ exports.createUser = async (req, res) => {
       );
     }
 
-
-    // ========================================================
+    // =========================================
     // SUPER ADMIN
-    // ========================================================
+    // =========================================
 
     if (LoginType === "SuperAdmin") {
 
-      if (AllOrganizationAccess === undefined) {
-        throw new AppError(
-          "AllOrganizationAccess is required for SuperAdmin",
-          STATUS_CODES.BAD_REQUEST
-        );
-      }
-
-      // ALL ORGANIZATIONS
       if (normalizedAllOrganizationAccess === true) {
 
         if (
@@ -139,10 +207,7 @@ exports.createUser = async (req, res) => {
           );
         }
 
-      }
-
-      // SELECTED ORGANIZATIONS
-      else {
+      } else {
 
         if (
           !Array.isArray(organizationMappings) ||
@@ -163,10 +228,9 @@ exports.createUser = async (req, res) => {
       }
     }
 
-
-    // ========================================================
+    // =========================================
     // ORGANIZATION
-    // ========================================================
+    // =========================================
 
     if (LoginType === "Organization") {
 
@@ -177,21 +241,20 @@ exports.createUser = async (req, res) => {
         );
       }
 
-      if (
-        !Array.isArray(organizationMappings) ||
-        organizationMappings.length !== 1
-      ) {
-        throw new AppError(
-          "Organization user must have exactly one organization",
-          STATUS_CODES.BAD_REQUEST
-        );
-      }
+      // if (
+      //   !Array.isArray(organizationMappings) ||
+      //   organizationMappings.length !== 1
+      // ) {
+      //   throw new AppError(
+      //     "Organization user must have exactly one organization",
+      //     STATUS_CODES.BAD_REQUEST
+      //   );
+      // }
     }
 
-
-    // ========================================================
+    // =========================================
     // BRAND
-    // ========================================================
+    // =========================================
 
     if (LoginType === "Brand") {
 
@@ -212,7 +275,11 @@ exports.createUser = async (req, res) => {
         );
       }
     }
-    // ========================================= Send To RabbitMQ
+
+    // =========================================
+    // SEND TO RABBITMQ
+    // =========================================
+
     const response = await producer.sendMessage(
       QUEUE.USER.REQUEST,
       QUEUE.USER.RESPONSE,
@@ -233,32 +300,157 @@ exports.createUser = async (req, res) => {
           PhoneNumber,
           Gender,
           ProfilePhoto,
+
           LastPasswordChangedDate,
           PasswordExpiryDate,
           DateOfJoining,
+
           IsLocked: false,
           IsActive: true,
           IsDeleted: false,
+
           CreatedBy,
+
           BrandID,
-          AllOrganizationAccess: normalizedAllOrganizationAccess,
-          Organizations: organizationMappings,
-          Products: productMappings,
+
+          AllOrganizationAccess:
+            normalizedAllOrganizationAccess,
+
+          Organizations:
+            organizationMappings,
+
+          Products:
+            productMappings,
         },
-      },
+      }
     );
-    // ========================================= RabbitMQ Error
+
+    // =========================================
+    // RABBITMQ ERROR
+    // =========================================
+
     if (!response.success) {
       throw new AppError(
         response.message || "Unable to create user",
-        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.statusCode ||
+        STATUS_CODES.BAD_REQUEST
       );
     }
-    // ========================================= Response
-    return res.status(STATUS_CODES.CREATED).json(response);
+
+    // =========================================
+    // RESPONSE
+    // =========================================
+
+    return res
+      .status(STATUS_CODES.CREATED)
+      .json(response);
+
   } catch (error) {
+
     handleError(error, res);
+
   }
+};
+
+// ========================================= GET ALL USERS
+exports.getAllUsers = async (req, res) => {
+
+  try {
+
+    // ========================================================
+    // PAGINATION PARAMETERS
+    // ========================================================
+
+    const {
+      page = 1,
+      limit = 10
+    } = req.query;
+
+
+    // ========================================================
+    // VALIDATE PAGINATION
+    // ========================================================
+
+    const parsedPage =
+      Number(page);
+
+    const parsedLimit =
+      Number(limit);
+
+
+    if (
+      !Number.isInteger(parsedPage) ||
+      parsedPage < 1
+    ) {
+
+      throw new AppError(
+        "Page must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    if (
+      !Number.isInteger(parsedLimit) ||
+      parsedLimit < 1
+    ) {
+
+      throw new AppError(
+        "Limit must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    // ========================================================
+    // SERVICE
+    // ========================================================
+
+    const response =
+      await UserService.getAllUsers(
+        parsedPage,
+        parsedLimit
+      );
+
+
+    // ========================================================
+    // SERVICE ERROR
+    // ========================================================
+
+    if (!response.success) {
+
+      throw new AppError(
+        response.message ||
+        "Unable to fetch users",
+
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS
+      )
+      .json(response);
+
+
+  } catch (error) {
+
+    handleError(
+      error,
+      res
+    );
+
+  }
+
 };
 // ============================================================
 // DELETE USER
@@ -392,22 +584,51 @@ exports.getUserById = async (req, res) => {
     handleError(error, res);
   }
 };
-// =========================================Get User Dropdown
+// =========================================
+// Get User Dropdown
+// =========================================
 exports.getUserDropdown = async (req, res) => {
+
   try {
-    const response = await UserService.getUserDropdown();
+
+    const {
+      OrganizationID,
+      Username,
+      FullName
+    } = req.query;
+
+
+    const response =
+      await UserService.getUserDropdown(
+        OrganizationID,
+        Username,
+        FullName
+      );
+
 
     if (!response.success) {
+
       throw new AppError(
-        response.message || "Unable to fetch users",
-        STATUS_CODES.BAD_REQUEST,
+        response.message ||
+        "Unable to fetch users",
+
+        STATUS_CODES.BAD_REQUEST
       );
+
     }
 
-    return res.status(STATUS_CODES.SUCCESS).json(response);
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+
   } catch (error) {
+
     handleError(error, res);
+
   }
+
 };
 // =========================================User wise Organization
 exports.getUserOrganizations = async (req, res) => {
@@ -695,13 +916,13 @@ exports.updateUserPersonalDetails = async (req, res) => {
 
             DepartmentID:
               DepartmentID !== undefined &&
-              DepartmentID !== ""
+                DepartmentID !== ""
                 ? Number(DepartmentID)
                 : undefined,
 
             DivisionID:
               DivisionID !== undefined &&
-              DivisionID !== ""
+                DivisionID !== ""
                 ? Number(DivisionID)
                 : undefined,
 
@@ -718,19 +939,19 @@ exports.updateUserPersonalDetails = async (req, res) => {
             IsLocked:
               IsLocked !== undefined
                 ? (
-                    typeof IsLocked === "string"
-                      ? IsLocked.toLowerCase() === "true"
-                      : IsLocked
-                  )
+                  typeof IsLocked === "string"
+                    ? IsLocked.toLowerCase() === "true"
+                    : IsLocked
+                )
                 : undefined,
 
             IsActive:
               IsActive !== undefined
                 ? (
-                    typeof IsActive === "string"
-                      ? IsActive.toLowerCase() === "true"
-                      : IsActive
-                  )
+                  typeof IsActive === "string"
+                    ? IsActive.toLowerCase() === "true"
+                    : IsActive
+                )
                 : undefined,
 
             ModifiedBy:
@@ -778,22 +999,73 @@ exports.updateUserPersonalDetails = async (req, res) => {
   }
 
 };
-// =========================================Get All Users Tabel
+// ============================================================
+// GET ALL USERS TABLE
+// Pagination + Filters
+// ============================================================
+
 exports.getAllUsersTabel = async (req, res) => {
+
   try {
-    const response = await UserService.getAllUsersTabel();
+
+    // ========================================================
+    // QUERY PARAMETERS
+    // ========================================================
+
+    const {
+      page = 1,
+      limit = 10,
+      FullName,
+      DepartmentID,
+      UserType
+    } = req.query;
+
+
+    // ========================================================
+    // SERVICE
+    // ========================================================
+
+    const response =
+      await UserService.getAllUsersTabel(
+        page,
+        limit,
+        FullName,
+        DepartmentID,
+        UserType
+      );
+
+
+    // ========================================================
+    // ERROR
+    // ========================================================
 
     if (!response.success) {
+
       throw new AppError(
-        response.message || "Unable to fetch users",
-        STATUS_CODES.BAD_REQUEST,
+        response.message ||
+        "Unable to fetch users",
+
+        STATUS_CODES.BAD_REQUEST
       );
+
     }
 
-    return res.status(STATUS_CODES.SUCCESS).json(response);
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+
   } catch (error) {
+
     handleError(error, res);
+
   }
+
 };
 // ============================================================
 // UPDATE USER
@@ -864,12 +1136,49 @@ exports.updateUser = async (req, res) => {
 
     let productMappings = [];
 
-    if (Products) {
+    if (Products !== undefined) {
 
-      productMappings =
-        typeof Products === "string"
-          ? JSON.parse(Products)
-          : Products;
+      try {
+
+        productMappings =
+          typeof Products === "string"
+            ? JSON.parse(Products)
+            : Products;
+
+      } catch (error) {
+
+        throw new AppError(
+          "Invalid Products JSON",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
+
+      if (!Array.isArray(productMappings)) {
+
+        throw new AppError(
+          "Products must be an array",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
+
+      // Validate ProductID
+      for (const product of productMappings) {
+
+        if (
+          !product ||
+          !product.ProductID
+        ) {
+
+          throw new AppError(
+            "ProductID is required for every product",
+            STATUS_CODES.BAD_REQUEST
+          );
+
+        }
+
+      }
 
     }
 

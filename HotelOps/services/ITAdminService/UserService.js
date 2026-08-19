@@ -56,6 +56,9 @@ const createUser = async (data) => {
       PasswordHash,
       10
     );
+    // ========================================================
+    // Validate Department + Division + Products
+    // ========================================================
 
     const departmentCheck = await client.query(
       `
@@ -67,7 +70,8 @@ const createUser = async (data) => {
   FROM Department_Master
   WHERE DepartmentID = $1
     AND DivisionID = $2
-    AND IsDeleted = FALSE;
+    AND IsDeleted = FALSE
+  LIMIT 1;
   `,
       [
         DepartmentID,
@@ -75,10 +79,73 @@ const createUser = async (data) => {
       ]
     );
 
+
     if (departmentCheck.rows.length === 0) {
+
       throw new Error(
         "Invalid DepartmentID or Department does not belong to selected Division"
       );
+
+    }
+
+    // ========================================================
+    // Validate Selected Products
+    // ========================================================
+    //
+    // Product is NOT restricted by Department.
+    //
+    // User can be assigned products from
+    // any department.
+    //
+    // Only Product_Master validity is checked.
+    // ========================================================
+
+    if (
+      Array.isArray(Products) &&
+      Products.length > 0
+    ) {
+
+      for (const product of Products) {
+
+        const {
+          ProductID
+        } = product;
+
+
+        if (!ProductID) {
+
+          throw new Error(
+            "ProductID is required for every product"
+          );
+
+        }
+
+
+        const productCheck =
+          await client.query(
+            `
+        SELECT
+          ProductID
+        FROM Product_Master
+        WHERE ProductID = $1
+          AND IsDeleted = FALSE
+          AND IsActive = TRUE
+        LIMIT 1;
+        `,
+            [ProductID]
+          );
+
+
+        if (productCheck.rows.length === 0) {
+
+          throw new Error(
+            `Invalid or inactive ProductID: ${ProductID}`
+          );
+
+        }
+
+      }
+
     }
     // ========================================================
     // Insert User
@@ -596,7 +663,7 @@ const createUser = async (data) => {
     if (error.code === "23505") {
       return {
         success: false,
-        message: "Username, Employee Code, or Email already exists",
+        message: "Username, or Employee Code already exists",
       };
     }
 
@@ -857,9 +924,31 @@ const deleteUser = async (data) => {
 // GET ALL USERS
 // ============================================================
 
-const getAllUsers = async () => {
+const getAllUsers = async (page = 1, limit = 10) => {
 
   try {
+
+    // ========================================================
+    // PAGINATION
+    // ========================================================
+
+    page = Number(page) || 1;
+    limit = Number(limit) || 10;
+
+    if (page < 1) {
+      page = 1;
+    }
+
+    if (limit < 1) {
+      limit = 10;
+    }
+
+    const offset = (page - 1) * limit;
+
+
+    // ========================================================
+    // GET USERS
+    // ========================================================
 
     const query = `
       SELECT
@@ -916,11 +1005,51 @@ const getAllUsers = async () => {
 
       WHERE um.IsDeleted = FALSE
 
-      ORDER BY um.FullName ASC;
+      ORDER BY um.FullName ASC
+
+      LIMIT $1
+      OFFSET $2;
     `;
 
 
-    const result = await pool.query(query);
+    // ========================================================
+    // TOTAL USER COUNT
+    // ========================================================
+
+    const countQuery = `
+      SELECT
+        COUNT(*) AS TotalCount
+
+      FROM user_master
+
+      WHERE IsDeleted = FALSE;
+    `;
+
+
+    // ========================================================
+    // EXECUTE USER + COUNT QUERY
+    // ========================================================
+
+    const [result, countResult] = await Promise.all([
+
+      pool.query(
+        query,
+        [
+          limit,
+          offset
+        ]
+      ),
+
+      pool.query(countQuery),
+
+    ]);
+
+
+    const totalCount =
+      Number(
+        countResult.rows[0].totalcount
+      );
+
 
     const users = [];
 
@@ -975,7 +1104,9 @@ const getAllUsers = async () => {
 
           ORDER BY om.OrganizationName ASC;
           `,
-          [row.userid]
+          [
+            row.userid
+          ]
         );
 
 
@@ -1012,12 +1143,15 @@ const getAllUsers = async () => {
             ON om.BrandID = bm.BrandID
 
           WHERE uom.UserID = $1
+
             AND uom.IsDeleted = FALSE
             AND uom.IsActive = TRUE
 
           ORDER BY om.OrganizationName ASC;
           `,
-          [row.userid]
+          [
+            row.userid
+          ]
         );
 
       }
@@ -1049,6 +1183,7 @@ const getAllUsers = async () => {
           ON pm.ProductCategoryID = pcm.ProductCategoryID
 
         WHERE upm.UserID = $1
+
           AND upm.IsDeleted = FALSE
           AND upm.IsActive = TRUE
 
@@ -1059,7 +1194,9 @@ const getAllUsers = async () => {
       const productResult =
         await pool.query(
           productQuery,
-          [row.userid]
+          [
+            row.userid
+          ]
         );
 
 
@@ -1069,49 +1206,87 @@ const getAllUsers = async () => {
 
       users.push({
 
-        UserID: row.userid,
+        UserID:
+          row.userid,
 
-        EmployeeCode: row.employeecode,
-        Username: row.username,
-        FullName: row.fullname,
+        EmployeeCode:
+          row.employeecode,
 
-        Designation: row.designation,
+        Username:
+          row.username,
 
-        DepartmentID: row.departmentid,
-        DepartmentName: row.departmentname,
+        FullName:
+          row.fullname,
 
-        DivisionID: row.divisionid,
-        DivisionName: row.divisionname,
 
-        LoginType: row.logintype,
-        UserType: row.usertype,
+        Designation:
+          row.designation,
+
+
+        DepartmentID:
+          row.departmentid,
+
+        DepartmentName:
+          row.departmentname,
+
+
+        DivisionID:
+          row.divisionid,
+
+        DivisionName:
+          row.divisionname,
+
+
+        LoginType:
+          row.logintype,
+
+        UserType:
+          row.usertype,
+
 
         AllOrganizationAccess:
           row.allorganizationaccess,
 
-        Email: row.email,
-        PhoneNumber: row.phonenumber,
-        Gender: row.gender,
+
+        Email:
+          row.email,
+
+        PhoneNumber:
+          row.phonenumber,
+
+        Gender:
+          row.gender,
+
 
         ProfilePhoto:
           row.profilephoto
             ? generateUrl(row.profilephoto)
             : null,
 
+
         LastPasswordChangedDate:
-          formatDate(
-            row.lastpasswordchangeddate
-          ),
+          row.lastpasswordchangeddate
+            ? formatDate(
+              row.lastpasswordchangeddate
+            )
+            : null,
+
 
         PasswordExpiryDate:
-          formatDate(
-            row.passwordexpirydate
-          ),
+          row.passwordexpirydate
+            ? formatDate(
+              row.passwordexpirydate
+            )
+            : null,
+
 
         LastLogin:
-          formatDate(
-            row.lastlogin
-          ),
+          row.lastlogin
+            ? formatDate(
+              row.lastlogin
+            )
+            : null,
+
 
         IsLocked:
           row.islocked,
@@ -1119,28 +1294,22 @@ const getAllUsers = async () => {
         IsActive:
           row.isactive,
 
+
         DateOfJoining:
           row.dateofjoining
-            ? formatDate(row.dateofjoining)
+            ? formatDate(
+              row.dateofjoining
+            )
             : null,
 
-        CreatedBy:
-          row.createdby,
-
         CreatedDate:
-          formatDate(row.createddate),
+          row.createddate
+            ? formatDate(
+              row.createddate
+            )
+            : null,
 
-        ModifiedBy:
-          row.modifiedby,
 
-        ModifiedDate:
-          formatDate(row.modifieddate),
-
-        DeletedBy:
-          row.deletedby,
-
-        DeletedDate:
-          formatDate(row.deleteddate),
 
 
         // ==================================================
@@ -1150,12 +1319,6 @@ const getAllUsers = async () => {
         Organizations:
           organizationResult.rows.map(
             (organization) => ({
-
-              UserOrgMapID:
-                organization.userorgmapid,
-
-              UserBrandMapID:
-                organization.userbrandmapid,
 
               BrandID:
                 organization.brandid,
@@ -1180,9 +1343,6 @@ const getAllUsers = async () => {
         Products:
           productResult.rows.map(
             (product) => ({
-
-              UserProductMapID:
-                product.userproductmapid,
 
               ProductID:
                 product.productid,
@@ -1218,8 +1378,33 @@ const getAllUsers = async () => {
       message:
         "Users fetched successfully",
 
-      Count:
+
+      // Total records in DB
+      TotalCount:
+        totalCount,
+
+
+      // Records returned in current page
+      PageCount:
         users.length,
+
+
+      // Current page
+      CurrentPage:
+        page,
+
+
+      // Records per page
+      PageSize:
+        limit,
+
+
+      // Total number of pages
+      TotalPages:
+        Math.ceil(
+          totalCount / limit
+        ),
+
 
       data:
         users,
@@ -1489,26 +1674,13 @@ WHERE um.UserID = $1
 
       DateOfJoining: user.dateofjoining ? formatDate(user.dateofjoining) : null,
 
-      CreatedBy: user.createdby,
-
       CreatedDate: formatDate(user.createddate),
-
-      ModifiedBy: user.modifiedby,
-
-      ModifiedDate: formatDate(user.modifieddate),
-
-      DeletedBy: user.deletedby,
-
-      DeletedDate: formatDate(user.deleteddate),
 
       // ======================================================
       // Organizations
       // ======================================================
 
       Organizations: organizationResult.rows.map((organization) => ({
-        UserOrgMapID: organization.userorgmapid,
-
-        UserBrandMapID: organization.userbrandmapid,
 
         BrandID: organization.brandid,
         BrandName: organization.brandname,
@@ -1522,7 +1694,6 @@ WHERE um.UserID = $1
       // ======================================================
 
       Products: productResult.rows.map((product) => ({
-        UserProductMapID: product.userproductmapid,
 
         ProductID: product.productid,
 
@@ -1553,45 +1724,165 @@ WHERE um.UserID = $1
     };
   }
 };
+// ============================================================ GET USER DROPDOWN
+// Filters:
+// OrganizationID
+// Username
+// FullName
 // ============================================================
-// USER DROPDOWN
-// ============================================================
-const getUserDropdown = async () => {
+
+const getUserDropdown = async (
+  OrganizationID,
+  Username,
+  FullName
+) => {
 
   try {
+
+    // ========================================================
+    // FILTERS
+    // ========================================================
+
+    const filters = [
+      `um.IsDeleted = FALSE`,
+      `um.IsActive = TRUE`
+    ];
+
+    const filterValues = [];
+
+
+    // ========================================================
+    // ORGANIZATION FILTER
+    // ========================================================
+
+    if (
+      OrganizationID !== undefined &&
+      OrganizationID !== null &&
+      String(OrganizationID).trim() !== ""
+    ) {
+
+      filterValues.push(
+        Number(OrganizationID)
+      );
+
+      filters.push(
+        `EXISTS (
+          SELECT 1
+          FROM user_org_mapping uom
+          WHERE uom.UserID = um.UserID
+            AND uom.OrganizationID = $${filterValues.length}
+            AND uom.IsDeleted = FALSE
+            AND uom.IsActive = TRUE
+        )`
+      );
+
+    }
+
+
+    // ========================================================
+    // USERNAME FILTER
+    // Partial Search
+    // ========================================================
+
+    if (
+      Username !== undefined &&
+      Username !== null &&
+      String(Username).trim() !== ""
+    ) {
+
+      filterValues.push(
+        `%${String(Username).trim()}%`
+      );
+
+      filters.push(
+        `um.Username ILIKE $${filterValues.length}`
+      );
+
+    }
+
+
+    // ========================================================
+    // FULL NAME FILTER
+    // Partial Search
+    // ========================================================
+
+    if (
+      FullName !== undefined &&
+      FullName !== null &&
+      String(FullName).trim() !== ""
+    ) {
+
+      filterValues.push(
+        `%${String(FullName).trim()}%`
+      );
+
+      filters.push(
+        `um.FullName ILIKE $${filterValues.length}`
+      );
+
+    }
+
+
+    // ========================================================
+    // WHERE CLAUSE
+    // ========================================================
+
+    const whereClause =
+      filters.join(" AND ");
+
+
+    // ========================================================
+    // QUERY
+    // ========================================================
 
     const query = `
       SELECT
 
-        UserID,
-        Username,
-        FullName
+        um.UserID,
+        um.Username,
+        um.FullName
 
-      FROM user_master
+      FROM user_master um
 
-      WHERE IsDeleted = FALSE
-        AND IsActive = TRUE
+      WHERE ${whereClause}
 
-      ORDER BY FullName ASC;
+      ORDER BY um.FullName ASC;
     `;
 
 
-    const result = await pool.query(query);
+    // ========================================================
+    // EXECUTE
+    // ========================================================
+
+    const result =
+      await pool.query(
+        query,
+        filterValues
+      );
 
 
-    const users = result.rows.map((row) => ({
+    // ========================================================
+    // RESPONSE DATA
+    // ========================================================
 
-      UserID:
-        row.userid,
+    const users =
+      result.rows.map((row) => ({
 
-      Username:
-        row.username,
+        UserID:
+          row.userid,
 
-      FullName:
-        row.fullname,
+        Username:
+          row.username,
 
-    }));
+        FullName:
+          row.fullname,
 
+      }));
+
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
 
     return {
 
@@ -2105,17 +2396,150 @@ const getUserPersonalDetails = async (UserID) => {
   }
 
 };
-// ============================================================User Tabel
-const getAllUsersTabel = async () => {
+// ============================================================
+// GET ALL USERS TABLE
+// Pagination + Filters
+// ============================================================
+
+const getAllUsersTabel = async (
+  page = 1,
+  limit = 10,
+  FullName,
+  DepartmentID,
+  UserType
+) => {
+
   try {
+
+    // ========================================================
+    // PAGINATION
+    // ========================================================
+
+    page = Number(page) || 1;
+    limit = Number(limit) || 10;
+
+    if (page < 1) {
+      page = 1;
+    }
+
+    if (limit < 1) {
+      limit = 10;
+    }
+
+    const offset = (page - 1) * limit;
+
+
+    // ========================================================
+    // FILTERS
+    // ========================================================
+
+    const filters = [
+      `um.IsDeleted = FALSE`
+    ];
+
+    const filterValues = [];
+
+
+    // ========================================================
+    // FULL NAME FILTER
+    // Partial Search
+    // Example: Mohit -> Mohit Solanki
+    // ========================================================
+
+    if (
+      FullName !== undefined &&
+      FullName !== null &&
+      String(FullName).trim() !== ""
+    ) {
+
+      filterValues.push(
+        `%${String(FullName).trim()}%`
+      );
+
+      filters.push(
+        `um.FullName ILIKE $${filterValues.length}`
+      );
+
+    }
+
+
+    // ========================================================
+    // DEPARTMENT ID FILTER
+    // Exact Match
+    // ========================================================
+
+    if (
+      DepartmentID !== undefined &&
+      DepartmentID !== null &&
+      String(DepartmentID).trim() !== ""
+    ) {
+
+      filterValues.push(
+        Number(DepartmentID)
+      );
+
+      filters.push(
+        `um.DepartmentID = $${filterValues.length}`
+      );
+
+    }
+
+
+    // ========================================================
+    // USER TYPE FILTER
+    // Exact Match
+    // ========================================================
+
+    if (
+      UserType !== undefined &&
+      UserType !== null &&
+      String(UserType).trim() !== ""
+    ) {
+
+      filterValues.push(
+        String(UserType).trim()
+      );
+
+      filters.push(
+        `um.UserType = $${filterValues.length}`
+      );
+
+    }
+
+
+    // ========================================================
+    // WHERE CLAUSE
+    // ========================================================
+
+    const whereClause =
+      filters.join(" AND ");
+
+
+    // ========================================================
+    // PAGINATION PARAMETERS
+    // ========================================================
+
+    const limitParameter =
+      filterValues.length + 1;
+
+    const offsetParameter =
+      filterValues.length + 2;
+
+
+    // ========================================================
+    // USER QUERY
+    // ========================================================
+
     const query = `
       SELECT
+
         um.UserID,
         um.EmployeeCode,
         um.Username,
         um.FullName,
 
         um.Designation,
+
         um.DepartmentID,
         dm.DepartmentName,
 
@@ -2132,66 +2556,1251 @@ const getAllUsersTabel = async () => {
       FROM user_master um
 
       LEFT JOIN Department_Master dm
-      ON um.DepartmentID = dm.DepartmentID
+        ON um.DepartmentID = dm.DepartmentID
 
       LEFT JOIN Division_Master dv
-      ON um.DivisionID = dv.DivisionID
+        ON um.DivisionID = dv.DivisionID
 
-      WHERE um.IsDeleted = FALSE
+      WHERE ${whereClause}
 
-      ORDER BY um.FullName ASC;
+      ORDER BY um.FullName ASC
+
+      LIMIT $${limitParameter}
+      OFFSET $${offsetParameter};
     `;
 
-    const result = await pool.query(query);
+
+    // ========================================================
+    // COUNT QUERY
+    // IMPORTANT:
+    // Same filters should be applied here
+    // ========================================================
+
+    const countQuery = `
+      SELECT
+        COUNT(*) AS TotalCount
+
+      FROM user_master um
+
+      WHERE ${whereClause};
+    `;
+
+
+    // ========================================================
+    // EXECUTE BOTH QUERIES
+    // ========================================================
+
+    const [result, countResult] =
+      await Promise.all([
+
+        pool.query(
+          query,
+          [
+            ...filterValues,
+            limit,
+            offset
+          ]
+        ),
+
+        pool.query(
+          countQuery,
+          filterValues
+        )
+
+      ]);
+
+
+    // ========================================================
+    // TOTAL COUNT
+    // ========================================================
+
+    const totalCount =
+      Number(
+        countResult.rows[0].totalcount
+      );
+
+
+    // ========================================================
+    // RESPONSE DATA
+    // ========================================================
+
+    const users =
+      result.rows.map((row) => ({
+
+        UserID:
+          row.userid,
+
+        EmployeeCode:
+          row.employeecode,
+
+        Username:
+          row.username,
+
+        FullName:
+          row.fullname,
+
+        Designation:
+          row.designation,
+
+
+        DepartmentID:
+          row.departmentid,
+
+        DepartmentName:
+          row.departmentname,
+
+
+        DivisionID:
+          row.divisionid,
+
+        DivisionName:
+          row.divisionname,
+
+
+        LoginType:
+          row.logintype,
+
+        UserType:
+          row.usertype,
+
+
+        Email:
+          row.email,
+
+        PhoneNumber:
+          row.phonenumber,
+
+        Gender:
+          row.gender,
+
+      }));
+
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
 
     return {
+
       success: true,
 
-      message: "Users fetched successfully",
+      message:
+        "Users fetched successfully",
 
-      Count: result.rows.length,
 
-      data: result.rows.map((row) => ({
-        UserID: row.userid,
+      // Total records after applying filters
+      TotalCount:
+        totalCount,
 
-        EmployeeCode: row.employeecode,
-        Username: row.username,
-        FullName: row.fullname,
 
-        Designation: row.designation,
-        DepartmentID: row.departmentid,
-        DepartmentName: row.departmentname,
+      // Records returned on current page
+      PageCount:
+        users.length,
 
-        DivisionID: row.divisionid,
-        DivisionName: row.divisionname,
 
-        LoginType: row.logintype,
-        UserType: row.usertype,
+      // Current page
+      CurrentPage:
+        page,
 
-        Email: row.email,
-        PhoneNumber: row.phonenumber,
-        Gender: row.gender,
-      })),
+
+      // Records per page
+      PageSize:
+        limit,
+
+
+      // Total pages after applying filters
+      TotalPages:
+        Math.ceil(
+          totalCount / limit
+        ),
+
+
+      data:
+        users,
+
     };
+
 
   } catch (error) {
 
     console.log(
-      "Get All Users Error:",
+      "Get All Users Table Error:",
       error.message
     );
 
+
     return {
+
       success: false,
-      message: error.message,
+
+      message:
+        error.message,
+
     };
+
   }
+
 };
-// ============================================================UPDATE USER
+// // ============================================================UPDATE USER
+// const updateUser = async (data) => {
+//   const client = await pool.connect();
+
+//   try {
+//     await client.query("BEGIN");
+
+//     const {
+//       UserID,
+
+//       EmployeeCode,
+//       Username,
+//       PasswordHash,
+//       FullName,
+
+//       Designation,
+//       DepartmentID,
+//       DivisionID,
+
+//       LoginType,
+//       UserType,
+
+//       Email,
+//       PhoneNumber,
+//       Gender,
+
+//       ProfilePhoto,
+
+//       BrandID,
+//       AllOrganizationAccess,
+
+//       LastPasswordChangedDate,
+//       PasswordExpiryDate,
+//       DateOfJoining,
+
+//       IsLocked,
+//       IsActive,
+
+//       ModifiedBy,
+
+//       Organizations,
+//       Products,
+//     } = data;
+
+//     // ========================================================
+//     // 1. CHECK USER
+//     // ========================================================
+
+//     const userCheck = await client.query(
+//       `
+//       SELECT
+//         UserID,
+//         ProfilePhoto,
+//         PasswordHash,
+//         LoginType,
+//         AllOrganizationAccess
+//       FROM user_master
+//       WHERE UserID = $1
+//         AND IsDeleted = FALSE;
+//       `,
+//       [UserID]
+//     );
+
+//     if (userCheck.rows.length === 0) {
+//       await client.query("ROLLBACK");
+
+//       return {
+//         success: false,
+//         message: "User Not Found",
+//       };
+//     }
+
+//     const existingUser = userCheck.rows[0];
+
+//     const oldProfilePhoto = existingUser.profilephoto;
+
+//     // ========================================================
+//     // 2. PROFILE PHOTO
+//     // ========================================================
+
+//     const finalProfilePhoto =
+//       ProfilePhoto !== undefined
+//         ? ProfilePhoto
+//         : oldProfilePhoto;
+
+//     // ========================================================
+//     // 3. PASSWORD
+//     // ========================================================
+
+//     let finalPasswordHash = existingUser.passwordhash;
+
+//     if (
+//       PasswordHash !== undefined &&
+//       PasswordHash !== null &&
+//       PasswordHash !== ""
+//     ) {
+//       finalPasswordHash = await bcrypt.hash(
+//         PasswordHash,
+//         10
+//       );
+//     }
+
+//     // ========================================================
+//     // 4. VALIDATE LOGIN TYPE
+//     // ========================================================
+
+//     if (
+//       !["SuperAdmin", "Organization", "Brand"].includes(
+//         LoginType
+//       )
+//     ) {
+//       throw new Error(
+//         "LoginType must be SuperAdmin, Organization or Brand"
+//       );
+//     }
+
+//     // ========================================================
+//     // 5. VALIDATE DEPARTMENT + DIVISION
+//     // ========================================================
+
+//     if (
+//       DepartmentID !== undefined ||
+//       DivisionID !== undefined
+//     ) {
+
+//       // Both are required if either one is being changed
+
+//       if (
+//         DepartmentID === undefined ||
+//         DepartmentID === null ||
+//         DivisionID === undefined ||
+//         DivisionID === null
+//       ) {
+
+//         throw new Error(
+//           "DepartmentID and DivisionID are required together"
+//         );
+
+//       }
+
+
+//       // ======================================================
+//       // Validate Department + Division
+//       // ======================================================
+
+//       const departmentCheck =
+//         await client.query(
+//           `
+//       SELECT
+//         DepartmentID,
+//         DepartmentName,
+//         DivisionID
+//       FROM Department_Master
+//       WHERE DepartmentID = $1
+//         AND DivisionID = $2
+//         AND IsDeleted = FALSE
+//       LIMIT 1;
+//       `,
+//           [
+//             DepartmentID,
+//             DivisionID
+//           ]
+//         );
+
+
+//       if (departmentCheck.rows.length === 0) {
+
+//         throw new Error(
+//           "Invalid DepartmentID or Department does not belong to selected Division"
+//         );
+
+//       }
+
+//     }
+
+
+//     // ========================================================
+//     // 6. VALIDATE PRODUCTS
+//     // Products can belong to ANY department
+//     // ========================================================
+
+//     if (
+//       Array.isArray(Products) &&
+//       Products.length > 0
+//     ) {
+
+//       for (const product of Products) {
+
+//         const ProductID =
+//           Number(product.ProductID);
+
+
+//         if (!ProductID) {
+
+//           throw new Error(
+//             "ProductID is required"
+//           );
+
+//         }
+
+
+//         // ====================================================
+//         // Check Product Master
+//         // ====================================================
+
+//         const productCheck =
+//           await client.query(
+//             `
+//         SELECT
+//           ProductID
+//         FROM Product_Master
+//         WHERE ProductID = $1
+//           AND IsDeleted = FALSE
+//           AND IsActive = TRUE
+//         LIMIT 1;
+//         `,
+//             [ProductID]
+//           );
+
+
+//         if (productCheck.rows.length === 0) {
+
+//           throw new Error(
+//             `Invalid or inactive ProductID: ${ProductID}`
+//           );
+
+//         }
+
+//       }
+
+//     }
+
+//     // ========================================================
+//     // 6. LOGIN TYPE SPECIFIC VALIDATION
+//     // ========================================================
+
+//     if (LoginType === "SuperAdmin") {
+
+//       if (AllOrganizationAccess === true) {
+
+//         // No organization mapping required.
+
+//       } else {
+
+//         if (
+//           !Array.isArray(Organizations) ||
+//           Organizations.length === 0
+//         ) {
+//           throw new Error(
+//             "At least one organization is required for limited SuperAdmin"
+//           );
+//         }
+//       }
+//     }
+
+//     // ========================================================
+//     // ORGANIZATION LOGIN
+//     // ========================================================
+
+//     if (LoginType === "Organization") {
+
+//       if (
+//         !Array.isArray(Organizations) ||
+//         Organizations.length !== 1
+//       ) {
+//         throw new Error(
+//           "Organization user must have exactly one organization"
+//         );
+//       }
+
+//       if (AllOrganizationAccess === true) {
+//         throw new Error(
+//           "AllOrganizationAccess is not allowed for Organization login"
+//         );
+//       }
+//     }
+
+//     // ========================================================
+//     // BRAND LOGIN
+//     // ========================================================
+
+//     if (LoginType === "Brand") {
+
+//       if (!BrandID) {
+//         throw new Error(
+//           "BrandID is required for Brand login"
+//         );
+//       }
+
+//       if (
+//         !Array.isArray(Organizations) ||
+//         Organizations.length === 0
+//       ) {
+//         throw new Error(
+//           "At least one organization is required for Brand login"
+//         );
+//       }
+
+//       if (AllOrganizationAccess === true) {
+//         throw new Error(
+//           "AllOrganizationAccess is not allowed for Brand login"
+//         );
+//       }
+
+//       // Validate Brand
+
+//       const brandCheck = await client.query(
+//         `
+//         SELECT BrandID
+//         FROM Brand_Master
+//         WHERE BrandID = $1
+//           AND IsDeleted = FALSE
+//           AND IsActive = TRUE
+//         LIMIT 1;
+//         `,
+//         [BrandID]
+//       );
+
+//       if (brandCheck.rows.length === 0) {
+//         throw new Error(
+//           "Invalid or inactive Brand"
+//         );
+//       }
+//     }
+
+//     // ========================================================
+//     // 7. UPDATE USER MASTER
+//     // ========================================================
+
+//     const result = await client.query(
+//       `
+//       UPDATE user_master
+//       SET
+
+//         EmployeeCode = $1,
+//         Username = $2,
+//         PasswordHash = $3,
+//         FullName = $4,
+
+//         Designation = $5,
+//         DepartmentID = $6,
+//         DivisionID = $7,
+
+//         LoginType = $8,
+//         UserType = $9,
+
+//         Email = $10,
+//         PhoneNumber = $11,
+//         Gender = $12,
+
+//         ProfilePhoto = $13,
+//         AllOrganizationAccess = $14,
+
+//         LastPasswordChangedDate = $15,
+//         PasswordExpiryDate = $16,
+
+//         IsLocked = $17,
+//         IsActive = $18,
+
+//         DateOfJoining = $19,
+
+//         ModifiedBy = $20,
+//         ModifiedDate = CURRENT_TIMESTAMP
+
+//       WHERE UserID = $21
+//         AND IsDeleted = FALSE
+
+//       RETURNING UserID;
+//       `,
+//       [
+//         EmployeeCode,
+//         Username,
+//         finalPasswordHash,
+//         FullName,
+
+//         Designation || null,
+//         DepartmentID || null,
+//         DivisionID || null,
+
+//         LoginType,
+//         UserType || null,
+
+//         Email || null,
+//         PhoneNumber || null,
+//         Gender || null,
+
+//         finalProfilePhoto,
+
+//         LoginType === "SuperAdmin"
+//           ? (AllOrganizationAccess ?? false)
+//           : false,
+
+//         LastPasswordChangedDate || null,
+//         PasswordExpiryDate || null,
+
+//         IsLocked ?? false,
+//         IsActive ?? true,
+
+//         DateOfJoining || null,
+
+//         ModifiedBy || null,
+
+//         UserID,
+//       ]
+//     );
+
+//     if (result.rows.length === 0) {
+//       await client.query("ROLLBACK");
+
+//       return {
+//         success: false,
+//         message: "User Not Found",
+//       };
+//     }
+
+//     // ========================================================
+//     // 8. REMOVE OLD ORGANIZATION MAPPINGS
+//     // ========================================================
+
+//     await client.query(
+//       `
+//       UPDATE user_org_mapping
+//       SET
+//         IsActive = FALSE,
+//         IsDeleted = TRUE,
+
+//         ModifiedBy = $1,
+//         ModifiedDate = CURRENT_TIMESTAMP,
+
+//         DeletedBy = $1,
+//         DeletedDate = CURRENT_TIMESTAMP
+
+//       WHERE UserID = $2
+//         AND IsDeleted = FALSE;
+//       `,
+//       [
+//         ModifiedBy || UserID,
+//         UserID
+//       ]
+//     );
+
+//     // ========================================================
+//     // 9. REMOVE OLD BRAND MAPPING
+//     // ========================================================
+
+//     await client.query(
+//       `
+//       UPDATE user_brand_mapping
+//       SET
+//         IsActive = FALSE,
+//         IsDeleted = TRUE,
+
+//         ModifiedBy = $1,
+//         ModifiedDate = CURRENT_TIMESTAMP,
+
+//         DeletedBy = $1,
+//         DeletedDate = CURRENT_TIMESTAMP
+
+//       WHERE UserID = $2
+//         AND IsDeleted = FALSE;
+//       `,
+//       [
+//         ModifiedBy || UserID,
+//         UserID
+//       ]
+//     );
+
+//     // ========================================================
+//     // 10. CREATE / REACTIVATE BRAND MAPPING
+//     // ========================================================
+
+//     let userBrandMapID = null;
+
+//     if (LoginType === "Brand") {
+
+//       // ======================================================
+//       // Check existing mapping
+//       // ======================================================
+
+//       const existingBrandMapping =
+//         await client.query(
+//           `
+//       SELECT
+//         UserBrandMapID
+//       FROM user_brand_mapping
+//       WHERE UserID = $1
+//         AND BrandID = $2
+//       LIMIT 1;
+//       `,
+//           [
+//             UserID,
+//             BrandID
+//           ]
+//         );
+
+
+//       // ======================================================
+//       // Existing mapping -> Reactivate
+//       // ======================================================
+
+//       if (existingBrandMapping.rows.length > 0) {
+
+//         userBrandMapID =
+//           existingBrandMapping.rows[0].userbrandmapid;
+
+
+//         await client.query(
+//           `
+//       UPDATE user_brand_mapping
+//       SET
+
+//         Username = $1,
+
+//         IsActive = TRUE,
+//         IsDeleted = FALSE,
+
+//         ModifiedBy = $2,
+//         ModifiedDate = CURRENT_TIMESTAMP,
+
+//         DeletedBy = NULL,
+//         DeletedDate = NULL
+
+//       WHERE UserBrandMapID = $3;
+//       `,
+//           [
+//             Username,
+//             ModifiedBy || UserID,
+//             userBrandMapID
+//           ]
+//         );
+
+
+//       } else {
+
+//         // ====================================================
+//         // New mapping -> Insert
+//         // ====================================================
+
+//         const brandMappingResult =
+//           await client.query(
+//             `
+//         INSERT INTO user_brand_mapping
+//         (
+//           UserID,
+//           BrandID,
+//           Username,
+//           IsActive,
+//           IsDeleted,
+//           CreatedBy
+//         )
+//         VALUES
+//         (
+//           $1,
+//           $2,
+//           $3,
+//           TRUE,
+//           FALSE,
+//           $4
+//         )
+//         RETURNING UserBrandMapID;
+//         `,
+//             [
+//               UserID,
+//               BrandID,
+//               Username,
+//               ModifiedBy || UserID
+//             ]
+//           );
+
+
+//         userBrandMapID =
+//           brandMappingResult.rows[0].userbrandmapid;
+
+//       }
+
+//     }
+
+//     // ========================================================
+//     // 11. ORGANIZATION MAPPING
+//     // ========================================================
+
+//     // --------------------------------------------------------
+//     // SUPER ADMIN - ALL ORGANIZATIONS
+//     // --------------------------------------------------------
+
+//     if (
+//       LoginType === "SuperAdmin" &&
+//       AllOrganizationAccess === true
+//     ) {
+
+//       // No rows required in user_org_mapping.
+
+//     }
+
+//     // --------------------------------------------------------
+//     // SUPER ADMIN - LIMITED ORGANIZATIONS
+//     // --------------------------------------------------------
+
+//     else if (
+//       LoginType === "SuperAdmin" &&
+//       AllOrganizationAccess === false
+//     ) {
+
+//       for (const organization of Organizations) {
+
+//         const {
+//           OrganizationID
+//         } = organization;
+
+//         if (!OrganizationID) {
+//           throw new Error(
+//             "OrganizationID is required"
+//           );
+//         }
+
+//         // Validate Organization
+
+//         const organizationCheck =
+//           await client.query(
+//             `
+//             SELECT
+//               OrganizationID
+//             FROM Organization_Master
+//             WHERE OrganizationID = $1
+//               AND IsDeleted = FALSE
+//               AND IsActive = TRUE
+//             LIMIT 1;
+//             `,
+//             [OrganizationID]
+//           );
+
+//         if (organizationCheck.rows.length === 0) {
+//           throw new Error(
+//             `Invalid or inactive OrganizationID: ${OrganizationID}`
+//           );
+//         }
+
+//         // Generate mapping ID
+
+//         const mappingIdResult =
+//           await client.query(
+//             `
+//             SELECT
+//               COALESCE(MAX(UserOrgMapID), 0) + 1
+//               AS UserOrgMapID
+//             FROM user_org_mapping;
+//             `
+//           );
+
+//         const UserOrgMapID =
+//           Number(
+//             mappingIdResult.rows[0].userorgmapid
+//           );
+
+//         // Insert
+
+//         await client.query(
+//           `
+//           INSERT INTO user_org_mapping
+//           (
+//             UserOrgMapID,
+//             UserID,
+//             UserBrandMapID,
+//             OrganizationID,
+//             IsActive,
+//             IsDeleted,
+//             CreatedBy
+//           )
+//           VALUES
+//           (
+//             $1,
+//             $2,
+//             NULL,
+//             $3,
+//             TRUE,
+//             FALSE,
+//             $4
+//           );
+//           `,
+//           [
+//             UserOrgMapID,
+//             UserID,
+//             OrganizationID,
+//             ModifiedBy || UserID
+//           ]
+//         );
+//       }
+//     }
+
+//     // --------------------------------------------------------
+//     // ORGANIZATION USER
+//     // --------------------------------------------------------
+
+//     else if (LoginType === "Organization") {
+
+//       const organization =
+//         Organizations[0];
+
+//       const OrganizationID =
+//         organization.OrganizationID;
+
+//       if (!OrganizationID) {
+//         throw new Error(
+//           "OrganizationID is required"
+//         );
+//       }
+
+//       // Validate Organization
+
+//       const organizationCheck =
+//         await client.query(
+//           `
+//           SELECT
+//             OrganizationID
+//           FROM Organization_Master
+//           WHERE OrganizationID = $1
+//             AND IsDeleted = FALSE
+//             AND IsActive = TRUE
+//           LIMIT 1;
+//           `,
+//           [OrganizationID]
+//         );
+
+//       if (organizationCheck.rows.length === 0) {
+//         throw new Error(
+//           `Invalid or inactive OrganizationID: ${OrganizationID}`
+//         );
+//       }
+
+//       // Generate mapping ID
+
+//       const mappingIdResult =
+//         await client.query(
+//           `
+//           SELECT
+//             COALESCE(MAX(UserOrgMapID), 0) + 1
+//             AS UserOrgMapID
+//           FROM user_org_mapping;
+//           `
+//         );
+
+//       const UserOrgMapID =
+//         Number(
+//           mappingIdResult.rows[0].userorgmapid
+//         );
+
+//       // Insert
+
+//       await client.query(
+//         `
+//         INSERT INTO user_org_mapping
+//         (
+//           UserOrgMapID,
+//           UserID,
+//           UserBrandMapID,
+//           OrganizationID,
+//           IsActive,
+//           IsDeleted,
+//           CreatedBy
+//         )
+//         VALUES
+//         (
+//           $1,
+//           $2,
+//           NULL,
+//           $3,
+//           TRUE,
+//           FALSE,
+//           $4
+//         );
+//         `,
+//         [
+//           UserOrgMapID,
+//           UserID,
+//           OrganizationID,
+//           ModifiedBy || UserID
+//         ]
+//       );
+//     }
+
+//     // --------------------------------------------------------
+//     // BRAND USER
+//     // --------------------------------------------------------
+
+//     else if (LoginType === "Brand") {
+
+//       for (const organization of Organizations) {
+
+//         const {
+//           OrganizationID
+//         } = organization;
+
+//         if (!OrganizationID) {
+//           throw new Error(
+//             "OrganizationID is required"
+//           );
+//         }
+
+//         // Validate Organization belongs to Brand
+
+//         const organizationCheck =
+//           await client.query(
+//             `
+//             SELECT
+//               OrganizationID,
+//               BrandID
+//             FROM Organization_Master
+//             WHERE OrganizationID = $1
+//               AND IsDeleted = FALSE
+//               AND IsActive = TRUE
+//             LIMIT 1;
+//             `,
+//             [OrganizationID]
+//           );
+
+//         if (organizationCheck.rows.length === 0) {
+//           throw new Error(
+//             `Invalid or inactive OrganizationID: ${OrganizationID}`
+//           );
+//         }
+
+//         const organizationData =
+//           organizationCheck.rows[0];
+
+//         if (
+//           Number(organizationData.brandid) !==
+//           Number(BrandID)
+//         ) {
+//           throw new Error(
+//             `Organization ${OrganizationID} does not belong to selected Brand`
+//           );
+//         }
+
+//         // Generate mapping ID
+
+//         const mappingIdResult =
+//           await client.query(
+//             `
+//             SELECT
+//               COALESCE(MAX(UserOrgMapID), 0) + 1
+//               AS UserOrgMapID
+//             FROM user_org_mapping;
+//             `
+//           );
+
+//         const UserOrgMapID =
+//           Number(
+//             mappingIdResult.rows[0].userorgmapid
+//           );
+
+//         // Insert
+
+//         await client.query(
+//           `
+//           INSERT INTO user_org_mapping
+//           (
+//             UserOrgMapID,
+//             UserID,
+//             UserBrandMapID,
+//             OrganizationID,
+//             IsActive,
+//             IsDeleted,
+//             CreatedBy
+//           )
+//           VALUES
+//           (
+//             $1,
+//             $2,
+//             $3,
+//             $4,
+//             TRUE,
+//             FALSE,
+//             $5
+//           );
+//           `,
+//           [
+//             UserOrgMapID,
+//             UserID,
+//             userBrandMapID,
+//             OrganizationID,
+//             ModifiedBy || UserID
+//           ]
+//         );
+//       }
+//     }
+
+//     // ========================================================
+//     // 12. PRODUCT MAPPING
+//     // ========================================================
+
+//     // First deactivate existing mappings
+
+//     await client.query(
+//       `
+//       UPDATE user_product_mapping
+//       SET
+//         IsActive = FALSE,
+//         IsDeleted = TRUE,
+
+//         ModifiedBy = $1,
+//         ModifiedDate = CURRENT_TIMESTAMP,
+
+//         DeletedBy = $1,
+//         DeletedDate = CURRENT_TIMESTAMP
+
+//       WHERE UserID = $2
+//         AND IsDeleted = FALSE;
+//       `,
+//       [
+//         ModifiedBy || UserID,
+//         UserID
+//       ]
+//     );
+
+//     // Insert selected products
+
+//     if (
+//       Array.isArray(Products) &&
+//       Products.length > 0
+//     ) {
+
+//       for (const product of Products) {
+
+//         const {
+//           ProductID
+//         } = product;
+
+//         if (!ProductID) {
+//           throw new Error(
+//             "ProductID is required"
+//           );
+//         }
+
+//         // Generate Product Mapping ID
+
+//         const mappingIdResult =
+//           await client.query(
+//             `
+//             SELECT
+//               COALESCE(MAX(UserProductMapID), 0) + 1
+//               AS UserProductMapID
+//             FROM user_product_mapping;
+//             `
+//           );
+
+//         const UserProductMapID =
+//           Number(
+//             mappingIdResult.rows[0].userproductmapid
+//           );
+
+//         await client.query(
+//           `
+//           INSERT INTO user_product_mapping
+//           (
+//             UserProductMapID,
+//             UserID,
+//             ProductID,
+//             IsActive,
+//             IsDeleted,
+//             CreatedBy
+//           )
+//           VALUES
+//           (
+//             $1,
+//             $2,
+//             $3,
+//             TRUE,
+//             FALSE,
+//             $4
+//           );
+//           `,
+//           [
+//             UserProductMapID,
+//             UserID,
+//             ProductID,
+//             ModifiedBy || UserID
+//           ]
+//         );
+//       }
+//     }
+
+//     // ========================================================
+//     // 13. COMMIT
+//     // ========================================================
+
+//     await client.query("COMMIT");
+
+//     return {
+//       success: true,
+//       message: "User Updated Successfully",
+//     };
+
+//   } catch (error) {
+
+//     await client.query("ROLLBACK");
+
+//     console.log(
+//       "Update User Error :",
+//       error.message
+//     );
+
+//     const retryResponse =
+//       retryableDatabaseResponse(error);
+
+//     if (retryResponse) {
+//       return retryResponse;
+//     }
+
+//     // Duplicate
+
+//     if (error.code === "23505") {
+
+//       if (
+//         error.constraint === "uq_userbrandmapping"
+//       ) {
+//         return {
+//           success: false,
+//           message:
+//             "User is already mapped with this Brand",
+//         };
+//       }
+
+//       return {
+//         success: false,
+//         message:
+//           "Username or Employee Code already exists",
+//       };
+//     }
+
+//     // Foreign Key
+
+//     if (error.code === "23503") {
+//       return {
+//         success: false,
+//         message:
+//           "Invalid User, Brand, Organization, Department, Division or Product",
+//       };
+//     }
+
+//     return {
+//       success: false,
+//       message: error.message,
+//     };
+
+//   } finally {
+
+//     client.release();
+
+//   }
+// };
+
+// ============================================================
+// UPDATE USER
+// ============================================================
 const updateUser = async (data) => {
+
   const client = await pool.connect();
 
   try {
+
     await client.query("BEGIN");
 
     const {
@@ -2229,7 +3838,9 @@ const updateUser = async (data) => {
 
       Organizations,
       Products,
+
     } = data;
+
 
     // ========================================================
     // 1. CHECK USER
@@ -2244,24 +3855,31 @@ const updateUser = async (data) => {
         LoginType,
         AllOrganizationAccess
       FROM user_master
+
       WHERE UserID = $1
-        AND IsDeleted = FALSE;
+        AND IsDeleted = FALSE
+
+      LIMIT 1;
       `,
       [UserID]
     );
 
+
     if (userCheck.rows.length === 0) {
+
       await client.query("ROLLBACK");
 
       return {
         success: false,
         message: "User Not Found",
       };
+
     }
 
-    const existingUser = userCheck.rows[0];
 
-    const oldProfilePhoto = existingUser.profilephoto;
+    const existingUser =
+      userCheck.rows[0];
+
 
     // ========================================================
     // 2. PROFILE PHOTO
@@ -2270,258 +3888,595 @@ const updateUser = async (data) => {
     const finalProfilePhoto =
       ProfilePhoto !== undefined
         ? ProfilePhoto
-        : oldProfilePhoto;
+        : existingUser.profilephoto;
+
 
     // ========================================================
     // 3. PASSWORD
     // ========================================================
 
-    let finalPasswordHash = existingUser.passwordhash;
+    let finalPasswordHash =
+      existingUser.passwordhash;
+
 
     if (
       PasswordHash !== undefined &&
       PasswordHash !== null &&
       PasswordHash !== ""
     ) {
-      finalPasswordHash = await bcrypt.hash(
-        PasswordHash,
-        10
-      );
+
+      finalPasswordHash =
+        await bcrypt.hash(
+          PasswordHash,
+          10
+        );
+
     }
 
+
     // ========================================================
-    // 4. VALIDATE LOGIN TYPE
+    // 4. LOGIN TYPE VALIDATION
     // ========================================================
 
     if (
-      !["SuperAdmin", "Organization", "Brand"].includes(
-        LoginType
-      )
+      ![
+        "SuperAdmin",
+        "Organization",
+        "Brand"
+      ].includes(LoginType)
     ) {
+
       throw new Error(
         "LoginType must be SuperAdmin, Organization or Brand"
       );
+
     }
 
+
     // ========================================================
-    // 5. VALIDATE DEPARTMENT + DIVISION
+    // 5. DEPARTMENT + DIVISION VALIDATION
     // ========================================================
 
-    if (DepartmentID && DivisionID) {
+    if (
+      DepartmentID !== undefined ||
+      DivisionID !== undefined
+    ) {
 
-      const departmentCheck = await client.query(
-        `
-        SELECT DepartmentID
-        FROM Department_Master
-        WHERE DepartmentID = $1
-          AND DivisionID = $2
-          AND IsDeleted = FALSE
-        LIMIT 1;
-        `,
-        [
-          DepartmentID,
-          DivisionID
-        ]
-      );
+      if (
+        DepartmentID === undefined ||
+        DepartmentID === null ||
+        DivisionID === undefined ||
+        DivisionID === null
+      ) {
 
-      if (departmentCheck.rows.length === 0) {
+        throw new Error(
+          "DepartmentID and DivisionID are required together"
+        );
+
+      }
+
+
+      const departmentCheck =
+        await client.query(
+          `
+          SELECT
+            DepartmentID,
+            DepartmentName,
+            DivisionID
+
+          FROM Department_Master
+
+          WHERE DepartmentID = $1
+            AND DivisionID = $2
+            AND IsDeleted = FALSE
+
+          LIMIT 1;
+          `,
+          [
+            DepartmentID,
+            DivisionID
+          ]
+        );
+
+
+      if (
+        departmentCheck.rows.length === 0
+      ) {
+
         throw new Error(
           "Invalid DepartmentID or Department does not belong to selected Division"
         );
+
       }
+
     }
 
+
     // ========================================================
-    // 6. LOGIN TYPE SPECIFIC VALIDATION
+    // 6. PRODUCT VALIDATION
+    //
+    // IMPORTANT:
+    // Product can belong to ANY department.
+    //
+    // We only validate whether ProductID exists
+    // and is active.
     // ========================================================
 
-    if (LoginType === "SuperAdmin") {
+    if (Array.isArray(Products)) {
 
-      if (AllOrganizationAccess === true) {
+      for (const product of Products) {
 
-        // No organization mapping required.
+        const ProductID =
+          Number(product?.ProductID);
 
-      } else {
+
+        if (!ProductID) {
+
+          throw new Error(
+            "ProductID is required for every product"
+          );
+
+        }
+
+
+        const productCheck =
+          await client.query(
+            `
+            SELECT
+              ProductID
+
+            FROM Product_Master
+
+            WHERE ProductID = $1
+              AND IsDeleted = FALSE
+              AND IsActive = TRUE
+
+            LIMIT 1;
+            `,
+            [ProductID]
+          );
+
+
+        if (
+          productCheck.rows.length === 0
+        ) {
+
+          throw new Error(
+            `Invalid or inactive ProductID: ${ProductID}`
+          );
+
+        }
+
+      }
+
+    }
+
+
+    // ========================================================
+    // 7. LOGIN TYPE VALIDATION
+    // ========================================================
+
+
+    // ========================================================
+    // SUPER ADMIN
+    // ========================================================
+
+    if (
+      LoginType === "SuperAdmin"
+    ) {
+
+      // ------------------------------------------
+      // ALL ORGANIZATION ACCESS
+      // ------------------------------------------
+
+      if (
+        AllOrganizationAccess === true
+      ) {
+
+        // No Organizations required.
+
+      }
+
+      // ------------------------------------------
+      // LIMITED ORGANIZATION ACCESS
+      // ------------------------------------------
+
+      else {
 
         if (
           !Array.isArray(Organizations) ||
           Organizations.length === 0
         ) {
+
           throw new Error(
             "At least one organization is required for limited SuperAdmin"
           );
+
         }
+
       }
+
     }
+
 
     // ========================================================
     // ORGANIZATION LOGIN
     // ========================================================
 
-    if (LoginType === "Organization") {
+    if (
+      LoginType === "Organization"
+    ) {
 
       if (
         !Array.isArray(Organizations) ||
         Organizations.length !== 1
       ) {
+
         throw new Error(
           "Organization user must have exactly one organization"
         );
+
       }
 
-      if (AllOrganizationAccess === true) {
+
+      if (
+        AllOrganizationAccess === true
+      ) {
+
         throw new Error(
           "AllOrganizationAccess is not allowed for Organization login"
         );
+
       }
+
     }
+
 
     // ========================================================
     // BRAND LOGIN
     // ========================================================
 
-    if (LoginType === "Brand") {
+    if (
+      LoginType === "Brand"
+    ) {
 
       if (!BrandID) {
+
         throw new Error(
           "BrandID is required for Brand login"
         );
+
       }
+
 
       if (
         !Array.isArray(Organizations) ||
         Organizations.length === 0
       ) {
+
         throw new Error(
           "At least one organization is required for Brand login"
         );
+
       }
 
-      if (AllOrganizationAccess === true) {
+
+      if (
+        AllOrganizationAccess === true
+      ) {
+
         throw new Error(
           "AllOrganizationAccess is not allowed for Brand login"
         );
+
       }
 
+
+      // ------------------------------------------
       // Validate Brand
+      // ------------------------------------------
 
-      const brandCheck = await client.query(
-        `
-        SELECT BrandID
-        FROM Brand_Master
-        WHERE BrandID = $1
-          AND IsDeleted = FALSE
-          AND IsActive = TRUE
-        LIMIT 1;
-        `,
-        [BrandID]
-      );
+      const brandCheck =
+        await client.query(
+          `
+          SELECT
+            BrandID
 
-      if (brandCheck.rows.length === 0) {
+          FROM Brand_Master
+
+          WHERE BrandID = $1
+            AND IsDeleted = FALSE
+            AND IsActive = TRUE
+
+          LIMIT 1;
+          `,
+          [BrandID]
+        );
+
+
+      if (
+        brandCheck.rows.length === 0
+      ) {
+
         throw new Error(
           "Invalid or inactive Brand"
         );
+
       }
+
     }
 
+
     // ========================================================
-    // 7. UPDATE USER MASTER
+    // 8. UPDATE USER MASTER
     // ========================================================
 
-    const result = await client.query(
-      `
-      UPDATE user_master
-      SET
+    const result =
+      await client.query(
+        `
+        UPDATE user_master
 
-        EmployeeCode = $1,
-        Username = $2,
-        PasswordHash = $3,
-        FullName = $4,
+        SET
 
-        Designation = $5,
-        DepartmentID = $6,
-        DivisionID = $7,
+          EmployeeCode = $1,
+          Username = $2,
+          PasswordHash = $3,
+          FullName = $4,
 
-        LoginType = $8,
-        UserType = $9,
+          Designation = $5,
+          DepartmentID = $6,
+          DivisionID = $7,
 
-        Email = $10,
-        PhoneNumber = $11,
-        Gender = $12,
+          LoginType = $8,
+          UserType = $9,
 
-        ProfilePhoto = $13,
-        AllOrganizationAccess = $14,
+          Email = $10,
+          PhoneNumber = $11,
+          Gender = $12,
 
-        LastPasswordChangedDate = $15,
-        PasswordExpiryDate = $16,
+          ProfilePhoto = $13,
 
-        IsLocked = $17,
-        IsActive = $18,
+          AllOrganizationAccess = $14,
 
-        DateOfJoining = $19,
+          LastPasswordChangedDate = $15,
+          PasswordExpiryDate = $16,
 
-        ModifiedBy = $20,
-        ModifiedDate = CURRENT_TIMESTAMP
+          IsLocked = $17,
+          IsActive = $18,
 
-      WHERE UserID = $21
-        AND IsDeleted = FALSE
+          DateOfJoining = $19,
 
-      RETURNING UserID;
-      `,
-      [
-        EmployeeCode,
-        Username,
-        finalPasswordHash,
-        FullName,
+          ModifiedBy = $20,
+          ModifiedDate = CURRENT_TIMESTAMP
 
-        Designation || null,
-        DepartmentID || null,
-        DivisionID || null,
+        WHERE UserID = $21
+          AND IsDeleted = FALSE
 
-        LoginType,
-        UserType || null,
+        RETURNING UserID;
+        `,
+        [
 
-        Email || null,
-        PhoneNumber || null,
-        Gender || null,
+          EmployeeCode,
+          Username,
+          finalPasswordHash,
+          FullName,
 
-        finalProfilePhoto,
+          Designation || null,
+          DepartmentID || null,
+          DivisionID || null,
 
-        LoginType === "SuperAdmin"
-          ? (AllOrganizationAccess ?? false)
-          : false,
+          LoginType,
+          UserType || null,
 
-        LastPasswordChangedDate || null,
-        PasswordExpiryDate || null,
+          Email || null,
+          PhoneNumber || null,
+          Gender || null,
 
-        IsLocked ?? false,
-        IsActive ?? true,
+          finalProfilePhoto,
 
-        DateOfJoining || null,
+          LoginType === "SuperAdmin"
+            ? (AllOrganizationAccess ?? false)
+            : false,
 
-        ModifiedBy || null,
+          LastPasswordChangedDate || null,
+          PasswordExpiryDate || null,
 
-        UserID,
-      ]
-    );
+          IsLocked ?? false,
+          IsActive ?? true,
 
-    if (result.rows.length === 0) {
+          DateOfJoining || null,
+
+          ModifiedBy || UserID,
+
+          UserID,
+
+        ]
+      );
+
+
+    if (
+      result.rows.length === 0
+    ) {
+
       await client.query("ROLLBACK");
 
       return {
         success: false,
         message: "User Not Found",
       };
+
     }
 
+
     // ========================================================
-    // 8. REMOVE OLD ORGANIZATION MAPPINGS
+    // 9. BRAND MAPPING
     // ========================================================
+
+    // First deactivate old BRAND mappings
+    await client.query(
+      `
+      UPDATE user_brand_mapping
+
+      SET
+
+        IsActive = FALSE,
+        IsDeleted = TRUE,
+
+        ModifiedBy = $1,
+        ModifiedDate = CURRENT_TIMESTAMP,
+
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+
+      WHERE UserID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [
+        ModifiedBy || UserID,
+        UserID
+      ]
+    );
+
+
+    let userBrandMapID = null;
+
+
+    // ========================================================
+    // CREATE / REACTIVATE BRAND
+    // ========================================================
+
+    if (
+      LoginType === "Brand"
+    ) {
+
+      const existingBrandMapping =
+        await client.query(
+          `
+          SELECT
+            UserBrandMapID
+
+          FROM user_brand_mapping
+
+          WHERE UserID = $1
+            AND BrandID = $2
+
+          LIMIT 1;
+          `,
+          [
+            UserID,
+            BrandID
+          ]
+        );
+
+
+      // ------------------------------------------
+      // Existing Mapping
+      // ------------------------------------------
+
+      if (
+        existingBrandMapping.rows.length > 0
+      ) {
+
+        userBrandMapID =
+          existingBrandMapping.rows[0]
+            .userbrandmapid;
+
+
+        await client.query(
+          `
+          UPDATE user_brand_mapping
+
+          SET
+
+            Username = $1,
+
+            IsActive = TRUE,
+            IsDeleted = FALSE,
+
+            ModifiedBy = $2,
+            ModifiedDate = CURRENT_TIMESTAMP,
+
+            DeletedBy = NULL,
+            DeletedDate = NULL
+
+          WHERE UserBrandMapID = $3;
+          `,
+          [
+            Username,
+            ModifiedBy || UserID,
+            userBrandMapID
+          ]
+        );
+
+      }
+
+      // ------------------------------------------
+      // New Mapping
+      // ------------------------------------------
+
+      else {
+
+        const brandMappingResult =
+          await client.query(
+            `
+            INSERT INTO user_brand_mapping
+            (
+              UserID,
+              BrandID,
+              Username,
+
+              IsActive,
+              IsDeleted,
+
+              CreatedBy
+            )
+
+            VALUES
+            (
+              $1,
+              $2,
+              $3,
+
+              TRUE,
+              FALSE,
+
+              $4
+            )
+
+            RETURNING UserBrandMapID;
+            `,
+            [
+              UserID,
+              BrandID,
+              Username,
+              ModifiedBy || UserID
+            ]
+          );
+
+
+        userBrandMapID =
+          brandMappingResult.rows[0]
+            .userbrandmapid;
+
+      }
+
+    }
+
+
+    // ========================================================
+    // 10. ORGANIZATION MAPPING
+    // ========================================================
+
+    // ------------------------------------------
+    // First deactivate old mappings
+    // ------------------------------------------
 
     await client.query(
       `
       UPDATE user_org_mapping
+
       SET
+
         IsActive = FALSE,
         IsDeleted = TRUE,
 
@@ -2540,296 +4495,377 @@ const updateUser = async (data) => {
       ]
     );
 
-    // ========================================================
-    // 9. REMOVE OLD BRAND MAPPING
-    // ========================================================
-
-    await client.query(
-      `
-      UPDATE user_brand_mapping
-      SET
-        IsActive = FALSE,
-        IsDeleted = TRUE,
-
-        ModifiedBy = $1,
-        ModifiedDate = CURRENT_TIMESTAMP,
-
-        DeletedBy = $1,
-        DeletedDate = CURRENT_TIMESTAMP
-
-      WHERE UserID = $2
-        AND IsDeleted = FALSE;
-      `,
-      [
-        ModifiedBy || UserID,
-        UserID
-      ]
-    );
 
     // ========================================================
-    // 10. CREATE BRAND MAPPING
-    // ========================================================
-
-    let userBrandMapID = null;
-
-    if (LoginType === "Brand") {
-
-      const brandMappingResult = await client.query(
-        `
-        INSERT INTO user_brand_mapping
-        (
-          UserID,
-          BrandID,
-          Username,
-          IsActive,
-          IsDeleted,
-          CreatedBy
-        )
-        VALUES
-        (
-          $1,
-          $2,
-          $3,
-          TRUE,
-          FALSE,
-          $4
-        )
-        RETURNING UserBrandMapID;
-        `,
-        [
-          UserID,
-          BrandID,
-          Username,
-          ModifiedBy || UserID
-        ]
-      );
-
-      userBrandMapID =
-        brandMappingResult.rows[0].userbrandmapid;
-    }
-
-    // ========================================================
-    // 11. ORGANIZATION MAPPING
-    // ========================================================
-
-    // --------------------------------------------------------
     // SUPER ADMIN - ALL ORGANIZATIONS
-    // --------------------------------------------------------
+    // ========================================================
 
     if (
       LoginType === "SuperAdmin" &&
       AllOrganizationAccess === true
     ) {
 
-      // No rows required in user_org_mapping.
+      // No mapping rows required.
 
     }
 
-    // --------------------------------------------------------
-    // SUPER ADMIN - LIMITED ORGANIZATIONS
-    // --------------------------------------------------------
+
+    // ========================================================
+    // SUPER ADMIN - LIMITED
+    // ========================================================
 
     else if (
       LoginType === "SuperAdmin" &&
       AllOrganizationAccess === false
     ) {
 
-      for (const organization of Organizations) {
+      for (
+        const organization
+        of Organizations
+      ) {
 
-        const {
-          OrganizationID
-        } = organization;
+        const OrganizationID =
+          Number(
+            organization?.OrganizationID
+          );
+
 
         if (!OrganizationID) {
+
           throw new Error(
             "OrganizationID is required"
           );
+
         }
 
+
+        // --------------------------------------
         // Validate Organization
+        // --------------------------------------
 
         const organizationCheck =
           await client.query(
             `
             SELECT
               OrganizationID
+
             FROM Organization_Master
+
             WHERE OrganizationID = $1
               AND IsDeleted = FALSE
               AND IsActive = TRUE
+
             LIMIT 1;
             `,
             [OrganizationID]
           );
 
-        if (organizationCheck.rows.length === 0) {
+
+        if (
+          organizationCheck.rows.length === 0
+        ) {
+
           throw new Error(
             `Invalid or inactive OrganizationID: ${OrganizationID}`
           );
+
         }
 
-        // Generate mapping ID
 
-        const mappingIdResult =
+        // --------------------------------------
+        // Check existing mapping
+        // --------------------------------------
+
+        const existingMapping =
           await client.query(
             `
             SELECT
-              COALESCE(MAX(UserOrgMapID), 0) + 1
-              AS UserOrgMapID
-            FROM user_org_mapping;
+              UserOrgMapID
+
+            FROM user_org_mapping
+
+            WHERE UserID = $1
+              AND OrganizationID = $2
+
+            LIMIT 1;
+            `,
+            [
+              UserID,
+              OrganizationID
+            ]
+          );
+
+
+        // --------------------------------------
+        // Reactivate
+        // --------------------------------------
+
+        if (
+          existingMapping.rows.length > 0
+        ) {
+
+          const UserOrgMapID =
+            existingMapping.rows[0]
+              .userorgmapid;
+
+
+          await client.query(
             `
+            UPDATE user_org_mapping
+
+            SET
+
+              UserBrandMapID = NULL,
+
+              IsActive = TRUE,
+              IsDeleted = FALSE,
+
+              ModifiedBy = $1,
+              ModifiedDate = CURRENT_TIMESTAMP,
+
+              DeletedBy = NULL,
+              DeletedDate = NULL
+
+            WHERE UserOrgMapID = $2;
+            `,
+            [
+              ModifiedBy || UserID,
+              UserOrgMapID
+            ]
           );
 
-        const UserOrgMapID =
-          Number(
-            mappingIdResult.rows[0].userorgmapid
-          );
+        }
 
+        // --------------------------------------
         // Insert
+        // --------------------------------------
 
-        await client.query(
-          `
-          INSERT INTO user_org_mapping
-          (
-            UserOrgMapID,
-            UserID,
-            UserBrandMapID,
-            OrganizationID,
-            IsActive,
-            IsDeleted,
-            CreatedBy
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            NULL,
-            $3,
-            TRUE,
-            FALSE,
-            $4
+        else {
+
+          await client.query(
+            `
+            INSERT INTO user_org_mapping
+            (
+              UserID,
+              UserBrandMapID,
+              OrganizationID,
+
+              IsActive,
+              IsDeleted,
+
+              CreatedBy
+            )
+
+            VALUES
+            (
+              $1,
+              NULL,
+              $2,
+
+              TRUE,
+              FALSE,
+
+              $3
+            );
+            `,
+            [
+              UserID,
+              OrganizationID,
+              ModifiedBy || UserID
+            ]
           );
-          `,
-          [
-            UserOrgMapID,
-            UserID,
-            OrganizationID,
-            ModifiedBy || UserID
-          ]
-        );
+
+        }
+
       }
+
     }
 
-    // --------------------------------------------------------
+
+    // ========================================================
     // ORGANIZATION USER
-    // --------------------------------------------------------
+    // ========================================================
 
-    else if (LoginType === "Organization") {
-
-      const organization =
-        Organizations[0];
+    else if (
+      LoginType === "Organization"
+    ) {
 
       const OrganizationID =
-        organization.OrganizationID;
+        Number(
+          Organizations[0]
+            ?.OrganizationID
+        );
+
 
       if (!OrganizationID) {
+
         throw new Error(
           "OrganizationID is required"
         );
+
       }
 
+
+      // --------------------------------------
       // Validate Organization
+      // --------------------------------------
 
       const organizationCheck =
         await client.query(
           `
           SELECT
             OrganizationID
+
           FROM Organization_Master
+
           WHERE OrganizationID = $1
             AND IsDeleted = FALSE
             AND IsActive = TRUE
+
           LIMIT 1;
           `,
           [OrganizationID]
         );
 
-      if (organizationCheck.rows.length === 0) {
+
+      if (
+        organizationCheck.rows.length === 0
+      ) {
+
         throw new Error(
           `Invalid or inactive OrganizationID: ${OrganizationID}`
         );
+
       }
 
-      // Generate mapping ID
 
-      const mappingIdResult =
+      // --------------------------------------
+      // Existing mapping
+      // --------------------------------------
+
+      const existingMapping =
         await client.query(
           `
           SELECT
-            COALESCE(MAX(UserOrgMapID), 0) + 1
-            AS UserOrgMapID
-          FROM user_org_mapping;
+            UserOrgMapID
+
+          FROM user_org_mapping
+
+          WHERE UserID = $1
+            AND OrganizationID = $2
+
+          LIMIT 1;
+          `,
+          [
+            UserID,
+            OrganizationID
+          ]
+        );
+
+
+      if (
+        existingMapping.rows.length > 0
+      ) {
+
+        await client.query(
           `
+          UPDATE user_org_mapping
+
+          SET
+
+            UserBrandMapID = NULL,
+
+            IsActive = TRUE,
+            IsDeleted = FALSE,
+
+            ModifiedBy = $1,
+            ModifiedDate = CURRENT_TIMESTAMP,
+
+            DeletedBy = NULL,
+            DeletedDate = NULL
+
+          WHERE UserOrgMapID = $2;
+          `,
+          [
+            ModifiedBy || UserID,
+            existingMapping.rows[0]
+              .userorgmapid
+          ]
         );
 
-      const UserOrgMapID =
-        Number(
-          mappingIdResult.rows[0].userorgmapid
+      }
+
+      else {
+
+        await client.query(
+          `
+          INSERT INTO user_org_mapping
+          (
+            UserID,
+            UserBrandMapID,
+            OrganizationID,
+
+            IsActive,
+            IsDeleted,
+
+            CreatedBy
+          )
+
+          VALUES
+          (
+            $1,
+            NULL,
+            $2,
+
+            TRUE,
+            FALSE,
+
+            $3
+          );
+          `,
+          [
+            UserID,
+            OrganizationID,
+            ModifiedBy || UserID
+          ]
         );
 
-      // Insert
+      }
 
-      await client.query(
-        `
-        INSERT INTO user_org_mapping
-        (
-          UserOrgMapID,
-          UserID,
-          UserBrandMapID,
-          OrganizationID,
-          IsActive,
-          IsDeleted,
-          CreatedBy
-        )
-        VALUES
-        (
-          $1,
-          $2,
-          NULL,
-          $3,
-          TRUE,
-          FALSE,
-          $4
-        );
-        `,
-        [
-          UserOrgMapID,
-          UserID,
-          OrganizationID,
-          ModifiedBy || UserID
-        ]
-      );
     }
 
-    // --------------------------------------------------------
+
+    // ========================================================
     // BRAND USER
-    // --------------------------------------------------------
+    // ========================================================
 
-    else if (LoginType === "Brand") {
+    else if (
+      LoginType === "Brand"
+    ) {
 
-      for (const organization of Organizations) {
+      for (
+        const organization
+        of Organizations
+      ) {
 
-        const {
-          OrganizationID
-        } = organization;
+        const OrganizationID =
+          Number(
+            organization?.OrganizationID
+          );
+
 
         if (!OrganizationID) {
+
           throw new Error(
             "OrganizationID is required"
           );
+
         }
 
-        // Validate Organization belongs to Brand
+
+        // --------------------------------------
+        // Validate Organization + Brand
+        // --------------------------------------
 
         const organizationCheck =
           await client.query(
@@ -2837,96 +4873,169 @@ const updateUser = async (data) => {
             SELECT
               OrganizationID,
               BrandID
+
             FROM Organization_Master
+
             WHERE OrganizationID = $1
               AND IsDeleted = FALSE
               AND IsActive = TRUE
+
             LIMIT 1;
             `,
             [OrganizationID]
           );
 
-        if (organizationCheck.rows.length === 0) {
+
+        if (
+          organizationCheck.rows.length === 0
+        ) {
+
           throw new Error(
             `Invalid or inactive OrganizationID: ${OrganizationID}`
           );
+
         }
+
 
         const organizationData =
           organizationCheck.rows[0];
 
+
         if (
-          Number(organizationData.brandid) !==
-          Number(BrandID)
+          Number(
+            organizationData.brandid
+          ) !== Number(BrandID)
         ) {
+
           throw new Error(
             `Organization ${OrganizationID} does not belong to selected Brand`
           );
+
         }
 
-        // Generate mapping ID
 
-        const mappingIdResult =
+        // --------------------------------------
+        // Existing mapping
+        // --------------------------------------
+
+        const existingMapping =
           await client.query(
             `
             SELECT
-              COALESCE(MAX(UserOrgMapID), 0) + 1
-              AS UserOrgMapID
-            FROM user_org_mapping;
+              UserOrgMapID
+
+            FROM user_org_mapping
+
+            WHERE UserID = $1
+              AND OrganizationID = $2
+
+            LIMIT 1;
+            `,
+            [
+              UserID,
+              OrganizationID
+            ]
+          );
+
+
+        // --------------------------------------
+        // Reactivate
+        // --------------------------------------
+
+        if (
+          existingMapping.rows.length > 0
+        ) {
+
+          await client.query(
             `
+            UPDATE user_org_mapping
+
+            SET
+
+              UserBrandMapID = $1,
+
+              IsActive = TRUE,
+              IsDeleted = FALSE,
+
+              ModifiedBy = $2,
+              ModifiedDate = CURRENT_TIMESTAMP,
+
+              DeletedBy = NULL,
+              DeletedDate = NULL
+
+            WHERE UserOrgMapID = $3;
+            `,
+            [
+              userBrandMapID,
+              ModifiedBy || UserID,
+              existingMapping.rows[0]
+                .userorgmapid
+            ]
           );
 
-        const UserOrgMapID =
-          Number(
-            mappingIdResult.rows[0].userorgmapid
-          );
+        }
 
+        // --------------------------------------
         // Insert
+        // --------------------------------------
 
-        await client.query(
-          `
-          INSERT INTO user_org_mapping
-          (
-            UserOrgMapID,
-            UserID,
-            UserBrandMapID,
-            OrganizationID,
-            IsActive,
-            IsDeleted,
-            CreatedBy
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            $3,
-            $4,
-            TRUE,
-            FALSE,
-            $5
+        else {
+
+          await client.query(
+            `
+            INSERT INTO user_org_mapping
+            (
+              UserID,
+              UserBrandMapID,
+              OrganizationID,
+
+              IsActive,
+              IsDeleted,
+
+              CreatedBy
+            )
+
+            VALUES
+            (
+              $1,
+              $2,
+              $3,
+
+              TRUE,
+              FALSE,
+
+              $4
+            );
+            `,
+            [
+              UserID,
+              userBrandMapID,
+              OrganizationID,
+              ModifiedBy || UserID
+            ]
           );
-          `,
-          [
-            UserOrgMapID,
-            UserID,
-            userBrandMapID,
-            OrganizationID,
-            ModifiedBy || UserID
-          ]
-        );
+
+        }
+
       }
+
     }
 
+
     // ========================================================
-    // 12. PRODUCT MAPPING
+    // 11. PRODUCT MAPPING
     // ========================================================
 
-    // First deactivate existing mappings
+    // ------------------------------------------
+    // Deactivate old products
+    // ------------------------------------------
 
     await client.query(
       `
       UPDATE user_product_mapping
+
       SET
+
         IsActive = FALSE,
         IsDeleted = TRUE,
 
@@ -2945,92 +5054,166 @@ const updateUser = async (data) => {
       ]
     );
 
-    // Insert selected products
 
-    if (
-      Array.isArray(Products) &&
-      Products.length > 0
-    ) {
+    // ========================================================
+    // CREATE / REACTIVATE PRODUCTS
+    // ========================================================
 
-      for (const product of Products) {
+    if (Array.isArray(Products)) {
 
-        const {
-          ProductID
-        } = product;
+      for (
+        const product
+        of Products
+      ) {
+
+        const ProductID =
+          Number(
+            product?.ProductID
+          );
+
 
         if (!ProductID) {
+
           throw new Error(
             "ProductID is required"
           );
+
         }
 
-        // Generate Product Mapping ID
 
-        const mappingIdResult =
+        // --------------------------------------
+        // Check existing mapping
+        // --------------------------------------
+
+        const existingProductMapping =
           await client.query(
             `
             SELECT
-              COALESCE(MAX(UserProductMapID), 0) + 1
-              AS UserProductMapID
-            FROM user_product_mapping;
+              UserProductMapID
+
+            FROM user_product_mapping
+
+            WHERE UserID = $1
+              AND ProductID = $2
+
+            LIMIT 1;
+            `,
+            [
+              UserID,
+              ProductID
+            ]
+          );
+
+
+        // --------------------------------------
+        // Reactivate
+        // --------------------------------------
+
+        if (
+          existingProductMapping.rows.length > 0
+        ) {
+
+          const UserProductMapID =
+            existingProductMapping.rows[0]
+              .userproductmapid;
+
+
+          await client.query(
             `
+            UPDATE user_product_mapping
+
+            SET
+
+              IsActive = TRUE,
+              IsDeleted = FALSE,
+
+              ModifiedBy = $1,
+              ModifiedDate = CURRENT_TIMESTAMP,
+
+              DeletedBy = NULL,
+              DeletedDate = NULL
+
+            WHERE UserProductMapID = $2;
+            `,
+            [
+              ModifiedBy || UserID,
+              UserProductMapID
+            ]
           );
 
-        const UserProductMapID =
-          Number(
-            mappingIdResult.rows[0].userproductmapid
+        }
+
+        // --------------------------------------
+        // Insert new product
+        // --------------------------------------
+
+        else {
+
+          await client.query(
+            `
+            INSERT INTO user_product_mapping
+            (
+              UserID,
+              ProductID,
+
+              IsActive,
+              IsDeleted,
+
+              CreatedBy
+            )
+
+            VALUES
+            (
+              $1,
+              $2,
+
+              TRUE,
+              FALSE,
+
+              $3
+            );
+            `,
+            [
+              UserID,
+              ProductID,
+              ModifiedBy || UserID
+            ]
           );
 
-        await client.query(
-          `
-          INSERT INTO user_product_mapping
-          (
-            UserProductMapID,
-            UserID,
-            ProductID,
-            IsActive,
-            IsDeleted,
-            CreatedBy
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            $3,
-            TRUE,
-            FALSE,
-            $4
-          );
-          `,
-          [
-            UserProductMapID,
-            UserID,
-            ProductID,
-            ModifiedBy || UserID
-          ]
-        );
+        }
+
       }
+
     }
 
+
     // ========================================================
-    // 13. COMMIT
+    // 12. COMMIT
     // ========================================================
 
     await client.query("COMMIT");
 
+
     return {
+
       success: true,
-      message: "User Updated Successfully",
+
+      message:
+        "User Updated Successfully",
+
     };
+
 
   } catch (error) {
 
     await client.query("ROLLBACK");
 
+
     console.log(
       "Update User Error :",
       error.message
     );
+
 
     const retryResponse =
       retryableDatabaseResponse(error);
@@ -3039,29 +5222,84 @@ const updateUser = async (data) => {
       return retryResponse;
     }
 
-    // Duplicate
+
+    // ========================================================
+    // DUPLICATE
+    // ========================================================
 
     if (error.code === "23505") {
+
+      if (
+        error.constraint ===
+        "uq_userbrandmapping"
+      ) {
+
+        return {
+
+          success: false,
+
+          message:
+            "User is already mapped with this Brand",
+
+        };
+
+      }
+
+
+      if (
+        error.constraint ===
+        "uq_userproductmapping"
+      ) {
+
+        return {
+
+          success: false,
+
+          message:
+            "User is already mapped with this Product",
+
+        };
+
+      }
+
+
       return {
+
         success: false,
+
         message:
-          "Username, Employee Code, Email or Mapping already exists",
+          "Username or Employee Code already exists",
+
       };
+
     }
 
-    // Foreign Key
+
+    // ========================================================
+    // FOREIGN KEY
+    // ========================================================
 
     if (error.code === "23503") {
+
       return {
+
         success: false,
+
         message:
           "Invalid User, Brand, Organization, Department, Division or Product",
+
       };
+
     }
 
+
     return {
+
       success: false,
-      message: error.message,
+
+      message:
+        error.message,
+
     };
 
   } finally {
@@ -3069,6 +5307,7 @@ const updateUser = async (data) => {
     client.release();
 
   }
+
 };
 // ============================================================
 // UPDATE USER PERSONAL DETAILS
@@ -3547,7 +5786,7 @@ const updateUserPersonalDetails = async (data) => {
         success: false,
 
         message:
-          "Username, Employee Code or Email already exists",
+          "Username, or Employee Code already exists",
 
       };
 
