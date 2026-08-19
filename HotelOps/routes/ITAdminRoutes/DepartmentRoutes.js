@@ -1,5 +1,6 @@
 const express = require("express");
-const { createDepartment,getAllDepartments,getDepartmentsDropdown,updateDepartment,deleteDepartment } = require("../../controllers/ITAdminController/DepartmentController");
+const { createDepartment,getAllDepartments,getDepartmentsDropdown,updateDepartment,deleteDepartment,getDepartmentWiseProducts } = require("../../controllers/ITAdminController/DepartmentController");
+
 const authenticateToken = require("../../middleware/authMiddleware");
 const router = express.Router();
 
@@ -14,5 +15,9 @@ router.get("/DepartmentNames", authenticateToken,getDepartmentsDropdown);
 router.put("/update", authenticateToken, updateDepartment);
 // ================================= Delete Department
 router.delete("/delete", authenticateToken, deleteDepartment);
+// ============================================================
+// GET DEPARTMENT WISE PRODUCTS
+// ============================================================
+router.get("/DepartmentWiseProducts", authenticateToken, getDepartmentWiseProducts);
 
 module.exports = router;

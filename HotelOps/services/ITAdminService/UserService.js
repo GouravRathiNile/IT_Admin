@@ -4,80 +4,110 @@ const { formatDate } = require("../../utils/dateFormatter");
 const bcrypt = require("bcrypt");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
 
-// ============================================================Create User
+// ============================================================
+// CREATE USER
+// ============================================================
 const createUser = async (data) => {
+
   const client = await pool.connect();
 
   try {
+
     await client.query("BEGIN");
+
 
     const {
       EmployeeCode,
       Username,
       PasswordHash,
       FullName,
+
       Designation,
       DepartmentID,
       DivisionID,
+
       LoginType,
       UserType,
+
       Email,
       PhoneNumber,
       Gender,
+
       ProfilePhoto,
+
       LastPasswordChangedDate,
       PasswordExpiryDate,
+
       DateOfJoining,
+
       IsLocked,
       IsActive,
       IsDeleted,
+
       CreatedBy,
+
       BrandID,
+
       AllOrganizationAccess,
+
       Organizations,
       Products,
+
     } = data;
 
+
     // ========================================================
-    // Generate UserID
+    // 1. GENERATE USER ID
     // ========================================================
 
     const userIdResult = await client.query(`
-      SELECT COALESCE(MAX(UserID), 0) + 1 AS UserID
+      SELECT
+        COALESCE(MAX(UserID), 0) + 1 AS UserID
       FROM user_master;
     `);
 
-    const UserID = Number(userIdResult.rows[0].userid);
+    const UserID =
+      Number(userIdResult.rows[0].userid);
+
+
     // ========================================================
-    // Hash Password
+    // 2. HASH PASSWORD
     // ========================================================
 
-    const hashedPassword = await bcrypt.hash(
-      PasswordHash,
-      10
-    );
+    const hashedPassword =
+      await bcrypt.hash(
+        PasswordHash,
+        10
+      );
+
+
     // ========================================================
-    // Validate Department + Division + Products
+    // 3. VALIDATE DEPARTMENT + DIVISION
     // ========================================================
 
-    const departmentCheck = await client.query(
-      `
-  SELECT
-    DepartmentID,
-    DepartmentName,
-    OrganizationID,
-    DivisionID
-  FROM Department_Master
-  WHERE DepartmentID = $1
-    AND DivisionID = $2
-    AND IsDeleted = FALSE
-  LIMIT 1;
-  `,
-      [
-        DepartmentID,
-        DivisionID
-      ]
-    );
+    const departmentCheck =
+      await client.query(
+        `
+        SELECT
+
+          DepartmentID,
+          DepartmentName,
+          OrganizationID,
+          DivisionID
+
+        FROM Department_Master
+
+        WHERE DepartmentID = $1
+          AND DivisionID = $2
+          AND IsDeleted = FALSE
+
+        LIMIT 1;
+        `,
+        [
+          DepartmentID,
+          DivisionID
+        ]
+      );
 
 
     if (departmentCheck.rows.length === 0) {
@@ -88,187 +118,153 @@ const createUser = async (data) => {
 
     }
 
+
     // ========================================================
-    // Validate Selected Products
-    // ========================================================
+    // IMPORTANT
     //
     // Product is NOT restricted by Department.
     //
-    // User can be assigned products from
-    // any department.
+    // A user from any department can be assigned
+    // any active product.
     //
-    // Only Product_Master validity is checked.
+    // ProductID validation against department is NOT done here.
     // ========================================================
 
-    if (
-      Array.isArray(Products) &&
-      Products.length > 0
-    ) {
 
-      for (const product of Products) {
+    // ========================================================
+    // 4. INSERT USER
+    // ========================================================
 
-        const {
-          ProductID
-        } = product;
+    const userResult =
+      await client.query(
+        `
+        INSERT INTO user_master
+        (
+          UserID,
 
+          EmployeeCode,
+          Username,
+          PasswordHash,
+          FullName,
 
-        if (!ProductID) {
+          Designation,
+          DepartmentID,
+          DivisionID,
 
-          throw new Error(
-            "ProductID is required for every product"
-          );
+          LoginType,
+          UserType,
 
-        }
+          Email,
+          PhoneNumber,
+          Gender,
 
+          ProfilePhoto,
 
-        const productCheck =
-          await client.query(
-            `
-        SELECT
-          ProductID
-        FROM Product_Master
-        WHERE ProductID = $1
-          AND IsDeleted = FALSE
-          AND IsActive = TRUE
-        LIMIT 1;
+          LastPasswordChangedDate,
+          PasswordExpiryDate,
+
+          IsLocked,
+          IsActive,
+          IsDeleted,
+
+          DateOfJoining,
+
+          CreatedBy,
+
+          AllOrganizationAccess
+        )
+
+        VALUES
+        (
+          $1,
+
+          $2,
+          $3,
+          $4,
+          $5,
+
+          $6,
+          $7,
+          $8,
+
+          $9,
+          $10,
+
+          $11,
+          $12,
+          $13,
+
+          $14,
+
+          $15,
+          $16,
+
+          $17,
+          $18,
+          $19,
+
+          $20,
+
+          $21,
+
+          $22
+        )
+
+        RETURNING UserID;
         `,
-            [ProductID]
-          );
+        [
+
+          UserID,
+
+          EmployeeCode || null,
+          Username,
+          hashedPassword,
+          FullName,
+
+          Designation || null,
+
+          DepartmentID || null,
+          DivisionID || null,
+
+          LoginType,
+          UserType || null,
+
+          Email || null,
+          PhoneNumber || null,
+          Gender || null,
+
+          ProfilePhoto || null,
+
+          LastPasswordChangedDate || null,
+          PasswordExpiryDate || null,
+
+          IsLocked ?? false,
+          IsActive ?? true,
+          IsDeleted ?? false,
+
+          DateOfJoining || null,
+
+          CreatedBy || null,
+
+          AllOrganizationAccess ?? false,
+
+        ]
+      );
 
 
-        if (productCheck.rows.length === 0) {
-
-          throw new Error(
-            `Invalid or inactive ProductID: ${ProductID}`
-          );
-
-        }
-
-      }
-
-    }
     // ========================================================
-    // Insert User
+    // BRAND MAPPING ID
     // ========================================================
-
-    const userResult = await client.query(
-      `
-      INSERT INTO user_master
-      (
-        UserID,
-
-        EmployeeCode,
-        Username,
-        PasswordHash,
-        FullName,
-
-        Designation,
-        DepartmentID,
-        DivisionID,
-
-        LoginType,
-        UserType,
-
-        Email,
-        PhoneNumber,
-        Gender,
-
-        ProfilePhoto,
-
-        LastPasswordChangedDate,
-        PasswordExpiryDate,
-
-        IsLocked,
-        IsActive,
-        IsDeleted,
-
-        DateOfJoining,
-
-        CreatedBy,
-
-        AllOrganizationAccess
-      )
-      VALUES
-      (
-        $1,
-
-        $2,
-        $3,
-        $4,
-        $5,
-
-        $6,
-        $7,
-        $8,
-
-        $9,
-        $10,
-
-        $11,
-        $12,
-        $13,
-
-        $14,
-
-        $15,
-        $16,
-
-        $17,
-        $18,
-        $19,
-
-        $20,
-
-        $21,
-
-        $22
-      )
-      RETURNING UserID;
-      `,
-      [
-        UserID,
-
-        EmployeeCode || null,
-        Username,
-        hashedPassword,
-        FullName,
-
-        Designation || null,
-        DepartmentID || null,
-        DivisionID || null,
-
-        LoginType,
-        UserType || null,
-
-        Email || null,
-        PhoneNumber || null,
-        Gender || null,
-
-        ProfilePhoto || null,
-
-        LastPasswordChangedDate || null,
-        PasswordExpiryDate || null,
-
-        IsLocked ?? false,
-        IsActive ?? true,
-        IsDeleted ?? false,
-
-        DateOfJoining || null,
-
-        CreatedBy || null,
-
-        AllOrganizationAccess ?? false,
-      ],
-    );
 
     let userBrandMapID = null;
 
 
     // ========================================================
-    // SUPER ADMIN
+    // 5. SUPER ADMIN
     // ========================================================
 
     if (LoginType === "SuperAdmin") {
+
 
       // ------------------------------------------------------
       // ALL ORGANIZATIONS
@@ -280,6 +276,7 @@ const createUser = async (data) => {
 
       }
 
+
       // ------------------------------------------------------
       // SELECTED ORGANIZATIONS
       // ------------------------------------------------------
@@ -290,155 +287,234 @@ const createUser = async (data) => {
           !Array.isArray(Organizations) ||
           Organizations.length === 0
         ) {
+
           throw new Error(
             "Organization is required for limited SuperAdmin"
           );
+
         }
+
 
         for (const organization of Organizations) {
 
-          const { OrganizationID } = organization;
+          const {
+            OrganizationID
+          } = organization;
+
 
           if (!OrganizationID) {
+
             throw new Error(
               "OrganizationID is required"
             );
+
           }
+
+
+          // --------------------------------------------------
+          // Validate Organization
+          // --------------------------------------------------
 
           const organizationCheck =
             await client.query(
               `
-          SELECT OrganizationID
-          FROM Organization_Master
-          WHERE OrganizationID = $1
-            AND IsDeleted = FALSE
-            AND IsActive = TRUE;
-          `,
-              [OrganizationID]
+              SELECT
+                OrganizationID
+
+              FROM Organization_Master
+
+              WHERE OrganizationID = $1
+                AND IsDeleted = FALSE
+                AND IsActive = TRUE;
+              `,
+              [
+                OrganizationID
+              ]
             );
 
-          if (organizationCheck.rows.length === 0) {
+
+          if (
+            organizationCheck.rows.length === 0
+          ) {
+
             throw new Error(
               `Invalid OrganizationID: ${OrganizationID}`
             );
+
           }
+
+
+          // --------------------------------------------------
+          // Insert Organization Mapping
+          // --------------------------------------------------
 
           await client.query(
             `
-        INSERT INTO user_org_mapping
-        (
-          UserID,
-          UserBrandMapID,
-          OrganizationID,
-          IsActive,
-          IsDeleted,
-          CreatedBy
-        )
-        VALUES
-        (
-          $1,
-          NULL,
-          $2,
-          TRUE,
-          FALSE,
-          $3
-        );
-        `,
+            INSERT INTO user_org_mapping
+            (
+              UserID,
+              UserBrandMapID,
+              OrganizationID,
+
+              IsActive,
+              IsDeleted,
+
+              CreatedBy
+            )
+
+            VALUES
+            (
+              $1,
+              NULL,
+              $2,
+
+              TRUE,
+              FALSE,
+
+              $3
+            );
+            `,
             [
               UserID,
               OrganizationID,
               CreatedBy || null
             ]
           );
+
         }
+
       }
+
     }
 
+
     // ========================================================
-    // BRAND USER
+    // 6. BRAND USER
     // ========================================================
 
     if (LoginType === "Brand") {
 
-      // Validate Brand
 
-      const brandCheck = await client.query(
-        `
-    SELECT BrandID
-    FROM Brand_Master
-    WHERE BrandID = $1
-      AND IsDeleted = FALSE
-      AND IsActive = TRUE;
-    `,
-        [BrandID]
-      );
+      // ------------------------------------------------------
+      // Validate Brand
+      // ------------------------------------------------------
+
+      const brandCheck =
+        await client.query(
+          `
+          SELECT
+            BrandID
+
+          FROM Brand_Master
+
+          WHERE BrandID = $1
+            AND IsDeleted = FALSE
+            AND IsActive = TRUE;
+          `,
+          [
+            BrandID
+          ]
+        );
+
 
       if (brandCheck.rows.length === 0) {
-        throw new Error("Invalid or inactive Brand");
+
+        throw new Error(
+          "Invalid or inactive Brand"
+        );
+
       }
 
 
+      // ------------------------------------------------------
       // Create Brand Mapping
+      // ------------------------------------------------------
 
-      const brandMappingResult = await client.query(
-        `
-    INSERT INTO user_brand_mapping
-    (
-      UserID,
-      BrandID,
-      Username,
-      IsActive,
-      IsDeleted,
-      CreatedBy
-    )
-    VALUES
-    (
-      $1,
-      $2,
-      $3,
-      TRUE,
-      FALSE,
-      $4
-    )
-    RETURNING UserBrandMapID;
-    `,
-        [
-          UserID,
-          BrandID,
-          Username,
-          CreatedBy || null
-        ]
-      );
+      const brandMappingResult =
+        await client.query(
+          `
+          INSERT INTO user_brand_mapping
+          (
+            UserID,
+            BrandID,
+            Username,
+
+            IsActive,
+            IsDeleted,
+
+            CreatedBy
+          )
+
+          VALUES
+          (
+            $1,
+            $2,
+            $3,
+
+            TRUE,
+            FALSE,
+
+            $4
+          )
+
+          RETURNING UserBrandMapID;
+          `,
+          [
+            UserID,
+            BrandID,
+            Username,
+            CreatedBy || null
+          ]
+        );
+
 
       userBrandMapID =
-        brandMappingResult.rows[0].userbrandmapid;
+        brandMappingResult
+          .rows[0]
+          .userbrandmapid;
+
     }
 
 
     // ========================================================
-    // ORGANIZATION MAPPING
+    // 7. ORGANIZATION MAPPING
     // ========================================================
 
-    if (LoginType === "Organization" || LoginType === "Brand") {
+    if (
+      LoginType === "Organization" ||
+      LoginType === "Brand"
+    ) {
+
 
       if (
         !Array.isArray(Organizations) ||
         Organizations.length === 0
       ) {
+
         throw new Error(
           "Organization is required"
         );
+
       }
 
 
-      for (const organization of Organizations) {
+      for (
+        const organization
+        of Organizations
+      ) {
 
-        const { OrganizationID } = organization;
+
+        const {
+          OrganizationID
+        } = organization;
+
 
         if (!OrganizationID) {
+
           throw new Error(
             "OrganizationID is required"
           );
+
         }
 
 
@@ -446,25 +522,35 @@ const createUser = async (data) => {
         // Validate Organization
         // ----------------------------------------------------
 
-        const organizationCheck = await client.query(
-          `
-      SELECT
-        OrganizationID,
-        BrandID,
-        OrganizationName
-      FROM Organization_Master
-      WHERE OrganizationID = $1
-        AND IsDeleted = FALSE
-        AND IsActive = TRUE;
-      `,
-          [OrganizationID]
-        );
+        const organizationCheck =
+          await client.query(
+            `
+            SELECT
+
+              OrganizationID,
+              BrandID,
+              OrganizationName
+
+            FROM Organization_Master
+
+            WHERE OrganizationID = $1
+              AND IsDeleted = FALSE
+              AND IsActive = TRUE;
+            `,
+            [
+              OrganizationID
+            ]
+          );
 
 
-        if (organizationCheck.rows.length === 0) {
+        if (
+          organizationCheck.rows.length === 0
+        ) {
+
           throw new Error(
             `Invalid or inactive OrganizationID: ${OrganizationID}`
           );
+
         }
 
 
@@ -476,16 +562,21 @@ const createUser = async (data) => {
         // BRAND USER
         // ----------------------------------------------------
 
-        if (LoginType === "Brand") {
+        if (
+          LoginType === "Brand"
+        ) {
 
           if (
             Number(organizationData.brandid) !==
             Number(BrandID)
           ) {
+
             throw new Error(
               `Organization ${OrganizationID} does not belong to selected Brand`
             );
+
           }
+
         }
 
 
@@ -493,12 +584,14 @@ const createUser = async (data) => {
         // ORGANIZATION USER
         // ----------------------------------------------------
 
-        if (LoginType === "Organization") {
+        if (
+          LoginType === "Organization"
+        ) {
 
-          // UserBrandMapID = NULL
-          // Organization itself determines Brand
+          // Organization itself determines Brand.
 
           userBrandMapID = null;
+
         }
 
 
@@ -508,25 +601,30 @@ const createUser = async (data) => {
 
         await client.query(
           `
-      INSERT INTO user_org_mapping
-      (
-        UserID,
-        UserBrandMapID,
-        OrganizationID,
-        IsActive,
-        IsDeleted,
-        CreatedBy
-      )
-      VALUES
-      (
-        $1,
-        $2,
-        $3,
-        TRUE,
-        FALSE,
-        $4
-      );
-      `,
+          INSERT INTO user_org_mapping
+          (
+            UserID,
+            UserBrandMapID,
+            OrganizationID,
+
+            IsActive,
+            IsDeleted,
+
+            CreatedBy
+          )
+
+          VALUES
+          (
+            $1,
+            $2,
+            $3,
+
+            TRUE,
+            FALSE,
+
+            $4
+          );
+          `,
           [
             UserID,
             userBrandMapID,
@@ -534,174 +632,286 @@ const createUser = async (data) => {
             CreatedBy || null
           ]
         );
+
       }
+
     }
-    // ========================================================
-    // Organization Mapping
-    // ========================================================
 
-    // if (Array.isArray(Organizations) && Organizations.length > 0) {
-    //   for (const organization of Organizations) {
-    //     const { BrandID, OrganizationID } = organization;
-
-    //     if (!BrandID || !OrganizationID) {
-    //       throw new Error("BrandID and OrganizationID are required");
-    //     }
-
-    //     // Generate UserOrgMapID
-
-    //     const mappingIdResult = await client.query(`
-    //       SELECT COALESCE(MAX(UserOrgMapID), 0) + 1 AS UserOrgMapID
-    //       FROM user_org_mapping;
-    //     `);
-
-    //     const UserOrgMapID = Number(mappingIdResult.rows[0].userorgmapid);
-
-    //     // Insert Organization Mapping
-
-    //     await client.query(
-    //       `
-    //       INSERT INTO user_org_mapping
-    //       (
-    //         UserOrgMapID,
-    //         UserID,
-    //         BrandID,
-    //         OrganizationID,
-    //         IsActive,
-    //         IsDeleted,
-    //         CreatedBy
-    //       )
-    //       VALUES
-    //       (
-    //         $1,
-    //         $2,
-    //         $3,
-    //         $4,
-    //         TRUE,
-    //         FALSE,
-    //         $5
-    //       );
-    //       `,
-    //       [UserOrgMapID, UserID, BrandID, OrganizationID, CreatedBy || null],
-    //     );
-    //   }
-    // }
 
     // ========================================================
-    // Product Mapping
+    // 8. PRODUCT MAPPING
+    // ========================================================
+    //
+    // IMPORTANT:
+    // Product is NOT department restricted.
+    //
+    // Example:
+    // Front Office user
+    // can have Housekeeping product.
+    //
+    // Only the selected ProductID is stored.
     // ========================================================
 
-    if (Array.isArray(Products) && Products.length > 0) {
-      for (const product of Products) {
-        const { ProductID } = product;
+    if (
+      Array.isArray(Products) &&
+      Products.length > 0
+    ) {
+
+
+      for (
+        const product
+        of Products
+      ) {
+
+
+        const {
+          ProductID
+        } = product;
+
 
         if (!ProductID) {
-          throw new Error("ProductID is required");
+
+          throw new Error(
+            "ProductID is required"
+          );
+
         }
 
+
+        // ----------------------------------------------------
         // Generate UserProductMapID
+        // ----------------------------------------------------
 
-        const mappingIdResult = await client.query(`
-          SELECT COALESCE(MAX(UserProductMapID), 0) + 1 AS UserProductMapID
-          FROM user_product_mapping;
-        `);
+        const mappingIdResult =
+          await client.query(
+            `
+            SELECT
+              COALESCE(
+                MAX(UserProductMapID),
+                0
+              ) + 1
+              AS UserProductMapID
 
-        const UserProductMapID = Number(
-          mappingIdResult.rows[0].userproductmapid,
-        );
+            FROM user_product_mapping;
+            `
+          );
 
+
+        const UserProductMapID =
+          Number(
+            mappingIdResult
+              .rows[0]
+              .userproductmapid
+          );
+
+
+        // ----------------------------------------------------
         // Insert Product Mapping
+        // ----------------------------------------------------
 
         await client.query(
           `
           INSERT INTO user_product_mapping
           (
             UserProductMapID,
+
             UserID,
             ProductID,
+
             IsActive,
             IsDeleted,
+
             CreatedBy
           )
+
           VALUES
           (
             $1,
+
             $2,
             $3,
+
             TRUE,
             FALSE,
+
             $4
           );
           `,
-          [UserProductMapID, UserID, ProductID, CreatedBy || null],
+          [
+            UserProductMapID,
+
+            UserID,
+            ProductID,
+
+            CreatedBy || null
+          ]
         );
+
       }
+
     }
 
+
     // ========================================================
-    // Commit
+    // 9. COMMIT
     // ========================================================
 
     await client.query("COMMIT");
 
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
+
     return {
+
       success: true,
-      message: "User Created Successfully",
+
+      message:
+        "User Created Successfully",
+
       data: {
-        UserID: userResult.rows[0].userid,
+
+        UserID:
+          userResult.rows[0].userid,
+
       },
+
     };
+
+
   } catch (error) {
-    await client.query("ROLLBACK");
 
-    console.log("Create User Error :", error.message);
 
-    const retryResponse = retryableDatabaseResponse(error);
-    if (retryResponse) return retryResponse;
+    // ========================================================
+    // ROLLBACK
+    // ========================================================
 
-    // PostgreSQL Duplicate
-    if (error.code === "23505") {
-      return {
-        success: false,
-        message: "Username, or Employee Code already exists",
-      };
+    await client.query(
+      "ROLLBACK"
+    );
+
+
+    console.log(
+      "Create User Error :",
+      error.message
+    );
+
+
+    // ========================================================
+    // RETRYABLE DATABASE ERROR
+    // ========================================================
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+
+      return retryResponse;
+
     }
 
-    // PostgreSQL Foreign Key
-    if (error.code === "23503") {
-      return {
-        success: false,
-        message: "Invalid Brand, Organization or Product",
-      };
-    }
 
-    // NOT NULL violation
-    if (error.code === "23502") {
+    // ========================================================
+    // DUPLICATE
+    // ========================================================
 
-      console.log("NOT NULL ERROR DETAIL:", {
-        message: error.message,
-        column: error.column,
-        table: error.table,
-        detail: error.detail,
-        code: error.code
-      });
+    if (
+      error.code === "23505"
+    ) {
 
       return {
+
         success: false,
-        message: error.message,
-        column: error.column,
-        table: error.table,
-        detail: error.detail
+
+        message:
+          "Username, or Employee Code already exists",
+
       };
+
     }
+
+
+    // ========================================================
+    // FOREIGN KEY
+    // ========================================================
+
+    if (
+      error.code === "23503"
+    ) {
+
+      return {
+
+        success: false,
+
+        message:
+          "Invalid Brand, Organization or Product",
+
+      };
+
+    }
+
+
+    // ========================================================
+    // NOT NULL
+    // ========================================================
+
+    if (
+      error.code === "23502"
+    ) {
+
+      console.log(
+        "NOT NULL ERROR DETAIL:",
+        {
+          message: error.message,
+          column: error.column,
+          table: error.table,
+          detail: error.detail,
+          code: error.code
+        }
+      );
+
+
+      return {
+
+        success: false,
+
+        message:
+          error.message,
+
+        column:
+          error.column,
+
+        table:
+          error.table,
+
+        detail:
+          error.detail
+
+      };
+
+    }
+
+
+    // ========================================================
+    // DEFAULT ERROR
+    // ========================================================
 
     return {
+
       success: false,
-      message: error.message,
+
+      message:
+        error.message,
+
     };
+
   } finally {
+
     client.release();
+
   }
+
 };
 // ============================================================
 // DELETE USER
@@ -3855,10 +4065,8 @@ const updateUser = async (data) => {
         LoginType,
         AllOrganizationAccess
       FROM user_master
-
       WHERE UserID = $1
         AND IsDeleted = FALSE
-
       LIMIT 1;
       `,
       [UserID]
@@ -3877,8 +4085,7 @@ const updateUser = async (data) => {
     }
 
 
-    const existingUser =
-      userCheck.rows[0];
+    const existingUser = userCheck.rows[0];
 
 
     // ========================================================
@@ -3996,9 +4203,13 @@ const updateUser = async (data) => {
     // 6. PRODUCT VALIDATION
     //
     // IMPORTANT:
-    // Product can belong to ANY department.
+    // Product is NOT restricted by Department.
     //
-    // We only validate whether ProductID exists
+    // Example:
+    // Front Office user can have
+    // Housekeeping product.
+    //
+    // We only check that ProductID exists
     // and is active.
     // ========================================================
 
@@ -4053,12 +4264,7 @@ const updateUser = async (data) => {
 
 
     // ========================================================
-    // 7. LOGIN TYPE VALIDATION
-    // ========================================================
-
-
-    // ========================================================
-    // SUPER ADMIN
+    // 7. SUPER ADMIN VALIDATION
     // ========================================================
 
     if (
@@ -4073,7 +4279,7 @@ const updateUser = async (data) => {
         AllOrganizationAccess === true
       ) {
 
-        // No Organizations required.
+        // No organization mapping required.
 
       }
 
@@ -4100,7 +4306,7 @@ const updateUser = async (data) => {
 
 
     // ========================================================
-    // ORGANIZATION LOGIN
+    // 8. ORGANIZATION LOGIN
     // ========================================================
 
     if (
@@ -4133,7 +4339,7 @@ const updateUser = async (data) => {
 
 
     // ========================================================
-    // BRAND LOGIN
+    // 9. BRAND LOGIN
     // ========================================================
 
     if (
@@ -4208,7 +4414,7 @@ const updateUser = async (data) => {
 
 
     // ========================================================
-    // 8. UPDATE USER MASTER
+    // 10. UPDATE USER MASTER
     // ========================================================
 
     const result =
@@ -4309,10 +4515,9 @@ const updateUser = async (data) => {
 
 
     // ========================================================
-    // 9. BRAND MAPPING
+    // 11. BRAND MAPPING
     // ========================================================
 
-    // First deactivate old BRAND mappings
     await client.query(
       `
       UPDATE user_brand_mapping
@@ -4369,10 +4574,6 @@ const updateUser = async (data) => {
         );
 
 
-      // ------------------------------------------
-      // Existing Mapping
-      // ------------------------------------------
-
       if (
         existingBrandMapping.rows.length > 0
       ) {
@@ -4409,10 +4610,6 @@ const updateUser = async (data) => {
         );
 
       }
-
-      // ------------------------------------------
-      // New Mapping
-      // ------------------------------------------
 
       else {
 
@@ -4464,12 +4661,8 @@ const updateUser = async (data) => {
 
 
     // ========================================================
-    // 10. ORGANIZATION MAPPING
+    // 12. ORGANIZATION MAPPING
     // ========================================================
-
-    // ------------------------------------------
-    // First deactivate old mappings
-    // ------------------------------------------
 
     await client.query(
       `
@@ -4539,10 +4732,6 @@ const updateUser = async (data) => {
         }
 
 
-        // --------------------------------------
-        // Validate Organization
-        // --------------------------------------
-
         const organizationCheck =
           await client.query(
             `
@@ -4572,10 +4761,6 @@ const updateUser = async (data) => {
         }
 
 
-        // --------------------------------------
-        // Check existing mapping
-        // --------------------------------------
-
         const existingMapping =
           await client.query(
             `
@@ -4595,10 +4780,6 @@ const updateUser = async (data) => {
             ]
           );
 
-
-        // --------------------------------------
-        // Reactivate
-        // --------------------------------------
 
         if (
           existingMapping.rows.length > 0
@@ -4635,10 +4816,6 @@ const updateUser = async (data) => {
           );
 
         }
-
-        // --------------------------------------
-        // Insert
-        // --------------------------------------
 
         else {
 
@@ -4692,8 +4869,7 @@ const updateUser = async (data) => {
 
       const OrganizationID =
         Number(
-          Organizations[0]
-            ?.OrganizationID
+          Organizations[0]?.OrganizationID
         );
 
 
@@ -4705,10 +4881,6 @@ const updateUser = async (data) => {
 
       }
 
-
-      // --------------------------------------
-      // Validate Organization
-      // --------------------------------------
 
       const organizationCheck =
         await client.query(
@@ -4738,10 +4910,6 @@ const updateUser = async (data) => {
 
       }
 
-
-      // --------------------------------------
-      // Existing mapping
-      // --------------------------------------
 
       const existingMapping =
         await client.query(
@@ -4863,10 +5031,6 @@ const updateUser = async (data) => {
         }
 
 
-        // --------------------------------------
-        // Validate Organization + Brand
-        // --------------------------------------
-
         const organizationCheck =
           await client.query(
             `
@@ -4902,9 +5066,8 @@ const updateUser = async (data) => {
 
 
         if (
-          Number(
-            organizationData.brandid
-          ) !== Number(BrandID)
+          Number(organizationData.brandid) !==
+          Number(BrandID)
         ) {
 
           throw new Error(
@@ -4913,10 +5076,6 @@ const updateUser = async (data) => {
 
         }
 
-
-        // --------------------------------------
-        // Existing mapping
-        // --------------------------------------
 
         const existingMapping =
           await client.query(
@@ -4937,10 +5096,6 @@ const updateUser = async (data) => {
             ]
           );
 
-
-        // --------------------------------------
-        // Reactivate
-        // --------------------------------------
 
         if (
           existingMapping.rows.length > 0
@@ -4974,10 +5129,6 @@ const updateUser = async (data) => {
           );
 
         }
-
-        // --------------------------------------
-        // Insert
-        // --------------------------------------
 
         else {
 
@@ -5023,8 +5174,16 @@ const updateUser = async (data) => {
 
 
     // ========================================================
-    // 11. PRODUCT MAPPING
+    // 13. PRODUCT MAPPING
     // ========================================================
+
+    // IMPORTANT:
+    // Products are independent of Department.
+    //
+    // Any active ProductID can be assigned to the user,
+    // regardless of DepartmentID.
+    // ========================================================
+
 
     // ------------------------------------------
     // Deactivate old products
@@ -5055,11 +5214,13 @@ const updateUser = async (data) => {
     );
 
 
-    // ========================================================
-    // CREATE / REACTIVATE PRODUCTS
-    // ========================================================
+    // ------------------------------------------
+    // Create / Reactivate Products
+    // ------------------------------------------
 
-    if (Array.isArray(Products)) {
+    if (
+      Array.isArray(Products)
+    ) {
 
       for (
         const product
@@ -5076,6 +5237,41 @@ const updateUser = async (data) => {
 
           throw new Error(
             "ProductID is required"
+          );
+
+        }
+
+
+        // --------------------------------------
+        // Product validity check
+        //
+        // NO Department check here.
+        // --------------------------------------
+
+        const productCheck =
+          await client.query(
+            `
+            SELECT
+              ProductID
+
+            FROM Product_Master
+
+            WHERE ProductID = $1
+              AND IsDeleted = FALSE
+              AND IsActive = TRUE
+
+            LIMIT 1;
+            `,
+            [ProductID]
+          );
+
+
+        if (
+          productCheck.rows.length === 0
+        ) {
+
+          throw new Error(
+            `Invalid or inactive ProductID: ${ProductID}`
           );
 
         }
@@ -5153,6 +5349,7 @@ const updateUser = async (data) => {
             `
             INSERT INTO user_product_mapping
             (
+              UserProductMapID,
               UserID,
               ProductID,
 
@@ -5164,6 +5361,15 @@ const updateUser = async (data) => {
 
             VALUES
             (
+              (
+                SELECT
+                  COALESCE(
+                    MAX(UserProductMapID),
+                    0
+                  ) + 1
+                FROM user_product_mapping
+              ),
+
               $1,
               $2,
 
@@ -5188,11 +5394,15 @@ const updateUser = async (data) => {
 
 
     // ========================================================
-    // 12. COMMIT
+    // 14. COMMIT
     // ========================================================
 
     await client.query("COMMIT");
 
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
 
     return {
 
@@ -5227,7 +5437,9 @@ const updateUser = async (data) => {
     // DUPLICATE
     // ========================================================
 
-    if (error.code === "23505") {
+    if (
+      error.code === "23505"
+    ) {
 
       if (
         error.constraint ===
@@ -5279,7 +5491,9 @@ const updateUser = async (data) => {
     // FOREIGN KEY
     // ========================================================
 
-    if (error.code === "23503") {
+    if (
+      error.code === "23503"
+    ) {
 
       return {
 

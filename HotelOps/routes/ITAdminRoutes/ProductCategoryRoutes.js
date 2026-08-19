@@ -6,9 +6,9 @@ const authenticateToken = require("../../middleware/authMiddleware");
 
 router.post("/create", authenticateToken, ProductCategoryController.createProductCategory);
 
-router.get("/ProductCategoryList", ProductCategoryController.getAllProductCategories);
+router.get("/ProductCategoryList", authenticateToken, ProductCategoryController.getAllProductCategories);
 
-router.get("/ProductCategoryNames", ProductCategoryController.getProductCategoryDropdown);
+router.get("/ProductCategoryNames", authenticateToken, ProductCategoryController.getProductCategoryDropdown);
 
 router.put("/update", authenticateToken, ProductCategoryController.updateProductCategory);
 

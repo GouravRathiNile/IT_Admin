@@ -17,8 +17,14 @@ exports.createDepartment = async (req, res) => {
       DepartmentShortName,
       OrganizationID,
       DivisionID,
+      Products,
     } = req.body;
+
     const CreatedBy = req.user.UserID;
+
+    // =========================================
+    // BASIC VALIDATION
+    // =========================================
 
     if (!DepartmentName) {
       throw new AppError(
@@ -48,34 +54,110 @@ exports.createDepartment = async (req, res) => {
       );
     }
 
+    // =========================================
+    // PRODUCTS
+    // Only ProductID will come from request
+    // =========================================
+
+    let productMappings = [];
+
+    if (Products !== undefined) {
+
+      try {
+
+        productMappings =
+          typeof Products === "string"
+            ? JSON.parse(Products)
+            : Products;
+
+      } catch (error) {
+
+        throw new AppError(
+          "Invalid Products JSON",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
+
+      // Products must be array
+      if (!Array.isArray(productMappings)) {
+
+        throw new AppError(
+          "Products must be an array",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
+
+      // ProductID required
+      for (const product of productMappings) {
+
+        if (
+          !product ||
+          !product.ProductID
+        ) {
+
+          throw new AppError(
+            "ProductID is required for every product",
+            STATUS_CODES.BAD_REQUEST
+          );
+
+        }
+
+      }
+
+    }
+
+    // =========================================
+    // SEND TO RABBITMQ
+    // =========================================
+
     const response = await producer.sendMessage(
       QUEUE.DEPARTMENT.REQUEST,
       QUEUE.DEPARTMENT.RESPONSE,
       {
         action: "CREATE_DEPARTMENT",
+
         data: {
+
           DepartmentName,
           DepartmentShortName,
           OrganizationID,
           DivisionID,
+
+          Products:
+            productMappings,
+
           CreatedBy,
         },
       }
     );
 
+    // =========================================
+    // RABBITMQ ERROR
+    // =========================================
+
     if (!response.success) {
+
       throw new AppError(
         response.message,
         STATUS_CODES.BAD_REQUEST
       );
+
     }
+
+    // =========================================
+    // RESPONSE
+    // =========================================
 
     return res
       .status(STATUS_CODES.CREATED)
       .json(response);
 
   } catch (error) {
+
     handleError(error, res);
+
   }
 };
 // ========================================= Get All Departments
@@ -200,43 +282,153 @@ exports.getDepartmentsDropdown = async (req, res) => {
 };
 // ========================================= Update Department
 exports.updateDepartment = async (req, res) => {
+
   try {
-    const { DepartmentID } = req.body;
+
+    const {
+      DepartmentID,
+      DepartmentName,
+      DepartmentShortName,
+      OrganizationID,
+      DivisionID,
+      Products,
+    } = req.body;
+
+
+    // ========================================================
+    // DEPARTMENT ID
+    // ========================================================
 
     if (!DepartmentID) {
+
       throw new AppError(
         "Department ID is required",
         STATUS_CODES.BAD_REQUEST
       );
+
     }
 
-    const response = await producer.sendMessage(
-      QUEUE.DEPARTMENT.REQUEST,
-      QUEUE.DEPARTMENT.RESPONSE,
-      {
-        action: "UPDATE_DEPARTMENT",
-        data: {
-          ...req.body,
-          DepartmentID,
-          ModifiedBy: req.user.UserID,
-        },
+
+    // ========================================================
+    // PRODUCTS
+    // ========================================================
+
+    let productMappings = [];
+
+    if (Products !== undefined) {
+
+      try {
+
+        productMappings =
+          typeof Products === "string"
+            ? JSON.parse(Products)
+            : Products;
+
+      } catch (error) {
+
+        throw new AppError(
+          "Invalid Products JSON",
+          STATUS_CODES.BAD_REQUEST
+        );
+
       }
-    );
+
+
+      if (!Array.isArray(productMappings)) {
+
+        throw new AppError(
+          "Products must be an array",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
+
+
+      // ======================================================
+      // PRODUCT ID VALIDATION
+      // ======================================================
+
+      for (const product of productMappings) {
+
+        if (
+          !product ||
+          !product.ProductID
+        ) {
+
+          throw new AppError(
+            "ProductID is required for every product",
+            STATUS_CODES.BAD_REQUEST
+          );
+
+        }
+
+      }
+
+    }
+
+
+    // ========================================================
+    // SEND TO RABBITMQ
+    // ========================================================
+
+    const response =
+      await producer.sendMessage(
+        QUEUE.DEPARTMENT.REQUEST,
+        QUEUE.DEPARTMENT.RESPONSE,
+        {
+
+          action: "UPDATE_DEPARTMENT",
+
+          data: {
+
+            DepartmentID,
+
+            DepartmentName,
+            DepartmentShortName,
+            OrganizationID,
+            DivisionID,
+
+            Products:
+              productMappings,
+
+            ModifiedBy:
+              req.user.UserID,
+
+          },
+
+        }
+      );
+
+
+    // ========================================================
+    // ERROR
+    // ========================================================
 
     if (!response.success) {
+
       throw new AppError(
         response.message,
         STATUS_CODES.BAD_REQUEST
       );
+
     }
+
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
 
     return res
       .status(STATUS_CODES.SUCCESS)
       .json(response);
 
+
   } catch (error) {
+
     handleError(error, res);
+
   }
+
 };
 // ========================================= Delete Department
 exports.deleteDepartment = async (req, res) => {
@@ -276,4 +468,43 @@ exports.deleteDepartment = async (req, res) => {
   } catch (error) {
     handleError(error, res);
   }
+};
+
+// ============================================================
+// GET DEPARTMENT WISE PRODUCTS
+// ============================================================
+exports.getDepartmentWiseProducts = async (req, res) => {
+
+  try {
+
+    const { DepartmentID } = req.query;
+
+    const response =
+      await DepartmentService.getDepartmentWiseProducts(
+        DepartmentID
+      );
+
+
+    if (!response.success) {
+
+      throw new AppError(
+        response.message ||
+        "Unable to fetch department products",
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+
+  } catch (error) {
+
+    handleError(error, res);
+
+  }
+
 };
