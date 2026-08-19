@@ -2615,9 +2615,7 @@ const getAllUsersTabel = async (
   UserType,
   OrganizationID
 ) => {
-
   try {
-
     // ========================================================
     // PAGINATION
     // ========================================================
@@ -2625,16 +2623,10 @@ const getAllUsersTabel = async (
     page = Number(page) || 1;
     limit = Number(limit) || 10;
 
-    if (page < 1) {
-      page = 1;
-    }
-
-    if (limit < 1) {
-      limit = 10;
-    }
+    if (page < 1) page = 1;
+    if (limit < 1) limit = 10;
 
     const offset = (page - 1) * limit;
-
 
     // ========================================================
     // FILTERS
@@ -2646,7 +2638,6 @@ const getAllUsersTabel = async (
 
     const filterValues = [];
 
-
     // ========================================================
     // FULL NAME FILTER
     // ========================================================
@@ -2656,20 +2647,15 @@ const getAllUsersTabel = async (
       FullName !== null &&
       String(FullName).trim() !== ""
     ) {
-
-      filterValues.push(
-        `%${String(FullName).trim()}%`
-      );
+      filterValues.push(`%${String(FullName).trim()}%`);
 
       filters.push(
         `um.FullName ILIKE $${filterValues.length}`
       );
-
     }
 
-
     // ========================================================
-    // DEPARTMENT ID FILTER
+    // DEPARTMENT FILTER
     // ========================================================
 
     if (
@@ -2677,17 +2663,12 @@ const getAllUsersTabel = async (
       DepartmentID !== null &&
       String(DepartmentID).trim() !== ""
     ) {
-
-      filterValues.push(
-        Number(DepartmentID)
-      );
+      filterValues.push(Number(DepartmentID));
 
       filters.push(
         `um.DepartmentID = $${filterValues.length}`
       );
-
     }
-
 
     // ========================================================
     // USER TYPE FILTER
@@ -2698,21 +2679,15 @@ const getAllUsersTabel = async (
       UserType !== null &&
       String(UserType).trim() !== ""
     ) {
-
-      filterValues.push(
-        String(UserType).trim()
-      );
+      filterValues.push(String(UserType).trim());
 
       filters.push(
         `um.UserType = $${filterValues.length}`
       );
-
     }
 
-
     // ========================================================
-    // ORGANIZATION ID FILTER
-    // Using user_org_mapping
+    // ORGANIZATION FILTER
     // ========================================================
 
     if (
@@ -2720,50 +2695,43 @@ const getAllUsersTabel = async (
       OrganizationID !== null &&
       String(OrganizationID).trim() !== ""
     ) {
-
-      filterValues.push(
-        Number(OrganizationID)
-      );
+      filterValues.push(Number(OrganizationID));
 
       filters.push(`
         EXISTS (
           SELECT 1
-          FROM user_org_mapping uom
-          WHERE uom.UserID = um.UserID
-            AND uom.OrganizationID = $${filterValues.length}
-            AND uom.IsDeleted = FALSE
-            AND uom.IsActive = TRUE
+          FROM user_org_mapping uom_filter
+          WHERE uom_filter.UserID = um.UserID
+            AND uom_filter.OrganizationID = $${filterValues.length}
+            AND uom_filter.IsDeleted = FALSE
+            AND uom_filter.IsActive = TRUE
         )
       `);
-
     }
 
-
     // ========================================================
-    // WHERE CLAUSE
+    // WHERE
     // ========================================================
 
-    const whereClause =
-      filters.join(" AND ");
-
+    const whereClause = filters.join(" AND ");
 
     // ========================================================
     // PAGINATION PARAMETERS
     // ========================================================
 
-    const limitParameter =
-      filterValues.length + 1;
-
-    const offsetParameter =
-      filterValues.length + 2;
-
+    const limitParameter = filterValues.length + 1;
+    const offsetParameter = filterValues.length + 2;
 
     // ========================================================
-    // USER QUERY
+    // MAIN USER QUERY
     // ========================================================
 
     const query = `
       SELECT
+
+        -- ====================================================
+        -- USER BASIC DETAILS
+        -- ====================================================
 
         um.UserID,
         um.EmployeeCode,
@@ -2781,9 +2749,132 @@ const getAllUsersTabel = async (
         um.LoginType,
         um.UserType,
 
+        um.AllOrganizationAccess,
+
         um.Email,
         um.PhoneNumber,
-        um.Gender
+        um.Gender,
+
+        um.ProfilePhoto,
+
+        -- ====================================================
+        -- LOGIN / PASSWORD DETAILS
+        -- ====================================================
+
+        um.LastPasswordChangedDate,
+        um.PasswordExpiryDate,
+        um.LastLogin,
+
+        um.IsLocked,
+        um.IsActive,
+
+        -- ====================================================
+        -- EMPLOYEE DETAILS
+        -- ====================================================
+
+        um.DateOfJoining,
+
+        -- ====================================================
+        -- AUDIT DETAILS
+        -- ====================================================
+
+        um.CreatedDate,
+
+
+        -- ====================================================
+        -- ORGANIZATIONS
+        -- ====================================================
+
+        CASE
+          WHEN
+            um.LoginType = 'SuperAdmin'
+            AND um.AllOrganizationAccess = TRUE
+          THEN
+            (
+              SELECT COALESCE(
+                json_agg(
+                  json_build_object(
+                    'BrandID', om.BrandID,
+                    'BrandName', bm.BrandName,
+                    'OrganizationID', om.OrganizationID,
+                    'OrganizationName', om.OrganizationName,
+                    'ShortName', om.ShortName
+                  )
+                  ORDER BY om.OrganizationName ASC
+                ),
+                '[]'::json
+              )
+
+              FROM Organization_Master om
+
+              LEFT JOIN Brand_Master bm
+                ON om.BrandID = bm.BrandID
+
+              WHERE om.IsDeleted = FALSE
+                AND om.IsActive = TRUE
+            )
+
+          ELSE
+            (
+              SELECT COALESCE(
+                json_agg(
+                  json_build_object(
+                    'BrandID', om.BrandID,
+                    'BrandName', bm.BrandName,
+                    'OrganizationID', uom.OrganizationID,
+                    'OrganizationName', om.OrganizationName,
+                    'ShortName', om.ShortName
+                  )
+                  ORDER BY om.OrganizationName ASC
+                ),
+                '[]'::json
+              )
+
+              FROM user_org_mapping uom
+
+              LEFT JOIN Organization_Master om
+                ON uom.OrganizationID = om.OrganizationID
+
+              LEFT JOIN Brand_Master bm
+                ON om.BrandID = bm.BrandID
+
+              WHERE uom.UserID = um.UserID
+                AND uom.IsDeleted = FALSE
+                AND uom.IsActive = TRUE
+            )
+        END AS Organizations,
+
+        -- ====================================================
+        -- PRODUCTS
+        -- ====================================================
+
+        (
+          SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'ProductID', pm.ProductID,
+                'ProductName', pm.ProductName,
+                'ProductLabel', pm.ProductLabel,
+                'ProductCategoryID', pm.ProductCategoryID,
+                'CategoryName', pcm.CategoryName
+              )
+              ORDER BY pm.ProductName ASC
+            ),
+            '[]'::json
+          )
+
+          FROM user_product_mapping upm
+
+          LEFT JOIN Product_Master pm
+            ON upm.ProductID = pm.ProductID
+
+          LEFT JOIN product_category_master pcm
+            ON pm.ProductCategoryID = pcm.ProductCategoryID
+
+          WHERE upm.UserID = um.UserID
+            AND upm.IsDeleted = FALSE
+            AND upm.IsActive = TRUE
+        ) AS Products
 
       FROM user_master um
 
@@ -2801,110 +2892,151 @@ const getAllUsersTabel = async (
       OFFSET $${offsetParameter};
     `;
 
-
     // ========================================================
     // COUNT QUERY
-    // Same filters applied
     // ========================================================
 
     const countQuery = `
-      SELECT
-        COUNT(*) AS TotalCount
+      SELECT COUNT(*) AS TotalCount
 
       FROM user_master um
 
       WHERE ${whereClause};
     `;
 
-
     // ========================================================
-    // EXECUTE QUERIES
+    // EXECUTE
     // ========================================================
 
-    const [result, countResult] =
-      await Promise.all([
+    const [result, countResult] = await Promise.all([
+      pool.query(
+        query,
+        [
+          ...filterValues,
+          limit,
+          offset
+        ]
+      ),
 
-        pool.query(
-          query,
-          [
-            ...filterValues,
-            limit,
-            offset
-          ]
-        ),
-
-        pool.query(
-          countQuery,
-          filterValues
-        )
-
-      ]);
-
+      pool.query(
+        countQuery,
+        filterValues
+      )
+    ]);
 
     // ========================================================
     // TOTAL COUNT
     // ========================================================
 
-    const totalCount =
-      Number(
-        countResult.rows[0].totalcount
-      );
-
-
-    // ========================================================
-    // RESPONSE DATA
-    // ========================================================
-
-    const users =
-      result.rows.map((row) => ({
-
-        UserID:
-          row.userid,
-
-        EmployeeCode:
-          row.employeecode,
-
-        Username:
-          row.username,
-
-        FullName:
-          row.fullname,
-
-        Designation:
-          row.designation,
-
-        DepartmentID:
-          row.departmentid,
-
-        DepartmentName:
-          row.departmentname,
-
-        DivisionID:
-          row.divisionid,
-
-        DivisionName:
-          row.divisionname,
-
-        LoginType:
-          row.logintype,
-
-        UserType:
-          row.usertype,
-
-        Email:
-          row.email,
-
-        PhoneNumber:
-          row.phonenumber,
-
-        Gender:
-          row.gender,
-
-      }));
-
+    const totalCount = Number(
+      countResult.rows[0].totalcount
+    );
 
     // ========================================================
     // RESPONSE
+    // ========================================================
+
+    const users = result.rows.map((row) => ({
+
+      // ======================================================
+      // BASIC USER DETAILS
+      // ======================================================
+
+      UserID: row.userid,
+
+      EmployeeCode: row.employeecode,
+
+      Username: row.username,
+
+      FullName: row.fullname,
+
+      Designation: row.designation,
+
+      DepartmentID: row.departmentid,
+
+      DepartmentName: row.departmentname,
+
+      DivisionID: row.divisionid,
+
+      DivisionName: row.divisionname,
+
+      LoginType: row.logintype,
+
+      UserType: row.usertype,
+
+      AllOrganizationAccess:
+        row.allorganizationaccess,
+
+      Email: row.email,
+
+      PhoneNumber: row.phonenumber,
+
+      Gender: row.gender,
+
+      // ======================================================
+      // PROFILE
+      // ======================================================
+
+      ProfilePhoto: row.profilephoto
+        ? generateUrl(row.profilephoto)
+        : null,
+
+      // ======================================================
+      // PASSWORD / LOGIN
+      // ======================================================
+
+      LastPasswordChangedDate:
+        formatDate(row.lastpasswordchangeddate),
+
+      PasswordExpiryDate:
+        formatDate(row.passwordexpirydate),
+
+      LastLogin:
+        formatDate(row.lastlogin),
+
+      IsLocked:
+        row.islocked,
+
+      IsActive:
+        row.isactive,
+
+      // ======================================================
+      // EMPLOYEE
+      // ======================================================
+
+      DateOfJoining:
+        row.dateofjoining
+          ? formatDate(row.dateofjoining)
+          : null,
+
+      // ======================================================
+      // AUDIT
+      // ======================================================
+
+      
+
+      CreatedDate:
+        formatDate(row.createddate),
+
+
+      // ======================================================
+      // ORGANIZATIONS
+      // ======================================================
+
+      Organizations:
+        row.organizations || [],
+
+      // ======================================================
+      // PRODUCTS
+      // ======================================================
+
+      Products:
+        row.products || []
+
+    }));
+
+    // ========================================================
+    // FINAL RESPONSE
     // ========================================================
 
     return {
@@ -2932,10 +3064,9 @@ const getAllUsersTabel = async (
         ),
 
       data:
-        users,
+        users
 
     };
-
 
   } catch (error) {
 
@@ -2949,12 +3080,10 @@ const getAllUsersTabel = async (
       success: false,
 
       message:
-        error.message,
+        error.message
 
     };
-
   }
-
 };
 // // ============================================================UPDATE USER
 // const updateUser = async (data) => {

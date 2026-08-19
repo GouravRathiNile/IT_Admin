@@ -1,6 +1,6 @@
 const { pool } = require("../../db");
 const {retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
-const generateDocumentUrl = require("../../AzurConfigration/Capex/AzureGetData");
+const generateDocumentUrl = require("../../AzurConfigration/Opex/AzureGetData");
 const { formatDate } = require("../../utils/dateFormatter");
 const PdfPrinter = require("pdfmake");
 const path = require("path");
@@ -41,7 +41,7 @@ const mergeApprovalConfiguration = (configuredRows) => {
     (left, right) => left.LevelNo - right.LevelNo,
   );
 };
-// CAPEX currently supports only these three business approval roles.
+// Opex currently supports only these three business approval roles.
 const approvalConfigurationIsValid = (approvals) =>
   approvals.length > 0 &&
   approvals.every((approval) =>
@@ -58,7 +58,7 @@ const rollback = async (client, transactionStarted) => {
   try {
     await client.query("ROLLBACK");
   } catch (error) {
-    console.error("CAPEX Rollback Error:", error.message);
+    console.error("Opex Rollback Error:", error.message);
   }
 };
 // Roll back database work and return the requested failure response.
@@ -66,18 +66,18 @@ const cleanupAndFail = async (client, transactionStarted, response) => {
   await rollback(client, transactionStarted);
   return response;
 };
-// Reserve numeric IDs safely because the existing CAPEX ID columns have no defaults.
+// Reserve numeric IDs safely because the existing Opex ID columns have no defaults.
 const reserveNumericIDs = async (client, tableName, columnName, count = 1) => {
   if (count < 1) return [];
 
   const allowedColumns = {
-    Capex_Master: "CapexID",
-    Capex_Documents: "CapexDocumentID",
-    Capex_Approval: "CapexApprovalID",
+    Opex_Master: "OpexID",
+    Opex_Documents: "OpexDocumentID",
+    Opex_Approval: "OpexApprovalID",
   };
 
   if (allowedColumns[tableName] !== columnName) {
-    throw new Error("Invalid CAPEX ID reservation target");
+    throw new Error("Invalid Opex ID reservation target");
   }
 
   const lockKey = `${tableName}.${columnName}`;
@@ -90,8 +90,8 @@ const reserveNumericIDs = async (client, tableName, columnName, count = 1) => {
 
   return Array.from({ length: count }, (_value, index) => firstID + index);
 };
-// ============================================================ Create CAPEX
-const createCapex = async (data) => {
+// ============================================================ Create Opex
+const createOpex = async (data) => {
   let client;
   let transactionStarted = false;
   const documents = Array.isArray(data.Documents) ? data.Documents : [];
@@ -103,34 +103,34 @@ const createCapex = async (data) => {
 
     const sequenceResult = await client.query(
       `
-      INSERT INTO Capex_Organization_Sequence
+      INSERT INTO Opex_Organization_Sequence
       (
         OrganizationID,
-        LastCapexNumber
+        LastOpexNumber
       )
       VALUES ($1, 1)
       ON CONFLICT (OrganizationID)
       DO UPDATE SET
-        LastCapexNumber = Capex_Organization_Sequence.LastCapexNumber + 1
-      RETURNING LastCapexNumber;
+        LastOpexNumber = Opex_Organization_Sequence.LastOpexNumber + 1
+      RETURNING LastOpexNumber;
       `,
       [data.OrganizationID],
     );
 
-    const capexNumber = Number(sequenceResult.rows[0].lastcapexnumber);
-    const [capexID] = await reserveNumericIDs(
+    const OpexNumber = Number(sequenceResult.rows[0].lastOpexnumber);
+    const [OpexID] = await reserveNumericIDs(
       client,
-      "Capex_Master",
-      "CapexID",
+      "Opex_Master",
+      "OpexID",
     );
 
     const masterResult = await client.query(
       `
-      INSERT INTO Capex_Master
+      INSERT INTO Opex_Master
       (
-        CapexID,
+        OpexID,
         OrganizationID,
-        CapexNumber,
+        OpexNumber,
         Department,
         Item,
         Description,
@@ -148,12 +148,12 @@ const createCapex = async (data) => {
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         FALSE, FALSE, $11, CURRENT_TIMESTAMP
       )
-      RETURNING CapexID, Total;
+      RETURNING OpexID, Total;
       `,
       [
-        capexID,
+        OpexID,
         data.OrganizationID,
-        capexNumber,
+        OpexNumber,
         data.Department,
         data.Item,
         data.Description,
@@ -169,18 +169,18 @@ const createCapex = async (data) => {
 
     const documentIDs = await reserveNumericIDs(
       client,
-      "Capex_Documents",
-      "CapexDocumentID",
+      "Opex_Documents",
+      "OpexDocumentID",
       documents.length,
     );
     for (const [index, document] of documents.entries()) {
       await client.query(
         `
-        INSERT INTO Capex_Documents
+        INSERT INTO Opex_Documents
         (
-          CapexDocumentID,
-          CapexID,
-          CapexNumber,
+          OpexDocumentID,
+          OpexID,
+          OpexNumber,
           FileName,
           FilePath,
           FileType,
@@ -193,8 +193,8 @@ const createCapex = async (data) => {
         `,
         [
           documentIDs[index],
-          capexID,
-          capexNumber,
+          OpexID,
+          OpexNumber,
           document.FileName,
           document.FilePath,
           document.FileType,
@@ -207,10 +207,10 @@ const createCapex = async (data) => {
     const approvalConfigResult = await client.query(
       `
       SELECT ApprovalLevel AS LevelNo, ApprovalRole
-      FROM Capex_Approval_Config
+      FROM Opex_Approval_Config
       WHERE OrganizationID = $1
         AND IsDeleted = FALSE
-      ORDER BY ApprovalOrder ASC, ApprovalLevel ASC, CapexApprovalConfigID ASC;
+      ORDER BY ApprovalOrder ASC, ApprovalLevel ASC, OpexApprovalConfigID ASC;
       `,
       [data.OrganizationID],
     );
@@ -222,7 +222,7 @@ const createCapex = async (data) => {
         client,
         transactionStarted,
         fail(
-          "CAPEX approval configuration contains an invalid approval role.",
+          "Opex approval configuration contains an invalid approval role.",
           400,
         ),
       );
@@ -230,15 +230,15 @@ const createCapex = async (data) => {
 
     const [approvalID] = await reserveNumericIDs(
       client,
-      "Capex_Approval",
-      "CapexApprovalID",
+      "Opex_Approval",
+      "OpexApprovalID",
     );
     await client.query(
       `
-      INSERT INTO Capex_Approval
+      INSERT INTO Opex_Approval
       (
-        CapexApprovalID,
-        CapexID,
+        OpexApprovalID,
+        OpexID,
         GMStatus,
         CEOStatus,
         OwnerStatus,
@@ -249,7 +249,7 @@ const createCapex = async (data) => {
       )
       VALUES ($1, $2, 'Pending', 'Pending', 'Pending', 'Pending', FALSE, $3, CURRENT_TIMESTAMP);
       `,
-      [approvalID, capexID, data.CreatedBy],
+      [approvalID, OpexID, data.CreatedBy],
     );
 
     await client.query("COMMIT");
@@ -257,10 +257,10 @@ const createCapex = async (data) => {
 
     return {
       success: true,
-      message: "CAPEX created successfully.",
+      message: "Opex created successfully.",
       // data: {
-      //   CapexID: capexID,
-      //   CapexNumber: capexNumber,
+      //   OpexID: OpexID,
+      //   OpexNumber: OpexNumber,
       //   Total: total,
       //   DocumentCount: documents.length,
       //   Approvals: approvals.map((approval) => ({
@@ -272,32 +272,32 @@ const createCapex = async (data) => {
   } catch (error) {
     await rollback(client, transactionStarted);
 
-    console.error("Create CAPEX Error:", error.message);
+    console.error("Create Opex Error:", error.message);
 
     const retryResponse = retryableDatabaseResponse(error);
     if (retryResponse) return retryResponse;
 
     if (error.code === "23503") {
-      return fail("Invalid CAPEX organization or related data.", 400);
+      return fail("Invalid Opex organization or related data.", 400);
     }
 
     if (error.code === "23505") {
-      return fail("A CAPEX record with the same details already exists.", 409);
+      return fail("A Opex record with the same details already exists.", 409);
     }
 
-    return fail("Unable to create CAPEX at this time.", 500);
+    return fail("Unable to create Opex at this time.", 500);
   } finally {
     if (client) client.release();
   }
 };
 
 // ============================================================ Read Query and Mapping Helpers(Get Helpers)
-// The lateral query derives the first non-approved stage for each CAPEX.
-const CAPEX_SELECT = `
+// The lateral query derives the first non-approved stage for each Opex.
+const Opex_SELECT = `
   SELECT
-    cm.CapexID,
+    cm.OpexID,
     cm.OrganizationID,
-    cm.CapexNumber,
+    cm.OpexNumber,
     cm.Department,
     cm.Item,
     cm.Description,
@@ -329,7 +329,7 @@ const CAPEX_SELECT = `
       )
     END AS CurrentStatus
 
-  FROM Capex_Master cm
+  FROM Opex_Master cm
 
   INNER JOIN Organization_Master om
     ON om.OrganizationID = cm.OrganizationID
@@ -337,8 +337,8 @@ const CAPEX_SELECT = `
    AND om.IsDeleted = FALSE
    AND om.ActivationStatus = TRUE
 
-  LEFT JOIN Capex_Approval approval_state
-    ON approval_state.CapexID = cm.CapexID
+  LEFT JOIN Opex_Approval approval_state
+    ON approval_state.OpexID = cm.OpexID
    AND approval_state.IsDeleted = FALSE
 
   LEFT JOIN LATERAL
@@ -360,7 +360,7 @@ const CAPEX_SELECT = `
       cfg.ApprovalLevel,
       cfg.ApprovalOrder
 
-    FROM Capex_Approval_Config cfg
+    FROM Opex_Approval_Config cfg
 
     WHERE cfg.OrganizationID = cm.OrganizationID
       AND cfg.IsDeleted = FALSE
@@ -388,11 +388,11 @@ const CAPEX_SELECT = `
 
   WHERE cm.IsDeleted = FALSE
 `;
-// Convert PostgreSQL lowercase row keys into the public CAPEX response shape.
+// Convert PostgreSQL lowercase row keys into the public Opex response shape.
 const mapMaster = (row) => ({
-  CapexID: Number(row.capexid),
+  OpexID: Number(row.Opexid),
   OrganizationID: Number(row.organizationid),
-  CapexNumber: Number(row.capexnumber),
+  OpexNumber: Number(row.Opexnumber),
   Department: row.department,
   Item: row.item,
   Description: row.description,
@@ -409,46 +409,46 @@ const mapMaster = (row) => ({
 });
 // Generate a short-lived read URL while preserving stored blob paths in the DB.
 const mapDocument = (row) => ({
-  CapexDocumentID: Number(row.capexdocumentid),
+  OpexDocumentID: Number(row.Opexdocumentid),
   FileName: row.filename,
   FilePath: row.filepath ? generateDocumentUrl(row.filepath) : null,
 });
 // Return approval fields without exposing soft-delete/audit internals.
 const mapApproval = (row) => ({
-  CapexApprovalID: Number(row.capexapprovalid),
+  OpexApprovalID: Number(row.Opexapprovalid),
   ApprovalRole: row.approvalrole,
   Status: row.status,
   Remarks: row.remarks,
 });
 // Fetch documents and approvals in batches to avoid N+1 database queries.
-const attachRelatedData = async (capexRows) => {
-  if (capexRows.length === 0) return [];
+const attachRelatedData = async (OpexRows) => {
+  if (OpexRows.length === 0) return [];
 
-  const capexIDs = capexRows.map((row) => Number(row.capexid));
+  const OpexIDs = OpexRows.map((row) => Number(row.Opexid));
   const [documentsResult, approvalsResult] = await Promise.all([
   pool.query(
     `
       SELECT
-        CapexDocumentID,
-        CapexID,
-        CapexNumber,
+        OpexDocumentID,
+        OpexID,
+        OpexNumber,
         FileName,
         FilePath,
         FileType,
         FileSize
-      FROM Capex_Documents
-      WHERE CapexID = ANY($1::bigint[])
+      FROM Opex_Documents
+      WHERE OpexID = ANY($1::bigint[])
         AND IsDeleted = FALSE
-      ORDER BY CapexID ASC, CapexDocumentID ASC;
+      ORDER BY OpexID ASC, OpexDocumentID ASC;
     `,
-    [capexIDs],
+    [OpexIDs],
   ),
 
   pool.query(
     `
       SELECT
-        ca.CapexApprovalID,
-        ca.CapexID,
+        ca.OpexApprovalID,
+        ca.OpexID,
         cfg.ApprovalLevel AS LevelNo,
         cfg.ApprovalRole,
 
@@ -476,50 +476,50 @@ const attachRelatedData = async (capexRows) => {
           WHEN 'OWNER' THEN ca.OwnerRemarks
         END AS Remarks
 
-      FROM Capex_Approval ca
+      FROM Opex_Approval ca
 
-      INNER JOIN Capex_Approval_Config cfg
+      INNER JOIN Opex_Approval_Config cfg
         ON cfg.OrganizationID = (
           SELECT OrganizationID
-          FROM Capex_Master
-          WHERE CapexID = ca.CapexID
+          FROM Opex_Master
+          WHERE OpexID = ca.OpexID
         )
 
        AND cfg.IsDeleted = FALSE
 
-      WHERE ca.CapexID = ANY($1::bigint[])
+      WHERE ca.OpexID = ANY($1::bigint[])
         AND ca.IsDeleted = FALSE
 
       ORDER BY
-        ca.CapexID ASC,
+        ca.OpexID ASC,
         cfg.ApprovalLevel ASC,
-        ca.CapexApprovalID ASC;
+        ca.OpexApprovalID ASC;
     `,
-    [capexIDs],
+    [OpexIDs],
   ),
 ]);
 
   const byID = new Map(
-    capexRows.map((row) => {
-      const capex = mapMaster(row);
-      return [capex.CapexID, capex];
+    OpexRows.map((row) => {
+      const Opex = mapMaster(row);
+      return [Opex.OpexID, Opex];
     }),
   );
 
   for (const row of documentsResult.rows) {
-    byID.get(Number(row.capexid))?.Documents.push(mapDocument(row));
+    byID.get(Number(row.Opexid))?.Documents.push(mapDocument(row));
   }
 
   for (const row of approvalsResult.rows) {
-    byID.get(Number(row.capexid))?.Approvals.push(mapApproval(row));
+    byID.get(Number(row.Opexid))?.Approvals.push(mapApproval(row));
   }
 
-  return capexRows.map((row) => byID.get(Number(row.capexid)));
+  return OpexRows.map((row) => byID.get(Number(row.Opexid)));
 };
-// ============================================================ Get All CAPEX
-const getAllCapex = async (data) => {
+// ============================================================ Get All Opex
+const getAllOpex = async (data) => {
   try {
-    console.log("GET ALL CAPEX DATA:", JSON.stringify(data));
+    console.log("GET ALL Opex DATA:", JSON.stringify(data));
 
     // =====================================================
     // Pagination
@@ -572,7 +572,7 @@ const getAllCapex = async (data) => {
     // =====================================================
 
     let query = `
-      ${CAPEX_SELECT}
+      ${Opex_SELECT}
     `;
 
     const params = [];
@@ -832,7 +832,7 @@ const getAllCapex = async (data) => {
     query += `
       ORDER BY
         cm.CreatedDate DESC,
-        cm.CapexID DESC
+        cm.OpexID DESC
 
       LIMIT $${limitParameter}
       OFFSET $${offsetParameter};
@@ -848,7 +848,7 @@ const getAllCapex = async (data) => {
     let countQuery = `
       SELECT COUNT(*) AS TotalCount
 
-      FROM Capex_Master cm
+      FROM Opex_Master cm
 
       INNER JOIN Organization_Master om
         ON om.OrganizationID = cm.OrganizationID
@@ -856,8 +856,8 @@ const getAllCapex = async (data) => {
        AND om.IsDeleted = FALSE
        AND om.ActivationStatus = TRUE
 
-      LEFT JOIN Capex_Approval approval_state
-        ON approval_state.CapexID = cm.CapexID
+      LEFT JOIN Opex_Approval approval_state
+        ON approval_state.OpexID = cm.OpexID
        AND approval_state.IsDeleted = FALSE
 
       WHERE cm.IsDeleted = FALSE
@@ -1044,7 +1044,7 @@ const getAllCapex = async (data) => {
     // Attach Related Data
     // =====================================================
 
-    const capex = await attachRelatedData(result.rows);
+    const Opex = await attachRelatedData(result.rows);
 
     // =====================================================
     // Pagination Count
@@ -1060,48 +1060,48 @@ const getAllCapex = async (data) => {
 
     return {
       success: true,
-      message: "CAPEX records fetched successfully.",
+      message: "Opex records fetched successfully.",
 
       TotalCount: totalCount,
-      PageCount: capex.length,
+      PageCount: Opex.length,
       CurrentPage: page,
       PageSize: PageSize,
       TotalPages: totalPages,
 
-      data: capex,
+      data: Opex,
     };
   } catch (error) {
-    console.error("Get All CAPEX Error:", error.message);
+    console.error("Get All Opex Error:", error.message);
 
-    return fail("Unable to fetch CAPEX records at this time.", 503);
+    return fail("Unable to fetch Opex records at this time.", 503);
   }
 };
-// ============================================================ Get CAPEX By ID
-const getCapexById = async (data) => {
+// ============================================================ Get Opex By ID
+const getOpexById = async (data) => {
   try {
     const result = await pool.query(
       `
-      ${CAPEX_SELECT}
-      AND cm.CapexID = $1
+      ${Opex_SELECT}
+      AND cm.OpexID = $1
       LIMIT 1;
       `,
-      [data.CapexID],
+      [data.OpexID],
     );
 
     if (result.rows.length === 0) {
-      return fail("CAPEX record not found.", 404);
+      return fail("Opex record not found.", 404);
     }
 
-    const [capex] = await attachRelatedData(result.rows);
+    const [Opex] = await attachRelatedData(result.rows);
 
     return {
       success: true,
-      message: "CAPEX record fetched successfully.",
-      data: capex,
+      message: "Opex record fetched successfully.",
+      data: Opex,
     };
   } catch (error) {
-    console.error("Get CAPEX By ID Error:", error.message);
-    return fail("Unable to fetch CAPEX record at this time.", 503);
+    console.error("Get Opex By ID Error:", error.message);
+    return fail("Unable to fetch Opex record at this time.", 503);
   }
 };
 
@@ -1111,18 +1111,18 @@ const getMergedApprovals = async (client, organizationID) => {
   const result = await client.query(
     `
     SELECT 
-      CapexApprovalConfigID,
+      OpexApprovalConfigID,
       ApprovalLevel,
       ApprovalRole,
       ApprovalOrder,
       IsMandatory
-    FROM Capex_Approval_Config
+    FROM Opex_Approval_Config
     WHERE OrganizationID = $1
       AND IsDeleted = FALSE
     ORDER BY 
       ApprovalOrder ASC,
       ApprovalLevel ASC,
-      CapexApprovalConfigID ASC;
+      OpexApprovalConfigID ASC;
     `,
     [organizationID],
   );
@@ -1149,15 +1149,15 @@ const getMergedApprovals = async (client, organizationID) => {
   }));
 };
 // Distinguish not-found records from authorization failures.
-const capexExists = async (client, capexID) => {
+const OpexExists = async (client, OpexID) => {
   const result = await client.query(
-    `SELECT 1 FROM Capex_Master WHERE CapexID = $1 AND IsDeleted = FALSE LIMIT 1;`,
-    [capexID],
+    `SELECT 1 FROM Opex_Master WHERE OpexID = $1 AND IsDeleted = FALSE LIMIT 1;`,
+    [OpexID],
   );
   return result.rows.length > 0;
 };
-// ============================================================ Partial Update CAPEX
-const updateCapex = async (data) => {
+// ============================================================ Partial Update Opex
+const updateOpex = async (data) => {
   let client;
   let transactionStarted = false;
 
@@ -1188,8 +1188,8 @@ const updateCapex = async (data) => {
     };
 
     // ============================================================
-    // CAPEX Fields
-    // OrganizationID and CapexNumber are NOT updated
+    // Opex Fields
+    // OrganizationID and OpexNumber are NOT updated
     // ============================================================
 
     if (changes.Department !== undefined) {
@@ -1241,23 +1241,23 @@ const updateCapex = async (data) => {
     assignments.push("ModifiedDate = CURRENT_TIMESTAMP");
 
     // ============================================================
-    // Update CAPEX
+    // Update Opex
     // ============================================================
 
-    values.push(data.CapexID);
+    values.push(data.OpexID);
 
-    const capexIDParameter = values.length;
+    const OpexIDParameter = values.length;
 
     const updateResult = await client.query(
       `
-      UPDATE Capex_Master
+      UPDATE Opex_Master
       SET ${assignments.join(", ")}
-      WHERE CapexID = $${capexIDParameter}
+      WHERE OpexID = $${OpexIDParameter}
         AND IsDeleted = FALSE
       RETURNING
-        CapexID,
+        OpexID,
         OrganizationID,
-        CapexNumber,
+        OpexNumber,
         Department,
         Item,
         Description,
@@ -1274,14 +1274,14 @@ const updateCapex = async (data) => {
     );
 
     // ============================================================
-    // CAPEX Not Found
+    // Opex Not Found
     // ============================================================
 
     if (updateResult.rows.length === 0) {
       await client.query("ROLLBACK");
       transactionStarted = false;
 
-      return fail("CAPEX record not found.", 404);
+      return fail("Opex record not found.", 404);
     }
 
     // ============================================================
@@ -1297,12 +1297,12 @@ const updateCapex = async (data) => {
 
     if (documents.length > 0) {
       // ----------------------------------------------------------
-      // Get existing CAPEX number
+      // Get existing Opex number
       // ----------------------------------------------------------
 
-      const capexInfo = updateResult.rows[0];
+      const OpexInfo = updateResult.rows[0];
 
-      const capexNumber = Number(capexInfo.capexnumber);
+      const OpexNumber = Number(OpexInfo.Opexnumber);
 
       // ----------------------------------------------------------
       // Soft delete old documents
@@ -1310,17 +1310,17 @@ const updateCapex = async (data) => {
 
       await client.query(
         `
-        UPDATE Capex_Documents
+        UPDATE Opex_Documents
         SET
           IsDeleted = TRUE,
           DeletedBy = $1,
           DeletedDate = CURRENT_TIMESTAMP,
           ModifiedBy = $1,
           ModifiedDate = CURRENT_TIMESTAMP
-        WHERE CapexID = $2
+        WHERE OpexID = $2
           AND IsDeleted = FALSE;
         `,
-        [data.UserID, data.CapexID],
+        [data.UserID, data.OpexID],
       );
 
       // ----------------------------------------------------------
@@ -1329,8 +1329,8 @@ const updateCapex = async (data) => {
 
       const newDocumentIDs = await reserveNumericIDs(
         client,
-        "Capex_Documents",
-        "CapexDocumentID",
+        "Opex_Documents",
+        "OpexDocumentID",
         documents.length,
       );
 
@@ -1341,11 +1341,11 @@ const updateCapex = async (data) => {
       for (const [index, document] of documents.entries()) {
         await client.query(
           `
-          INSERT INTO Capex_Documents
+          INSERT INTO Opex_Documents
           (
-            CapexDocumentID,
-            CapexID,
-            CapexNumber,
+            OpexDocumentID,
+            OpexID,
+            OpexNumber,
             FileName,
             FilePath,
             FileType,
@@ -1370,8 +1370,8 @@ const updateCapex = async (data) => {
           `,
           [
             newDocumentIDs[index],
-            data.CapexID,
-            capexNumber,
+            data.OpexID,
+            OpexNumber,
             document.FileName,
             document.FilePath,
             document.FileType,
@@ -1391,36 +1391,36 @@ const updateCapex = async (data) => {
     if (deleteDocumentIDs.length > 0) {
       const ownedDocuments = await client.query(
         `
-        SELECT CapexDocumentID
-        FROM Capex_Documents
-        WHERE CapexID = $1
-          AND CapexDocumentID = ANY($2::bigint[])
+        SELECT OpexDocumentID
+        FROM Opex_Documents
+        WHERE OpexID = $1
+          AND OpexDocumentID = ANY($2::bigint[])
           AND IsDeleted = FALSE;
         `,
-        [data.CapexID, deleteDocumentIDs],
+        [data.OpexID, deleteDocumentIDs],
       );
 
       if (ownedDocuments.rows.length !== deleteDocumentIDs.length) {
         await client.query("ROLLBACK");
         transactionStarted = false;
 
-        return fail("One or more selected CAPEX documents are invalid.", 400);
+        return fail("One or more selected Opex documents are invalid.", 400);
       }
 
       await client.query(
         `
-        UPDATE Capex_Documents
+        UPDATE Opex_Documents
         SET
           IsDeleted = TRUE,
           DeletedBy = $1,
           DeletedDate = CURRENT_TIMESTAMP,
           ModifiedBy = $1,
           ModifiedDate = CURRENT_TIMESTAMP
-        WHERE CapexID = $2
-          AND CapexDocumentID = ANY($3::bigint[])
+        WHERE OpexID = $2
+          AND OpexDocumentID = ANY($3::bigint[])
           AND IsDeleted = FALSE;
         `,
-        [data.UserID, data.CapexID, deleteDocumentIDs],
+        [data.UserID, data.OpexID, deleteDocumentIDs],
       );
     }
 
@@ -1435,12 +1435,12 @@ const updateCapex = async (data) => {
 
     return {
       success: true,
-      message: "CAPEX updated successfully.",
+      message: "Opex updated successfully.",
 
       // data: {
-      //   CapexID: Number(updated.capexid),
+      //   OpexID: Number(updated.Opexid),
       //   OrganizationID: Number(updated.organizationid),
-      //   CapexNumber: Number(updated.capexnumber),
+      //   OpexNumber: Number(updated.Opexnumber),
       //   Department: updated.department,
       //   Item: updated.item,
       //   Description: updated.description,
@@ -1459,7 +1459,7 @@ const updateCapex = async (data) => {
       await client.query("ROLLBACK");
     }
 
-    console.error("Update CAPEX Error:", error.message);
+    console.error("Update Opex Error:", error.message);
 
     const retryResponse = retryableDatabaseResponse(error);
 
@@ -1468,22 +1468,22 @@ const updateCapex = async (data) => {
     }
 
     if (error.code === "23503") {
-      return fail("Invalid CAPEX related data.", 400);
+      return fail("Invalid Opex related data.", 400);
     }
 
     if (error.code === "23505") {
-      return fail("CAPEX organization number already exists.", 409);
+      return fail("Opex organization number already exists.", 409);
     }
 
-    return fail("Unable to update CAPEX at this time.", 500);
+    return fail("Unable to update Opex at this time.", 500);
   } finally {
     if (client) {
       client.release();
     }
   }
 };
-// ============================================================ Soft Delete CAPEX
-const deleteCapex = async (data) => {
+// ============================================================ Soft Delete Opex
+const deleteOpex = async (data) => {
   let client;
   let transactionStarted = false;
 
@@ -1494,34 +1494,34 @@ const deleteCapex = async (data) => {
     transactionStarted = true;
 
     // ============================================================
-    // SOFT DELETE CAPEX
+    // SOFT DELETE Opex
     // ============================================================
 
-    const capexResult = await client.query(
+    const OpexResult = await client.query(
       `
-      UPDATE Capex_Master
+      UPDATE Opex_Master
       SET
         IsDeleted = TRUE,
         DeletedBy = $1,
         DeletedDate = CURRENT_TIMESTAMP,
         ModifiedBy = $1,
         ModifiedDate = CURRENT_TIMESTAMP
-      WHERE CapexID = $2
+      WHERE OpexID = $2
         AND IsDeleted = FALSE
-      RETURNING CapexID;
+      RETURNING OpexID;
       `,
-      [data.UserID, data.CapexID],
+      [data.UserID, data.OpexID],
     );
 
     // ============================================================
-    // CAPEX NOT FOUND / ALREADY DELETED
+    // Opex NOT FOUND / ALREADY DELETED
     // ============================================================
 
-    if (capexResult.rows.length === 0) {
+    if (OpexResult.rows.length === 0) {
       await client.query("ROLLBACK");
       transactionStarted = false;
 
-      return fail("Capex record not found or already deleted.", 404);
+      return fail("Opex record not found or already deleted.", 404);
     }
 
     // ============================================================
@@ -1530,17 +1530,17 @@ const deleteCapex = async (data) => {
 
     await client.query(
       `
-      UPDATE Capex_Documents
+      UPDATE Opex_Documents
       SET
         IsDeleted = TRUE,
         DeletedBy = $1,
         DeletedDate = CURRENT_TIMESTAMP,
         ModifiedBy = $1,
         ModifiedDate = CURRENT_TIMESTAMP
-      WHERE CapexID = $2
+      WHERE OpexID = $2
         AND IsDeleted = FALSE;
       `,
-      [data.UserID, data.CapexID],
+      [data.UserID, data.OpexID],
     );
 
     // ============================================================
@@ -1549,17 +1549,17 @@ const deleteCapex = async (data) => {
 
     await client.query(
       `
-      UPDATE Capex_Approval
+      UPDATE Opex_Approval
       SET
         IsDeleted = TRUE,
         DeletedBy = $1,
         DeletedDate = CURRENT_TIMESTAMP,
         ModifiedBy = $1,
         ModifiedDate = CURRENT_TIMESTAMP
-      WHERE CapexID = $2
+      WHERE OpexID = $2
         AND IsDeleted = FALSE;
       `,
-      [data.UserID, data.CapexID],
+      [data.UserID, data.OpexID],
     );
 
     // ============================================================
@@ -1571,14 +1571,14 @@ const deleteCapex = async (data) => {
 
     return {
       success: true,
-      message: "Capex deleted successfully.",
+      message: "Opex deleted successfully.",
     };
   } catch (error) {
     if (client && transactionStarted) {
       await client.query("ROLLBACK");
     }
 
-    console.error("Delete CAPEX Error:", error.message);
+    console.error("Delete Opex Error:", error.message);
 
     const retryResponse = retryableDatabaseResponse(error);
 
@@ -1586,7 +1586,7 @@ const deleteCapex = async (data) => {
       return retryResponse;
     }
 
-    return fail("Unable to delete CAPEX at this time.", 500);
+    return fail("Unable to delete Opex at this time.", 500);
   } finally {
     if (client) {
       client.release();
@@ -1594,11 +1594,11 @@ const deleteCapex = async (data) => {
   }
 };
 // ============================================================ Approval Workflow
-const processCapexApproval = async (data) => {
+const processOpexApproval = async (data) => {
   let client;
   let transactionStarted = false;
 
-  // console.log("PROCESS CAPEX APPROVAL DATA:", JSON.stringify(data));
+  // console.log("PROCESS Opex APPROVAL DATA:", JSON.stringify(data));
 
   try {
     // ============================================================
@@ -1620,7 +1620,7 @@ const processCapexApproval = async (data) => {
     // ============================================================
 
     if (!["APPROVE", "REJECT", "RETURN"].includes(action)) {
-      return fail("Invalid CAPEX approval action.", 400);
+      return fail("Invalid Opex approval action.", 400);
     }
 
     // ============================================================
@@ -1636,7 +1636,7 @@ const processCapexApproval = async (data) => {
     // ============================================================
 
     if (!APPROVAL_ROLES.has(approverRole)) {
-      return fail("Your role is not authorized for CAPEX approval.", 403);
+      return fail("Your role is not authorized for Opex approval.", 403);
     }
 
     // ============================================================
@@ -1649,42 +1649,42 @@ const processCapexApproval = async (data) => {
     transactionStarted = true;
 
     // ============================================================
-    // 6. GET CAPEX MASTER
+    // 6. GET Opex MASTER
     // ============================================================
 
     const masterResult = await client.query(
       `
       SELECT
-        cm.CapexID,
-        cm.CapexNumber,
+        cm.OpexID,
+        cm.OpexNumber,
         cm.OrganizationID,
         cm.ModifiedDate
-      FROM Capex_Master cm
-      WHERE cm.CapexID = $1
+      FROM Opex_Master cm
+      WHERE cm.OpexID = $1
         AND cm.IsDeleted = FALSE
       LIMIT 1
       FOR UPDATE OF cm;
       `,
-      [data.CapexID],
+      [data.OpexID],
     );
 
     // ============================================================
-    // 7. CAPEX NOT FOUND
+    // 7. Opex NOT FOUND
     // ============================================================
 
     if (masterResult.rows.length === 0) {
-      const exists = await capexExists(client, data.CapexID);
+      const exists = await OpexExists(client, data.OpexID);
 
       await rollback(client, transactionStarted);
 
       transactionStarted = false;
 
       return exists
-        ? fail("CAPEX record is not available for approval.", 400)
-        : fail("CAPEX record not found.", 404);
+        ? fail("Opex record is not available for approval.", 400)
+        : fail("Opex record not found.", 404);
     }
 
-    const capex = masterResult.rows[0];
+    const Opex = masterResult.rows[0];
 
     // ============================================================
     // 8. GET APPROVAL CONFIGURATION
@@ -1696,7 +1696,7 @@ const processCapexApproval = async (data) => {
 
     const configuredStages = await getMergedApprovals(
       client,
-      capex.organizationid,
+      Opex.organizationid,
     );
 
     if (!configuredStages || configuredStages.length === 0) {
@@ -1704,7 +1704,7 @@ const processCapexApproval = async (data) => {
 
       transactionStarted = false;
 
-      return fail("CAPEX approval configuration not found.", 400);
+      return fail("Opex approval configuration not found.", 400);
     }
 
     if (!approvalConfigurationIsValid(configuredStages)) {
@@ -1713,19 +1713,19 @@ const processCapexApproval = async (data) => {
       transactionStarted = false;
 
       return fail(
-        "CAPEX approval configuration contains an invalid approval role.",
+        "Opex approval configuration contains an invalid approval role.",
         400,
       );
     }
 
     // ============================================================
-    // 9. GET CAPEX APPROVAL
+    // 9. GET Opex APPROVAL
     // ============================================================
 
     const approvalResult = await client.query(
       `
       SELECT
-        CapexApprovalID,
+        OpexApprovalID,
 
         GMStatus,
         GMStatusDateTime,
@@ -1745,16 +1745,16 @@ const processCapexApproval = async (data) => {
         FinalStatus,
         FinalStatusDateTime
 
-      FROM Capex_Approval
+      FROM Opex_Approval
 
-      WHERE CapexID = $1
+      WHERE OpexID = $1
         AND IsDeleted = FALSE
 
       LIMIT 1
 
       FOR UPDATE;
       `,
-      [data.CapexID],
+      [data.OpexID],
     );
 
     // ============================================================
@@ -1766,7 +1766,7 @@ const processCapexApproval = async (data) => {
 
       transactionStarted = false;
 
-      return fail("CAPEX approval record not found.", 404);
+      return fail("Opex approval record not found.", 404);
     }
 
     const approval = approvalResult.rows[0];
@@ -1826,7 +1826,7 @@ const processCapexApproval = async (data) => {
       };
     });
 
-    // console.log("CAPEX APPROVAL STAGES:", JSON.stringify(stages));
+    // console.log("Opex APPROVAL STAGES:", JSON.stringify(stages));
 
     // ============================================================
     // 13. FIND CURRENT STAGE
@@ -1859,7 +1859,7 @@ const processCapexApproval = async (data) => {
 
       transactionStarted = false;
 
-      return fail("This CAPEX record is already finally approved.", 400);
+      return fail("This Opex record is already finally approved.", 400);
     }
 
     const currentStage = stages[currentIndex];
@@ -1991,13 +1991,13 @@ const processCapexApproval = async (data) => {
         status,
         userId,
         roleRemarks || null,
-        approval.capexapprovalid,
+        approval.Opexapprovalid,
       ];
 
       switch (role) {
         case "GM":
           query = `
-            UPDATE Capex_Approval
+            UPDATE Opex_Approval
             SET
               GMStatus = $1,
               GMStatusDateTime = CURRENT_TIMESTAMP,
@@ -2005,7 +2005,7 @@ const processCapexApproval = async (data) => {
               GMRemarks = $3,
               ModifiedBy = $2,
               ModifiedDate = CURRENT_TIMESTAMP
-            WHERE CapexApprovalID = $4
+            WHERE OpexApprovalID = $4
               AND IsDeleted = FALSE;
           `;
 
@@ -2013,7 +2013,7 @@ const processCapexApproval = async (data) => {
 
         case "CEO":
           query = `
-            UPDATE Capex_Approval
+            UPDATE Opex_Approval
             SET
               CEOStatus = $1,
               CEOStatusDateTime = CURRENT_TIMESTAMP,
@@ -2021,7 +2021,7 @@ const processCapexApproval = async (data) => {
               CEORemarks = $3,
               ModifiedBy = $2,
               ModifiedDate = CURRENT_TIMESTAMP
-            WHERE CapexApprovalID = $4
+            WHERE OpexApprovalID = $4
               AND IsDeleted = FALSE;
           `;
 
@@ -2029,7 +2029,7 @@ const processCapexApproval = async (data) => {
 
         case "OWNER":
           query = `
-            UPDATE Capex_Approval
+            UPDATE Opex_Approval
             SET
               OwnerStatus = $1,
               OwnerStatusDateTime = CURRENT_TIMESTAMP,
@@ -2037,7 +2037,7 @@ const processCapexApproval = async (data) => {
               OwnerRemarks = $3,
               ModifiedBy = $2,
               ModifiedDate = CURRENT_TIMESTAMP
-            WHERE CapexApprovalID = $4
+            WHERE OpexApprovalID = $4
               AND IsDeleted = FALSE;
           `;
 
@@ -2063,7 +2063,7 @@ const processCapexApproval = async (data) => {
         transactionStarted = false;
 
         return fail(
-          `Only the current ${currentRole} approval stage can approve this CAPEX.`,
+          `Only the current ${currentRole} approval stage can approve this Opex.`,
           403,
         );
       }
@@ -2087,16 +2087,16 @@ const processCapexApproval = async (data) => {
       if (followingStage) {
         await client.query(
           `
-          UPDATE Capex_Approval
+          UPDATE Opex_Approval
           SET
             FinalStatus = NULL,
             FinalStatusDateTime = NULL,
             ModifiedBy = $1,
             ModifiedDate = CURRENT_TIMESTAMP
-          WHERE CapexApprovalID = $2
+          WHERE OpexApprovalID = $2
             AND IsDeleted = FALSE;
           `,
-          [data.UserID, approval.capexapprovalid],
+          [data.UserID, approval.Opexapprovalid],
         );
 
         await client.query("COMMIT");
@@ -2106,12 +2106,12 @@ const processCapexApproval = async (data) => {
         return {
           success: true,
 
-          message: "CAPEX approved successfully.",
+          message: "Opex approved successfully.",
 
           // data: {
-          //   CapexID: Number(capex.capexid),
+          //   OpexID: Number(Opex.Opexid),
 
-          //   CapexNumber: Number(capex.capexnumber),
+          //   OpexNumber: Number(Opex.Opexnumber),
 
           //   CurrentStatus: "Pending",
 
@@ -2128,16 +2128,16 @@ const processCapexApproval = async (data) => {
 
       await client.query(
         `
-        UPDATE Capex_Approval
+        UPDATE Opex_Approval
         SET
           FinalStatus = 'Approved',
           FinalStatusDateTime = CURRENT_TIMESTAMP,
           ModifiedBy = $1,
           ModifiedDate = CURRENT_TIMESTAMP
-        WHERE CapexApprovalID = $2
+        WHERE OpexApprovalID = $2
           AND IsDeleted = FALSE;
         `,
-        [data.UserID, approval.capexapprovalid],
+        [data.UserID, approval.Opexapprovalid],
       );
 
       await client.query("COMMIT");
@@ -2147,12 +2147,12 @@ const processCapexApproval = async (data) => {
       return {
         success: true,
 
-        message: "CAPEX finally approved successfully.",
+        message: "Opex finally approved successfully.",
 
         // data: {
-        //   CapexID: Number(capex.capexid),
+        //   OpexID: Number(Opex.Opexid),
 
-        //   CapexNumber: Number(capex.capexnumber),
+        //   OpexNumber: Number(Opex.Opexnumber),
 
         //   CurrentStatus: "Approved",
 
@@ -2189,16 +2189,16 @@ const processCapexApproval = async (data) => {
 
       await client.query(
         `
-        UPDATE Capex_Approval
+        UPDATE Opex_Approval
         SET
           FinalStatus = 'Rejected',
           FinalStatusDateTime = CURRENT_TIMESTAMP,
           ModifiedBy = $1,
           ModifiedDate = CURRENT_TIMESTAMP
-        WHERE CapexApprovalID = $2
+        WHERE OpexApprovalID = $2
           AND IsDeleted = FALSE;
         `,
-        [data.UserID, approval.capexapprovalid],
+        [data.UserID, approval.Opexapprovalid],
       );
 
       await client.query("COMMIT");
@@ -2208,12 +2208,12 @@ const processCapexApproval = async (data) => {
       return {
         success: true,
 
-        message: "CAPEX rejected successfully.",
+        message: "Opex rejected successfully.",
 
         // data: {
-        //   CapexID: Number(capex.capexid),
+        //   OpexID: Number(Opex.Opexid),
 
-        //   CapexNumber: Number(capex.capexnumber),
+        //   OpexNumber: Number(Opex.Opexnumber),
 
         //   CurrentStatus: "Rejected",
 
@@ -2247,16 +2247,16 @@ const processCapexApproval = async (data) => {
 
       await client.query(
         `
-        UPDATE Capex_Approval
+        UPDATE Opex_Approval
         SET
           FinalStatus = 'Returned',
           FinalStatusDateTime = CURRENT_TIMESTAMP,
           ModifiedBy = $1,
           ModifiedDate = CURRENT_TIMESTAMP
-        WHERE CapexApprovalID = $2
+        WHERE OpexApprovalID = $2
           AND IsDeleted = FALSE;
         `,
-        [data.UserID, approval.capexapprovalid],
+        [data.UserID, approval.Opexapprovalid],
       );
 
       await client.query("COMMIT");
@@ -2266,12 +2266,12 @@ const processCapexApproval = async (data) => {
       return {
         success: true,
 
-        message: "CAPEX returned successfully.",
+        message: "Opex returned successfully.",
 
         // data: {
-        //   CapexID: Number(capex.capexid),
+        //   OpexID: Number(Opex.Opexid),
 
-        //   CapexNumber: Number(capex.capexnumber),
+        //   OpexNumber: Number(Opex.Opexnumber),
 
         //   CurrentStatus: "Returned",
 
@@ -2290,11 +2290,11 @@ const processCapexApproval = async (data) => {
 
     transactionStarted = false;
 
-    return fail("Unable to process CAPEX approval.", 400);
+    return fail("Unable to process Opex approval.", 400);
   } catch (error) {
     await rollback(client, transactionStarted);
 
-    console.error("CAPEX Approval Error:", error.message);
+    console.error("Opex Approval Error:", error.message);
 
     const retryResponse = retryableDatabaseResponse(error);
 
@@ -2302,7 +2302,7 @@ const processCapexApproval = async (data) => {
       return retryResponse;
     }
 
-    return fail("Unable to process CAPEX approval at this time.", 500);
+    return fail("Unable to process Opex approval at this time.", 500);
   } finally {
     if (client) {
       client.release();
@@ -2311,12 +2311,12 @@ const processCapexApproval = async (data) => {
 };
 
 // ============================================================ Report SQL (Summary and other reports Helpers)
-// PostgreSQL derives effective status and aggregates authorized CAPEX records.
+// PostgreSQL derives effective status and aggregates authorized Opex records.
 const REPORT_DATA_CTE = `
-  WITH capex_data AS
+  WITH Opex_data AS
   (
     SELECT
-      cm.CapexID,
+      cm.OpexID,
       cm.OrganizationID,
       cm.Department,
       COALESCE(cm.Total, 0)::numeric AS Total,
@@ -2365,10 +2365,10 @@ const REPORT_DATA_CTE = `
 
       END AS Status
 
-    FROM Capex_Master cm
+    FROM Opex_Master cm
 
-    LEFT JOIN Capex_Approval ca
-      ON ca.CapexID = cm.CapexID
+    LEFT JOIN Opex_Approval ca
+      ON ca.OpexID = cm.OpexID
       AND ca.IsDeleted = FALSE
 
     WHERE cm.IsDeleted = FALSE
@@ -2406,7 +2406,7 @@ const reportFailure = (error, reportName) => {
   );
 };
 // ============================================================ Summary Report
-const getCapexSummaryReport = async (data) => {
+const getOpexSummaryReport = async (data) => {
   try {
 console.log("Received Filters:", JSON.stringify(data.Filters));
     console.log("Query params:", reportParameters(data));
@@ -2420,7 +2420,7 @@ console.log("Received Filters:", JSON.stringify(data.Filters));
         -- TOTAL
         -- ====================================================
 
-        COUNT(*)::bigint AS TotalCapex,
+        COUNT(*)::bigint AS TotalOpex,
 
         COALESCE(
           SUM(Total),
@@ -2507,7 +2507,7 @@ console.log("Received Filters:", JSON.stringify(data.Filters));
           0
         ) AS VoidAmount
 
-      FROM capex_data;
+      FROM Opex_data;
       `,
 
       reportParameters(data)
@@ -2520,10 +2520,10 @@ console.log("Received Filters:", JSON.stringify(data.Filters));
     return {
       success: true,
 
-      message: "CAPEX summary report fetched successfully.",
+      message: "Opex summary report fetched successfully.",
 
       data: {
-        TotalCapex: Number(row.totalcapex),
+        TotalOpex: Number(row.totalOpex),
         TotalAmount: Number(row.totalamount),
 
         PendingCount: Number(row.pendingcount),
@@ -2547,7 +2547,7 @@ console.log("Received Filters:", JSON.stringify(data.Filters));
 
     return reportFailure(
       error,
-      "CAPEX summary report"
+      "Opex summary report"
     );
 
   }
@@ -2568,7 +2568,7 @@ const groupedReportRows = (rows, groupField) =>
     ReturnedCount: Number(row.returnedcount),
   }));
 // ============================================================ Department Report
-const getCapexDepartmentReport = async (data) => {
+const getOpexDepartmentReport = async (data) => {
   try {
     const result = await pool.query(
       `${REPORT_DATA_CTE}
@@ -2580,7 +2580,7 @@ const getCapexDepartmentReport = async (data) => {
          COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
          COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
          COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount
-       FROM capex_data
+       FROM Opex_data
        GROUP BY COALESCE(Department, 'Unspecified')
        ORDER BY COALESCE(Department, 'Unspecified') ASC;`,
       reportParameters(data),
@@ -2588,15 +2588,15 @@ const getCapexDepartmentReport = async (data) => {
 
     return {
       success: true,
-      message: "CAPEX department report fetched successfully.",
+      message: "Opex department report fetched successfully.",
       data: groupedReportRows(result.rows, "Department"),
     };
   } catch (error) {
-    return reportFailure(error, "CAPEX department report");
+    return reportFailure(error, "Opex department report");
   }
 };
 // ============================================================ Organization Report
-const getCapexOrganizationReport = async (data) => {
+const getOpexOrganizationReport = async (data) => {
   try {
     const result = await pool.query(
       `${REPORT_DATA_CTE}
@@ -2624,7 +2624,7 @@ const getCapexOrganizationReport = async (data) => {
            WHERE cm.Status = 'Returned'
          )::bigint AS ReturnedCount
 
-       FROM capex_data cm
+       FROM Opex_data cm
 
        LEFT JOIN Organization_Master om
          ON om.OrganizationID = cm.OrganizationID
@@ -2641,7 +2641,7 @@ const getCapexOrganizationReport = async (data) => {
 
     return {
       success: true,
-      message: "CAPEX organization report fetched successfully.",
+      message: "Opex organization report fetched successfully.",
       data: result.rows.map((row) => ({
         OrganizationID: Number(row.organizationid),
         ShortName: row.shortname,
@@ -2654,7 +2654,7 @@ const getCapexOrganizationReport = async (data) => {
       })),
     };
   } catch (error) {
-    return reportFailure(error, "CAPEX organization report");
+    return reportFailure(error, "Opex organization report");
   }
 };
 
@@ -2665,7 +2665,7 @@ const getApprovalConfig = async (data) => {
 
     let query = `
       SELECT
-        CapexApprovalConfigID,
+        OpexApprovalConfigID,
         OrganizationID,
         ApprovalLevel,
         ApprovalRole,
@@ -2675,7 +2675,7 @@ const getApprovalConfig = async (data) => {
         CreatedDate,
         ModifiedBy,
         ModifiedDate
-      FROM Capex_Approval_Config
+      FROM Opex_Approval_Config
       WHERE IsDeleted = FALSE
     `;
 
@@ -2694,16 +2694,16 @@ const getApprovalConfig = async (data) => {
         OrganizationID ASC,
         ApprovalOrder ASC,
         ApprovalLevel ASC,
-        CapexApprovalConfigID ASC;
+        OpexApprovalConfigID ASC;
     `;
 
     const result = await pool.query(query, params);
 
     return {
       success: true,
-      message: "CAPEX approval configuration fetched successfully.",
+      message: "Opex approval configuration fetched successfully.",
       data: result.rows.map((row) => ({
-        CapexApprovalConfigID: Number(row.capexapprovalconfigid),
+        OpexApprovalConfigID: Number(row.Opexapprovalconfigid),
         OrganizationID: Number(row.organizationid),
         ApprovalLevel: Number(row.approvallevel),
         ApprovalRole: row.approvalrole,
@@ -2715,13 +2715,13 @@ const getApprovalConfig = async (data) => {
       })),
     };
   } catch (error) {
-    console.error("Get CAPEX Approval Config Error:", error.message);
+    console.error("Get Opex Approval Config Error:", error.message);
 
     const retryResponse = retryableDatabaseResponse(error);
     if (retryResponse) return retryResponse;
 
     return fail(
-      "Unable to fetch CAPEX approval configuration at this time.",
+      "Unable to fetch Opex approval configuration at this time.",
       500
     );
   }
@@ -2732,7 +2732,7 @@ const createApprovalConfig = async (data) => {
   let transactionStarted = false;
 
   try {
-    console.log("SAVE CAPEX DATA =>", JSON.stringify(data, null, 2));
+    console.log("SAVE Opex DATA =>", JSON.stringify(data, null, 2));
 
     const OrganizationID = Number(data.OrganizationID);
 
@@ -2842,16 +2842,16 @@ const createApprovalConfig = async (data) => {
     const existingResult = await client.query(
       `
       SELECT
-        CapexApprovalConfigID AS "CapexApprovalConfigID",
+        OpexApprovalConfigID AS "OpexApprovalConfigID",
         OrganizationID AS "OrganizationID",
         ApprovalLevel AS "ApprovalLevel",
         ApprovalRole AS "ApprovalRole",
         ApprovalOrder AS "ApprovalOrder",
         IsMandatory AS "IsMandatory",
         IsDeleted AS "IsDeleted"
-      FROM Capex_Approval_Config
+      FROM Opex_Approval_Config
       WHERE OrganizationID = $1
-      ORDER BY ApprovalLevel ASC, CapexApprovalConfigID ASC
+      ORDER BY ApprovalLevel ASC, OpexApprovalConfigID ASC
       FOR UPDATE;
       `,
       [OrganizationID]
@@ -2860,7 +2860,7 @@ const createApprovalConfig = async (data) => {
     const existingConfigs = existingResult.rows;
 
     console.log(
-      "EXISTING CAPEX CONFIGS =>",
+      "EXISTING Opex CONFIGS =>",
       JSON.stringify(existingConfigs, null, 2)
     );
 
@@ -2904,12 +2904,12 @@ const createApprovalConfig = async (data) => {
 
       if (existing) {
         const ConfigID = Number(
-          existing.CapexApprovalConfigID
+          existing.OpexApprovalConfigID
         );
 
         if (!Number.isInteger(ConfigID)) {
           throw new Error(
-            `Invalid CapexApprovalConfigID: ${existing.CapexApprovalConfigID}`
+            `Invalid OpexApprovalConfigID: ${existing.OpexApprovalConfigID}`
           );
         }
 
@@ -2920,7 +2920,7 @@ const createApprovalConfig = async (data) => {
         if (existing.IsDeleted === true) {
           await client.query(
             `
-            UPDATE Capex_Approval_Config
+            UPDATE Opex_Approval_Config
             SET
               ApprovalRole = $1,
               ApprovalOrder = $2,
@@ -2928,7 +2928,7 @@ const createApprovalConfig = async (data) => {
               IsDeleted = FALSE,
               ModifiedBy = $4,
               ModifiedDate = CURRENT_TIMESTAMP
-            WHERE CapexApprovalConfigID = $5
+            WHERE OpexApprovalConfigID = $5
               AND OrganizationID = $6;
             `,
             [
@@ -2951,14 +2951,14 @@ const createApprovalConfig = async (data) => {
         else {
           await client.query(
             `
-            UPDATE Capex_Approval_Config
+            UPDATE Opex_Approval_Config
             SET
               ApprovalRole = $1,
               ApprovalOrder = $2,
               IsMandatory = $3,
               ModifiedBy = $4,
               ModifiedDate = CURRENT_TIMESTAMP
-            WHERE CapexApprovalConfigID = $5
+            WHERE OpexApprovalConfigID = $5
               AND OrganizationID = $6
               AND IsDeleted = FALSE;
             `,
@@ -2983,7 +2983,7 @@ const createApprovalConfig = async (data) => {
       else {
         const result = await client.query(
           `
-          INSERT INTO Capex_Approval_Config
+          INSERT INTO Opex_Approval_Config
           (
             OrganizationID,
             ApprovalLevel,
@@ -3005,7 +3005,7 @@ const createApprovalConfig = async (data) => {
             $6,
             CURRENT_TIMESTAMP
           )
-          RETURNING CapexApprovalConfigID;
+          RETURNING OpexApprovalConfigID;
           `,
           [
             OrganizationID,
@@ -3018,7 +3018,7 @@ const createApprovalConfig = async (data) => {
         );
 
         const ConfigID = Number(
-          result.rows[0].CapexApprovalConfigID
+          result.rows[0].OpexApprovalConfigID
         );
 
         inserted.push(ConfigID);
@@ -3040,23 +3040,23 @@ const createApprovalConfig = async (data) => {
         !processedLevels.has(level)
       ) {
         const ConfigID = Number(
-          existing.CapexApprovalConfigID
+          existing.OpexApprovalConfigID
         );
 
         if (!Number.isInteger(ConfigID)) {
           throw new Error(
-            `Invalid CapexApprovalConfigID: ${existing.CapexApprovalConfigID}`
+            `Invalid OpexApprovalConfigID: ${existing.OpexApprovalConfigID}`
           );
         }
 
         await client.query(
           `
-          UPDATE Capex_Approval_Config
+          UPDATE Opex_Approval_Config
           SET
             IsDeleted = TRUE,
             ModifiedBy = $1,
             ModifiedDate = CURRENT_TIMESTAMP
-          WHERE CapexApprovalConfigID = $2
+          WHERE OpexApprovalConfigID = $2
             AND OrganizationID = $3
             AND IsDeleted = FALSE;
           `,
@@ -3081,7 +3081,7 @@ const createApprovalConfig = async (data) => {
     return {
       success: true,
       message:
-        "CAPEX approval configuration saved successfully.",
+        "Opex approval configuration saved successfully.",
 
     };
 
@@ -3091,7 +3091,7 @@ const createApprovalConfig = async (data) => {
     }
 
     console.error(
-      "Save CAPEX Approval Config Error:",
+      "Save Opex Approval Config Error:",
       error.message
     );
 
@@ -3102,7 +3102,7 @@ const createApprovalConfig = async (data) => {
 
     if (error.code === "23505") {
       return fail(
-        "CAPEX approval configuration already exists.",
+        "Opex approval configuration already exists.",
         409
       );
     }
@@ -3115,7 +3115,7 @@ const createApprovalConfig = async (data) => {
     }
 
     return fail(
-      "Unable to save CAPEX approval configuration at this time.",
+      "Unable to save Opex approval configuration at this time.",
       500
     );
 
@@ -3131,10 +3131,10 @@ const deleteApprovalConfig = async (data) => {
   let transactionStarted = false;
 
   try {
-    const ConfigID = Number(data.CapexApprovalConfigID);
+    const ConfigID = Number(data.OpexApprovalConfigID);
 
     if (!ConfigID) {
-      return fail("CapexApprovalConfigID is required.", 400);
+      return fail("OpexApprovalConfigID is required.", 400);
     }
 
     client = await pool.connect();
@@ -3144,17 +3144,17 @@ const deleteApprovalConfig = async (data) => {
 
     const result = await client.query(
       `
-      UPDATE Capex_Approval_Config
+      UPDATE Opex_Approval_Config
       SET
         IsDeleted = TRUE,
         DeletedBy = $1,
         DeletedDate = CURRENT_TIMESTAMP,
         ModifiedBy = $1,
         ModifiedDate = CURRENT_TIMESTAMP
-      WHERE CapexApprovalConfigID = $2
+      WHERE OpexApprovalConfigID = $2
         AND IsDeleted = FALSE
       RETURNING
-        CapexApprovalConfigID,
+        OpexApprovalConfigID,
         OrganizationID;
       `,
       [data.UserID, ConfigID],
@@ -3165,7 +3165,7 @@ const deleteApprovalConfig = async (data) => {
       transactionStarted = false;
 
       return fail(
-        "CAPEX approval configuration not found.",
+        "Opex approval configuration not found.",
         404,
       );
     }
@@ -3175,7 +3175,7 @@ const deleteApprovalConfig = async (data) => {
 
     return {
       success: true,
-      message: "CAPEX approval configuration deleted successfully.",
+      message: "Opex approval configuration deleted successfully.",
     
     };
   } catch (error) {
@@ -3183,13 +3183,13 @@ const deleteApprovalConfig = async (data) => {
       await client.query("ROLLBACK");
     }
 
-    console.error("Delete CAPEX Approval Config Error:", error.message);
+    console.error("Delete Opex Approval Config Error:", error.message);
 
     const retryResponse = retryableDatabaseResponse(error);
     if (retryResponse) return retryResponse;
 
     return fail(
-      "Unable to delete CAPEX approval configuration at this time.",
+      "Unable to delete Opex approval configuration at this time.",
       500,
     );
   } finally {
@@ -3197,8 +3197,8 @@ const deleteApprovalConfig = async (data) => {
   }
 };
 // ===================================================================Pdf Apis
-// ============================================================Generate CAPEX List PDF
-const generateCapexListPdf = async (capex) => {
+// ============================================================Generate Opex List PDF
+const generateOpexListPdf = async (Opex) => {
   const fonts = {
     Roboto: {
       normal: path.join(
@@ -3223,26 +3223,26 @@ const generateCapexListPdf = async (capex) => {
   const printer = new PdfPrinter(fonts);
 
   // ============================================================
-  // CAPEX DETAILS
+  // Opex DETAILS
   // ============================================================
 
-  const capexDetails = [
+  const OpexDetails = [
     [
-      { text: "CAPEX Number", style: "label" },
-      { text: String(capex.CapexNumber ?? "-"), style: "value" },
-      { text: "CAPEX ID", style: "label" },
-      { text: String(capex.CapexID ?? "-"), style: "value" },
+      { text: "Opex Number", style: "label" },
+      { text: String(Opex.OpexNumber ?? "-"), style: "value" },
+      { text: "Opex ID", style: "label" },
+      { text: String(Opex.OpexID ?? "-"), style: "value" },
     ],
     [
       { text: "Department", style: "label" },
-      { text: capex.Department || "-", style: "value" },
+      { text: Opex.Department || "-", style: "value" },
       { text: "Item", style: "label" },
-      { text: capex.Item || "-", style: "value" },
+      { text: Opex.Item || "-", style: "value" },
     ],
     [
       { text: "Description", style: "label" },
       {
-        text: capex.Description || "-",
+        text: Opex.Description || "-",
         style: "value",
         colSpan: 3,
       },
@@ -3251,46 +3251,46 @@ const generateCapexListPdf = async (capex) => {
     ],
     [
       { text: "Make", style: "label" },
-      { text: capex.Make || "-", style: "value" },
+      { text: Opex.Make || "-", style: "value" },
       { text: "Quantity", style: "label" },
-      { text: String(capex.Qty ?? "-"), style: "value" },
+      { text: String(Opex.Qty ?? "-"), style: "value" },
     ],
     [
       { text: "Rate", style: "label" },
       {
         text:
-          capex.Rate != null
-            ? `₹ ${Number(capex.Rate).toLocaleString("en-IN")}`
+          Opex.Rate != null
+            ? `₹ ${Number(Opex.Rate).toLocaleString("en-IN")}`
             : "-",
         style: "value",
       },
       { text: "Total", style: "label" },
       {
         text:
-          capex.Total != null
-            ? `₹ ${Number(capex.Total).toLocaleString("en-IN")}`
+          Opex.Total != null
+            ? `₹ ${Number(Opex.Total).toLocaleString("en-IN")}`
             : "-",
         style: "value",
       },
     ],
     [
       { text: "Status", style: "label" },
-      { text: capex.CurrentStatus || "-", style: "value" },
+      { text: Opex.CurrentStatus || "-", style: "value" },
       { text: "Current Role", style: "label" },
-      { text: capex.CurrentApprovalRole || "-", style: "value" },
+      { text: Opex.CurrentApprovalRole || "-", style: "value" },
     ],
     [
       { text: "Created Date", style: "label" },
       {
-        text: capex.CreatedDate
-          ? formatDate(capex.CreatedDate)
+        text: Opex.CreatedDate
+          ? formatDate(Opex.CreatedDate)
           : "-",
         style: "value",
       },
       { text: "Created By", style: "label" },
       {
-        text: capex.CreatedBy != null
-          ? String(capex.CreatedBy)
+        text: Opex.CreatedBy != null
+          ? String(Opex.CreatedBy)
           : "-",
         style: "value",
       },
@@ -3298,15 +3298,15 @@ const generateCapexListPdf = async (capex) => {
     [
       { text: "Modified Date", style: "label" },
       {
-        text: capex.ModifiedDate
-          ? formatDate(capex.ModifiedDate)
+        text: Opex.ModifiedDate
+          ? formatDate(Opex.ModifiedDate)
           : "-",
         style: "value",
       },
       { text: "Modified By", style: "label" },
       {
-        text: capex.ModifiedBy != null
-          ? String(capex.ModifiedBy)
+        text: Opex.ModifiedBy != null
+          ? String(Opex.ModifiedBy)
           : "-",
         style: "value",
       },
@@ -3328,8 +3328,8 @@ const generateCapexListPdf = async (capex) => {
     ],
   ];
 
-  if (capex.Approvals?.length) {
-    capex.Approvals.forEach((approval) => {
+  if (Opex.Approvals?.length) {
+    Opex.Approvals.forEach((approval) => {
       approvalRows.push([
         {
           text: String(approval.LevelNo ?? "-"),
@@ -3391,11 +3391,11 @@ const generateCapexListPdf = async (capex) => {
     ],
   ];
 
-  if (capex.Documents?.length) {
-    capex.Documents.forEach((document) => {
+  if (Opex.Documents?.length) {
+    Opex.Documents.forEach((document) => {
       documentRows.push([
         {
-          text: String(document.CapexDocumentID ?? "-"),
+          text: String(document.OpexDocumentID ?? "-"),
           style: "tableCell",
         },
         {
@@ -3449,12 +3449,12 @@ const generateCapexListPdf = async (capex) => {
           body: [
             [
               {
-                text: "CAPEX DETAILS",
+                text: "Opex DETAILS",
                 style: "title",
                 border: [false, false, false, false],
               },
               {
-                text: capex.CurrentStatus || "Pending",
+                text: Opex.CurrentStatus || "Pending",
                 style: "status",
                 border: [false, false, false, false],
               },
@@ -3466,7 +3466,7 @@ const generateCapexListPdf = async (capex) => {
       },
 
       {
-        text: "CAPEX INFORMATION",
+        text: "Opex INFORMATION",
         style: "sectionTitle",
         marginBottom: 6,
       },
@@ -3474,7 +3474,7 @@ const generateCapexListPdf = async (capex) => {
       {
         table: {
           widths: [85, "*", 85, "*"],
-          body: capexDetails,
+          body: OpexDetails,
         },
         layout: {
           fillColor: (rowIndex) =>
@@ -3558,7 +3558,7 @@ const generateCapexListPdf = async (capex) => {
     footer: (currentPage, pageCount) => ({
       columns: [
         {
-          text: "CAPEX Management",
+          text: "Opex Management",
           alignment: "left",
           fontSize: 8,
           color: "#666666",
@@ -3646,17 +3646,17 @@ const generateCapexListPdf = async (capex) => {
 
 // ============================================================ Exports
 module.exports = {
-  createCapex,
-  getAllCapex,
-  getCapexById,
-  updateCapex,
-  deleteCapex,
-  processCapexApproval,
-  getCapexSummaryReport,
-  getCapexDepartmentReport,
-  getCapexOrganizationReport,
+  createOpex,
+  getAllOpex,
+  getOpexById,
+  updateOpex,
+  deleteOpex,
+  processOpexApproval,
+  getOpexSummaryReport,
+  getOpexDepartmentReport,
+  getOpexOrganizationReport,
    getApprovalConfig,
   createApprovalConfig,
   deleteApprovalConfig,
-  generateCapexListPdf,
+  generateOpexListPdf,
 };

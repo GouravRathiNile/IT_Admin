@@ -2,44 +2,44 @@ const express = require("express");
 const authenticateToken = require("../../middleware/authMiddleware");
 const upload = require("../../middleware/upload");
 const {
-  createCapex,
-  getAllCapex,
-  getCapexById,
-  updateCapex,
-  deleteCapex,
-  approveCapex,
-  getCapexSummaryReport,
-  getCapexDepartmentReport,
-  getCapexOrganizationReport,
-  createCapexApprovalConfig,
-  getCapexApprovalConfig,
-  updateCapexApprovalConfig,
-  deleteCapexApprovalConfig,
-  generateCapexListPdf
-} = require("../../controllers/CapexController/CapexController");
+  createOpex,
+  getAllOpex,
+  getOpexById,
+  updateOpex,
+  deleteOpex,
+  approveOpex,
+  getOpexSummaryReport,
+  getOpexDepartmentReport,
+  getOpexOrganizationReport,
+  createOpexApprovalConfig,
+  getOpexApprovalConfig,
+  updateOpexApprovalConfig,
+  deleteOpexApprovalConfig,
+  generateOpexListPdf
+} = require("../../controllers/OpexController/OpexController");
 
 const router = express.Router();
 
-// ============================================================ Create CAPEX
-router.post("/Create",authenticateToken,upload.array("Documents", 10),createCapex,);
-// ============================================================ Read CAPEX
-router.get("/CapexList", authenticateToken, getAllCapex);
-router.get("/CapexById/:id", authenticateToken, getCapexById);
-// ============================================================ Update CAPEX
-router.put( "/Update", authenticateToken, upload.array("Documents", 10),updateCapex,);
-// ============================================================ Soft Delete CAPEX
-router.delete("/Delete", authenticateToken, deleteCapex);
+// ============================================================ Create Opex
+router.post("/Create",authenticateToken,upload.array("Documents", 10),createOpex,);
+// ============================================================ Read Opex
+router.get("/OpexList", authenticateToken, getAllOpex);
+router.get("/OpexById/:id", authenticateToken, getOpexById);
+// ============================================================ Update Opex
+router.put( "/Update", authenticateToken, upload.array("Documents", 10),updateOpex,);
+// ============================================================ Soft Delete Opex
+router.delete("/Delete", authenticateToken, deleteOpex);
 // ============================================================ Approval Action
-router.put("/CapexApprovalSystem", authenticateToken, approveCapex);
-// ============================================================ CAPEX Reports
-router.get("/CapexSummaryReport", authenticateToken, getCapexSummaryReport);
-router.get( "/CapexDepartmentReport",authenticateToken,getCapexDepartmentReport,);
-router.get("/CapexOrganizationReport",authenticateToken,getCapexOrganizationReport,);
+router.put("/OpexApprovalSystem", authenticateToken, approveOpex);
+// ============================================================ Opex Reports
+router.get("/OpexSummaryReport", authenticateToken, getOpexSummaryReport);
+router.get( "/OpexDepartmentReport",authenticateToken,getOpexDepartmentReport,);
+router.get("/OpexOrganizationReport",authenticateToken,getOpexOrganizationReport,);
 // ============================================================Get Approval Config
-router.post("/CreateApprovalFlow", authenticateToken, createCapexApprovalConfig);
-router.get("/GetApprovalFlow",authenticateToken, getCapexApprovalConfig);
-router.delete("/DeleteApprovalFlow", authenticateToken, deleteCapexApprovalConfig);
-// ============================================================Capex PDfs
-router.get("/CapexListPdf", authenticateToken, generateCapexListPdf);
+router.post("/CreateApprovalFlow", authenticateToken, createOpexApprovalConfig);
+router.get("/GetApprovalFlow",authenticateToken, getOpexApprovalConfig);
+router.delete("/DeleteApprovalFlow", authenticateToken, deleteOpexApprovalConfig);
+// ============================================================Opex PDfs
+router.get("/OpexListPdf", authenticateToken, generateOpexListPdf);
 
 module.exports = router;
