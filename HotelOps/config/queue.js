@@ -42,4 +42,8 @@ module.exports = {
     REQUEST: "capex_request_queue",
     RESPONSE: "capex_response_queue",
   },
+    OPEX: {
+    REQUEST: "opex_request_queue",
+    RESPONSE: "opex_response_queue",
+  },
 };
