@@ -42,6 +42,13 @@ test("protected audit and organization fields are rejected", () => {
   assert.ok(errors.some((item) => item.field === "CreatedBy"));
 });
 
+test("HOD comment is rejected for an unselected department", () => {
+  const input = validCreate();
+  input.DepartmentHODComments = [{ departmentId: 99, comment: "Not selected" }];
+  const errors = validator.validateCreate(input).errors;
+  assert.ok(errors.some((item) => item.message === "Department HOD comment can only be added for a selected department"));
+});
+
 test("list pagination and safe sorting are validated", () => {
   const errors = validator.validateList({ page: 0, pageSize: 101, sortBy: "DROP TABLE", sortDirection: "SIDEWAYS", departmentIds: [], receivedByIds: [], informedToIds: [] });
   assert.equal(errors.length, 4);

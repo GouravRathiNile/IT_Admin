@@ -6,7 +6,6 @@ servers:
   - url: /api/GuestGlitch
 security:
   - bearerAuth: []
-    organizationHeader: []
 paths:
   /create:
     post:
@@ -26,28 +25,38 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /list:
-    post:
+    get:
       summary: Filter and paginate guest glitches
       x-permission: GuestGlitch.View
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/GuestGlitchList' }
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: fromDate, in: query, schema: { type: string, format: date } }
+        - { name: toDate, in: query, schema: { type: string, format: date } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: departmentIds, in: query, description: Comma-separated department IDs, schema: { type: string, example: '1,2,3' } }
+        - { name: sortBy, in: query, schema: { type: string, enum: [ID, EntryDate, Status, RoomNumber, GuestName, CreatedDate, ModifyDate], default: EntryDate } }
+        - { name: sortDirection, in: query, schema: { type: string, enum: [ASC, DESC], default: DESC } }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '403': { $ref: '#/components/responses/Forbidden' }
-  /get:
-    post:
+  /get/{id}:
+    get:
       summary: Get one organization-scoped guest glitch
       x-permission: GuestGlitch.View
-      requestBody: { $ref: '#/components/requestBodies/IDBody' }
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '404': { $ref: '#/components/responses/NotFound' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /update:
-    post:
+    put:
       summary: Update a guest glitch using a body ID
       x-permission: GuestGlitch.Update
       requestBody:
@@ -64,7 +73,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /delete:
-    post:
+    delete:
       summary: Soft-delete a guest glitch
       x-permission: GuestGlitch.Delete
       requestBody: { $ref: '#/components/requestBodies/IDBody' }
@@ -73,7 +82,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /status-update:
-    post:
+    patch:
       summary: Move a guest glitch to its next configured status
       x-permission: GuestGlitch.StatusUpdate
       requestBody:
@@ -92,9 +101,14 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /options/list:
-    post:
+    get:
       summary: List active organization Guest Glitch options
       x-permission: GuestGlitch.View
+      parameters:
+        - name: OptionType
+          in: query
+          required: false
+          schema: { type: string, enum: [Status, GuestStatus, ComplaintSource, RaiseSource, ProcessLapseCategory, InternalActionTakenCategory] }
       responses:
         '200': { $ref: '#/components/responses/Success' }
   /options/upsert:
@@ -104,10 +118,93 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /report:
+    get:
+      summary: Compact Guest Glitch report
+      x-permission: GuestGlitch.Report
+      parameters: &reportFilters
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: fromDate, in: query, schema: { type: string, format: date } }
+        - { name: toDate, in: query, schema: { type: string, format: date } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: departmentIds, in: query, description: Comma-separated unique positive IDs, schema: { type: string } }
+        - { name: roomNumber, in: query, schema: { type: string } }
+        - { name: guestName, in: query, schema: { type: string } }
+        - { name: complaint, in: query, schema: { type: string } }
+        - { name: complaintSource, in: query, schema: { type: string } }
+        - { name: raiseSource, in: query, schema: { type: string } }
+        - { name: sortBy, in: query, schema: { type: string, enum: [ID, Hotel, EntryDate, RoomNumber, GuestName, Status, Rate, CreatedDate, ModifyDate], default: EntryDate } }
+        - { name: sortDirection, in: query, schema: { type: string, enum: [ASC, DESC], default: DESC } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /report/{id}:
+    get:
+      summary: Complete Guest Glitch report detail
+      x-permission: GuestGlitch.Report
+      parameters: &idPath
+        - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /master-report:
+    get:
+      summary: Complete Guest Glitch master report
+      x-permission: GuestGlitch.MasterReport
+      parameters: *reportFilters
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /master-report/{id}/pdf:
+    get:
+      summary: Generate an inline single-record master report PDF
+      x-permission: GuestGlitch.MasterReport
+      parameters: *idPath
+      responses:
+        '200':
+          description: PDF document
+          headers:
+            Content-Disposition: { schema: { type: string }, example: 'inline; filename="guest-glitch-1001.pdf"' }
+          content: { application/pdf: { schema: { type: string, format: binary } } }
+  /gm/{id}:
+    get:
+      summary: Guest Glitch detail for GM action
+      x-permission: GuestGlitch.GMAction
+      parameters: *idPath
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /gm-action:
+    patch:
+      summary: Save GM comment and optionally perform a configured status transition
+      x-permission: GuestGlitch.GMAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ID, GMComment]
+              properties:
+                ID: { type: integer, minimum: 1 }
+                GMComment: { type: string, maxLength: 500 }
+                Status: { type: string }
+                ResolvedBy: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+  /attachment/{id}:
+    get:
+      summary: Create a one-hour attachment SAS URL
+      x-permission: GuestGlitch.AttachmentView
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: disposition, in: query, schema: { type: string, enum: [inline, attachment], default: inline } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
-    organizationHeader: { type: apiKey, in: header, name: X-Organization-ID }
   requestBodies:
     IDBody:
       required: true

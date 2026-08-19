@@ -1,0 +1,19 @@
+{
+  "info": { "name": "HotelOps Guest Glitch", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{AuthToken}}", "type": "string" }] },
+  "variable": [
+    { "key": "LocalUrl", "value": "http://localhost:3000/api" },
+    { "key": "AuthToken", "value": "" },
+    { "key": "GuestGlitchID", "value": "1" }
+  ],
+  "item": [
+    { "name": "Compact Report", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/report?page=1&pageSize=10&sortBy=EntryDate&sortDirection=DESC" } },
+    { "name": "Report Detail", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/report/{{GuestGlitchID}}" } },
+    { "name": "Master Report", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/master-report?page=1&pageSize=10" } },
+    { "name": "Master Report PDF", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/master-report/{{GuestGlitchID}}/pdf" } },
+    { "name": "GM View", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/gm/{{GuestGlitchID}}" } },
+    { "name": "GM Action", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"ID\": {{GuestGlitchID}},\n  \"GMComment\": \"Reviewed by GM\"\n}" }, "url": "{{LocalUrl}}/GuestGlitch/gm-action" } },
+    { "name": "View Attachment", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/attachment/{{GuestGlitchID}}?disposition=inline" } },
+    { "name": "Download Attachment", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/attachment/{{GuestGlitchID}}?disposition=attachment" } }
+  ]
+}

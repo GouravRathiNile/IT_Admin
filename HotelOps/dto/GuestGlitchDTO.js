@@ -11,6 +11,7 @@ const EDITABLE_FIELDS = Object.freeze([
 const PROTECTED_FIELDS = Object.freeze([
   "OrganizationID", "CreatedBy", "CreatedDate", "ModifyBy", "ModifyDate",
   "ModifiedBy", "DeletedBy", "DeletedDate", "CreatedIP", "ModifiedIP",
+  "UserID", "Username", "IP",
 ]);
 
 const pick = (source, fields) => fields.reduce((result, field) => {
@@ -21,26 +22,31 @@ const pick = (source, fields) => fields.reduce((result, field) => {
 const createDTO = (body = {}) => pick(body, EDITABLE_FIELDS);
 const updateDTO = (body = {}) => ({ ID: body.ID ?? body.id, ...pick(body, EDITABLE_FIELDS) });
 
-const listDTO = (body = {}) => ({
-  page: body.page ?? 1,
-  pageSize: body.pageSize ?? 10,
-  search: body.search ?? "",
-  fromDate: body.fromDate ?? null,
-  toDate: body.toDate ?? null,
-  status: body.status ?? null,
-  roomNumber: body.roomNumber ?? null,
-  complaint: body.complaint ?? null,
-  departmentIds: body.departmentIds ?? [],
-  receivedByIds: body.receivedByIds ?? [],
-  informedToIds: body.informedToIds ?? [],
-  guestStatus: body.guestStatus ?? null,
-  companyName: body.companyName ?? null,
-  complaintSource: body.complaintSource ?? null,
-  raiseSource: body.raiseSource ?? null,
-  createdBy: body.createdBy ?? null,
-  updatedBy: body.updatedBy ?? null,
-  sortBy: body.sortBy ?? "EntryDate",
-  sortDirection: body.sortDirection ?? "DESC",
+const parseCommaSeparatedIDs = (value) => {
+  if (value === undefined || value === null || value === "") return [];
+  return (Array.isArray(value) ? value : String(value).split(","))
+    .map((item) => String(item).trim());
+};
+
+const listDTO = (query = {}) => ({
+  page: query.page ?? 1,
+  pageSize: query.pageSize ?? 10,
+  search: query.search ?? "",
+  fromDate: query.fromDate ?? null,
+  toDate: query.toDate ?? null,
+  status: query.status ?? null,
+  departmentIds: parseCommaSeparatedIDs(query.departmentIds),
+  sortBy: query.sortBy ?? "EntryDate",
+  sortDirection: query.sortDirection ?? "DESC",
 });
 
-module.exports = { EDITABLE_FIELDS, PROTECTED_FIELDS, createDTO, updateDTO, listDTO };
+const reportListDTO = (query = {}) => ({
+  ...listDTO(query),
+  roomNumber: query.roomNumber ?? null,
+  guestName: query.guestName ?? null,
+  complaint: query.complaint ?? null,
+  complaintSource: query.complaintSource ?? null,
+  raiseSource: query.raiseSource ?? null,
+});
+
+module.exports = { EDITABLE_FIELDS, PROTECTED_FIELDS, createDTO, updateDTO, listDTO, reportListDTO, parseCommaSeparatedIDs };

@@ -1,6 +1,9 @@
 const repository = require("../../repositories/GuestGlitchRepository/GuestGlitchRepository");
 const { OPTION_TYPES } = require("../../config/guestGlitchConstants");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
+const { compactReportDTO, completeReportDTO } = require("../../dto/GuestGlitchReportDTO");
+const { generateGuestGlitchPdf } = require("./GuestGlitchPdfService");
+const generateAttachmentUrl = require("../../AzurConfigration/GuestGlitch/AzureGetData");
 
 const fail = (message, statusCode = 400, errors) => ({ success: false, statusCode, message, ...(errors ? { errors } : {}) });
 const cleanText = (value) => value == null ? null : String(value).trim();
@@ -38,24 +41,33 @@ const mapRow = (row) => ({
 
 const ensureOwnedRecord = async (client, id, organizationID, lock = false) => {
   const record = await repository.findByID(client, id, organizationID, false, lock);
-  if (record) return { record };
-  const ownership = await repository.findOwnership(client, id);
-  if (!ownership) return { error: fail("Guest glitch record not found.", 404) };
-  if (Number(ownership.organizationid) !== Number(organizationID)) return { error: fail("Guest glitch record does not belong to your organization.", 403) };
-  if (ownership.isdeleted) return { error: fail("Guest glitch record has already been deleted.", 400) };
-  return { error: fail("Guest glitch record not found.", 404) };
+  return record
+    ? { record }
+    : { error: fail("Guest Glitch not found", 404) };
 };
 
 const validateSelections = async (client, data, organizationID) => {
   const departments = await repository.validateDepartments(client, organizationID, data.DepartmentIDs || []);
-  if (departments.length !== (data.DepartmentIDs || []).length) return { error: fail("One or more selected departments are invalid or inactive.") };
+  if (departments.length !== (data.DepartmentIDs || []).length) {
+    const valid = new Set(departments.map((item) => Number(item.departmentid)));
+    const invalidID = (data.DepartmentIDs || []).find((id) => !valid.has(Number(id)));
+    return { error: fail(`Invalid Department ID: ${invalidID}`) };
+  }
   const receivedUsers = await repository.validateUsers(client, organizationID, data.ReceivedByIDs || []);
-  if (receivedUsers.length !== (data.ReceivedByIDs || []).length) return { error: fail("One or more Received By users are invalid or inactive.") };
+  if (receivedUsers.length !== (data.ReceivedByIDs || []).length) {
+    const valid = new Set(receivedUsers.map((item) => Number(item.userid)));
+    const invalidID = (data.ReceivedByIDs || []).find((id) => !valid.has(Number(id)));
+    return { error: fail(`ReceivedBy user ID ${invalidID} is invalid, inactive, or unavailable for this organization`) };
+  }
   const informedUsers = await repository.validateUsers(client, organizationID, data.InformedToIDs || []);
-  if (informedUsers.length !== (data.InformedToIDs || []).length) return { error: fail("One or more Informed To users are invalid or inactive.") };
+  if (informedUsers.length !== (data.InformedToIDs || []).length) {
+    const valid = new Set(informedUsers.map((item) => Number(item.userid)));
+    const invalidID = (data.InformedToIDs || []).find((id) => !valid.has(Number(id)));
+    return { error: fail(`InformedTo user ID ${invalidID} is invalid, inactive, or unavailable for this organization`) };
+  }
   const selected = new Set((data.DepartmentIDs || []).map(Number));
   if ((data.DepartmentHODComments || []).some((item) => !selected.has(Number(item.departmentId)))) {
-    return { error: fail("HOD comments can only be added for selected departments.") };
+    return { error: fail("Department HOD comment can only be added for a selected department") };
   }
   return { departments, receivedUsers, informedUsers };
 };
@@ -90,7 +102,7 @@ const create = async (data) => {
     const prepared = applySnapshots(data, selections);
     const result = await repository.insert(client, prepared);
     await client.query("COMMIT");
-    return { success: true, message: "Guest glitch created successfully.", data: { ID: Number(result.id) } };
+    return { success: true, message: "Guest Glitch created successfully", data: { ID: Number(result.id) } };
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Create Guest Glitch Error:", error.message);
@@ -103,7 +115,7 @@ const list = async (data) => {
   try {
     const result = await repository.list(data, data.OrganizationID);
     return {
-      success: true, message: "Guest glitches retrieved successfully.",
+      success: true, message: "Guest Glitches fetched successfully",
       data: result.rows.map(mapRow),
       pagination: { page: Number(data.page), pageSize: Number(data.pageSize), totalRecords: result.total, totalPages: Math.ceil(result.total / Number(data.pageSize)) },
     };
@@ -186,8 +198,11 @@ const updateStatus = async (data) => {
     const allowed = Array.isArray(currentOption.metadata?.allowedNext)
       ? currentOption.metadata.allowedNext
       : [];
-    if (!allowed.includes(target)) { await client.query("ROLLBACK"); return fail("This guest glitch cannot be moved to the requested status."); }
-    if (target === "Resolved" && !cleanText(data.ResolvedBy)) { await client.query("ROLLBACK"); return fail("Resolved By is required when resolving a guest glitch."); }
+    if (!allowed.includes(target)) { await client.query("ROLLBACK"); return fail(`Invalid status transition from ${found.record.status} to ${target}`); }
+    if (option.metadata?.requiresResolvedBy === true && !cleanText(data.ResolvedBy)) {
+      await client.query("ROLLBACK");
+      return fail(`ResolvedBy is required when changing status to ${target}`);
+    }
     const changed = { Status: target };
     if (data.ResolvedBy != null) changed.ResolvedBy = cleanText(data.ResolvedBy);
     await repository.updateChangedFields(client, data.ID, data.OrganizationID, changed, data.UserID, data.Username, data.IP);
@@ -243,4 +258,109 @@ const upsertOption = async (data) => {
   }
 };
 
-module.exports = { create, list, get, update, updateStatus, remove, listOptions, upsertOption };
+const resolveReportRows = async (client, rows) => {
+  const selections = await repository.resolveSelections(client, rows[0]?.organizationid, rows);
+  return rows.map((row, index) => ({ row, resolved: selections[index] }));
+};
+
+const report = async (data, complete = false) => {
+  const client = await repository.getClient();
+  try {
+    const result = await repository.reportList(data, data.OrganizationID);
+    const resolvedRows = await resolveReportRows(client, result.rows);
+    const mapped = resolvedRows.map(({ row, resolved }) => complete
+      ? completeReportDTO(row, resolved)
+      : compactReportDTO({ ...row, departments: resolved.departments.map((item) => item.name).filter(Boolean).join(", "), receivedByUsers: resolved.receivedByUsers.map((item) => item.name).filter(Boolean).join(", ") }));
+    return {
+      success: true,
+      message: complete ? "Guest Glitch master report fetched successfully" : "Guest Glitch report fetched successfully",
+      data: mapped,
+      pagination: { page: Number(data.page), pageSize: Number(data.pageSize), totalRecords: result.total, totalPages: Math.ceil(result.total / Number(data.pageSize)) },
+    };
+  } catch (error) {
+    console.error("Guest Glitch Report Error:", error.message);
+    return fail("Unable to retrieve Guest Glitch report at this time.", 503);
+  } finally { client.release(); }
+};
+
+const reportDetail = async (data) => {
+  const client = await repository.getClient();
+  try {
+    const row = await repository.findReportByID(client, data.ID, data.OrganizationID);
+    if (!row) return fail("Guest Glitch not found", 404);
+    const [resolved] = await repository.resolveSelections(client, data.OrganizationID, [row]);
+    return { success: true, message: "Guest Glitch report detail fetched successfully", data: completeReportDTO(row, resolved) };
+  } catch (error) {
+    console.error("Guest Glitch Report Detail Error:", error.message);
+    return fail("Unable to retrieve Guest Glitch report detail at this time.", 503);
+  } finally { client.release(); }
+};
+
+const masterReportPdf = async (data) => {
+  const detail = await reportDetail(data);
+  if (!detail.success) return detail;
+  try {
+    const buffer = await generateGuestGlitchPdf(detail.data);
+    return { success: true, message: "Guest Glitch PDF generated successfully", pdfBase64: buffer.toString("base64"), filename: `guest-glitch-${data.ID}.pdf` };
+  } catch (error) {
+    console.error("Guest Glitch PDF Error:", error.message);
+    return fail("Unable to generate Guest Glitch PDF at this time.", 503);
+  }
+};
+
+const gmAction = async (data) => {
+  const client = await repository.getClient();
+  try {
+    await client.query("BEGIN");
+    const row = await repository.findReportByID(client, data.ID, data.OrganizationID, true);
+    if (!row) { await client.query("ROLLBACK"); return fail("Guest Glitch not found", 404); }
+    const changed = { GMComment: cleanText(data.GMComment) };
+    if (data.Status != null) {
+      const targetValue = cleanText(data.Status);
+      const [current, target] = await Promise.all([
+        repository.findOption(client, data.OrganizationID, "Status", row.status),
+        repository.findOption(client, data.OrganizationID, "Status", targetValue),
+      ]);
+      if (!current || !target) { await client.query("ROLLBACK"); return fail("The selected status is invalid or inactive."); }
+      const allowed = Array.isArray(current.metadata?.allowedNext) ? current.metadata.allowedNext : [];
+      if (!allowed.includes(targetValue)) { await client.query("ROLLBACK"); return fail(`Invalid status transition from ${row.status} to ${targetValue}`); }
+      if (target.metadata?.requiresResolvedBy === true && !cleanText(data.ResolvedBy)) {
+        await client.query("ROLLBACK"); return fail(`ResolvedBy is required when changing status to ${targetValue}`);
+      }
+      changed.Status = targetValue;
+      if (data.ResolvedBy != null) changed.ResolvedBy = cleanText(data.ResolvedBy);
+    }
+    await repository.updateChangedFields(client, data.ID, data.OrganizationID, changed, data.UserID, data.Username, data.IP);
+    await client.query("COMMIT");
+    return { success: true, message: "Guest Glitch GM action saved successfully", data: { ID: Number(data.ID), Status: changed.Status || row.status } };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Guest Glitch GM Action Error:", error.message);
+    const retry = retryableDatabaseResponse(error);
+    return retry || fail("Unable to save Guest Glitch GM action at this time.", 503);
+  } finally { client.release(); }
+};
+
+const attachment = async (data) => {
+  const client = await repository.getClient();
+  try {
+    const row = await repository.findByID(client, data.ID, data.OrganizationID);
+    if (!row) return fail("Guest Glitch not found", 404);
+    if (!row.attachment) return fail("Attachment not found", 404);
+    const title = row.attachmenttitle || `guest-glitch-${data.ID}-attachment`;
+    return { success: true, message: "Attachment URL generated successfully", data: {
+      AttachmentTitle: title,
+      Url: generateAttachmentUrl(row.attachment, { disposition: data.disposition, filename: title }),
+      ExpiresInSeconds: 3600,
+    } };
+  } catch (error) {
+    console.error("Guest Glitch Attachment Error:", error.message);
+    return fail("Unable to retrieve Guest Glitch attachment at this time.", 503);
+  } finally { client.release(); }
+};
+
+module.exports = {
+  create, list, get, update, updateStatus, remove, listOptions, upsertOption,
+  report: (data) => report(data, false), masterReport: (data) => report(data, true),
+  reportDetail, masterReportPdf, gmView: reportDetail, gmAction, attachment,
+};

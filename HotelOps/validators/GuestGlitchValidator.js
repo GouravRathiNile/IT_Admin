@@ -1,4 +1,4 @@
-const { OPTION_TYPES, SORT_COLUMNS } = require("../config/guestGlitchConstants");
+const { OPTION_TYPES, SORT_COLUMNS, REPORT_SORT_COLUMNS } = require("../config/guestGlitchConstants");
 const { EDITABLE_FIELDS, PROTECTED_FIELDS } = require("../dto/GuestGlitchDTO");
 
 const isPositiveInteger = (value) => /^\d+$/.test(String(value)) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
@@ -91,10 +91,12 @@ const validateCommon = (data, isCreate) => {
       data.DepartmentHODComments = [];
     } else {
       const seen = new Set();
+      const selectedDepartments = new Set((data.DepartmentIDs || []).map(Number));
       data.DepartmentHODComments = [];
       comments.forEach((item) => {
         if (!item || !isPositiveInteger(item.departmentId)) errors.push(error("DepartmentHODComments", "Each HOD comment requires a valid departmentId."));
         else if (seen.has(Number(item.departmentId))) errors.push(error("DepartmentHODComments", "Duplicate department HOD comments are not allowed."));
+        else if (!selectedDepartments.has(Number(item.departmentId))) errors.push(error("DepartmentHODComments", "Department HOD comment can only be added for a selected department"));
         else if (String(item.comment ?? "").trim().length > 500) errors.push(error("DepartmentHODComments", "HOD comments must not exceed 500 characters."));
         else {
           seen.add(Number(item.departmentId));
@@ -124,14 +126,18 @@ const validateCreate = (body = {}) => {
 const validateUpdate = (body = {}) => {
   const data = { ...body, ID: body.ID ?? body.id };
   const errors = [];
-  if (!isPositiveInteger(data.ID)) errors.push(error("ID", "Please provide a valid Guest Glitch ID."));
+  if (data.ID === undefined || data.ID === null || data.ID === "") errors.push(error("ID", "Guest Glitch ID is required"));
+  else if (!isPositiveInteger(data.ID)) errors.push(error("ID", "Guest Glitch ID must be a valid number"));
   errors.push(...validateCommon(data, false));
   if (!EDITABLE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(body, field))) errors.push(error("body", "At least one editable field is required."));
   return { data, errors };
 };
 
-const validateID = (body = {}) => isPositiveInteger(body.ID ?? body.id)
-  ? [] : [error("ID", "Please provide a valid Guest Glitch ID.")];
+const validateID = (input = {}) => {
+  const value = typeof input === "object" && input !== null ? input.ID ?? input.id : input;
+  if (value === undefined || value === null || value === "") return [error("ID", "Guest Glitch ID is required")];
+  return isPositiveInteger(value) ? [] : [error("ID", "Guest Glitch ID must be a valid number")];
+};
 
 const validateList = (data) => {
   const errors = [];
@@ -141,7 +147,7 @@ const validateList = (data) => {
   if (!['ASC', 'DESC'].includes(String(data.sortDirection).toUpperCase())) errors.push(error("sortDirection", "Sort direction must be ASC or DESC."));
   for (const field of ["fromDate", "toDate"]) if (data[field] && !isISODate(data[field])) errors.push(error(field, `${field} must use YYYY-MM-DD format.`));
   if (data.fromDate && data.toDate && data.toDate < data.fromDate) errors.push(error("toDate", "To date cannot be before from date."));
-  for (const field of ["departmentIds", "receivedByIds", "informedToIds"]) data[field] = normalizeIDArray(data, field, errors, false);
+  data.departmentIds = normalizeIDArray(data, "departmentIds", errors, false);
   return errors;
 };
 
@@ -153,10 +159,40 @@ const validateStatus = (body = {}) => {
 
 const validateOption = (body = {}) => {
   const errors = [];
+  for (const field of PROTECTED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(body, field)) errors.push(error(field, `${field} cannot be supplied by the client.`));
+  }
   if (!OPTION_TYPES.includes(body.OptionType)) errors.push(error("OptionType", "Invalid Guest Glitch option type."));
   if (!String(body.OptionValue ?? "").trim()) errors.push(error("OptionValue", "Option value is required."));
   if (String(body.OptionValue ?? "").trim().length > 100) errors.push(error("OptionValue", "Option value must not exceed 100 characters."));
+  if (body.DisplayName !== undefined && (!String(body.DisplayName).trim() || String(body.DisplayName).trim().length > 100)) errors.push(error("DisplayName", "DisplayName must be between 1 and 100 characters."));
+  if (body.Metadata !== undefined && (body.Metadata === null || Array.isArray(body.Metadata) || typeof body.Metadata !== "object")) errors.push(error("Metadata", "Metadata must be a JSON object."));
+  if (body.SortOrder !== undefined && (!Number.isInteger(Number(body.SortOrder)) || Number(body.SortOrder) < 0)) errors.push(error("SortOrder", "SortOrder must be a non-negative integer."));
+  if (body.IsActive !== undefined && typeof body.IsActive !== "boolean") errors.push(error("IsActive", "IsActive must be true or false."));
   return errors;
 };
 
-module.exports = { validateCreate, validateUpdate, validateID, validateList, validateStatus, validateOption, isPositiveInteger };
+const validateReportList = (data) => {
+  const base = { ...data, sortBy: SORT_COLUMNS[data.sortBy] ? data.sortBy : "EntryDate" };
+  const errors = validateList(base);
+  data.departmentIds = base.departmentIds;
+  if (!REPORT_SORT_COLUMNS[data.sortBy]) errors.push(error("sortBy", "Invalid report sort field."));
+  for (const field of ["search", "status", "roomNumber", "guestName", "complaint", "complaintSource", "raiseSource"]) {
+    if (data[field] != null && String(data[field]).length > 500) errors.push(error(field, `${field} is too long.`));
+  }
+  return errors;
+};
+
+const validateGMAction = (body = {}) => {
+  const errors = validateID(body);
+  const comment = String(body.GMComment ?? "").trim();
+  if (!comment) errors.push(error("GMComment", "GMComment is required"));
+  else if (comment.length > 500) errors.push(error("GMComment", "GMComment must not exceed 500 characters."));
+  if (body.Status !== undefined && !String(body.Status).trim()) errors.push(error("Status", "Status cannot be empty."));
+  return errors;
+};
+
+const validateDisposition = (value) => ["inline", "attachment"].includes(String(value || "inline").toLowerCase())
+  ? [] : [error("disposition", "Disposition must be inline or attachment.")];
+
+module.exports = { validateCreate, validateUpdate, validateID, validateList, validateReportList, validateStatus, validateOption, validateGMAction, validateDisposition, isPositiveInteger };
