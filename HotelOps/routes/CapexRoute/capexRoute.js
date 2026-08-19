@@ -15,6 +15,7 @@ const {
   getCapexApprovalConfig,
   updateCapexApprovalConfig,
   deleteCapexApprovalConfig,
+  generateCapexListPdf
 } = require("../../controllers/CapexController/CapexController");
 
 const router = express.Router();
@@ -38,4 +39,7 @@ router.get("/CapexOrganizationReport",authenticateToken,getCapexOrganizationRepo
 router.post("/CreateApprovalFlow", authenticateToken, createCapexApprovalConfig);
 router.get("/GetApprovalFlow",authenticateToken, getCapexApprovalConfig);
 router.delete("/DeleteApprovalFlow", authenticateToken, deleteCapexApprovalConfig);
+// ============================================================Capex PDfs
+router.get("/CapexListPdf", authenticateToken, generateCapexListPdf);
+
 module.exports = router;
