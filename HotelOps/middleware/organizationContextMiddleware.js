@@ -3,18 +3,18 @@ const STATUS_CODES = require("../utils/statusCodes");
 
 const organizationContextMiddleware = async (req, res, next) => {
   try {
-    const rawOrganizationID = req.get("X-Organization-ID");
-    if (!rawOrganizationID) {
-      return res.status(STATUS_CODES.BAD_REQUEST).json({
+    const rawOrganizationID = req.user?.OrganizationID;
+    if (rawOrganizationID === undefined || rawOrganizationID === null || rawOrganizationID === "") {
+      return res.status(STATUS_CODES.FORBIDDEN).json({
         success: false,
-        message: "X-Organization-ID header is required.",
+        message: "Organization information is not available for the authenticated user",
       });
     }
 
     if (!/^\d+$/.test(rawOrganizationID) || !Number.isSafeInteger(Number(rawOrganizationID)) || Number(rawOrganizationID) < 1) {
       return res.status(STATUS_CODES.BAD_REQUEST).json({
         success: false,
-        message: "Please provide a valid organization ID.",
+        message: "Please provide a valid organization ID",
       });
     }
 

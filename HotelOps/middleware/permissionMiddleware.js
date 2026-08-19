@@ -6,7 +6,7 @@ const requirePermission = (permission) => (req, res, next) => {
   if (!permissions.includes(permission)) {
     return res.status(STATUS_CODES.FORBIDDEN).json({
       success: false,
-      message: "You are not authorized to perform this action.",
+      message: "You are not authorized to perform this action",
     });
   }
   next();

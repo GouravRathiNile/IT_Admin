@@ -6,6 +6,8 @@ const PERMISSIONS = Object.freeze({
   STATUS_UPDATE: "GuestGlitch.StatusUpdate",
   REPORT: "GuestGlitch.Report",
   MASTER_REPORT: "GuestGlitch.MasterReport",
+  GM_ACTION: "GuestGlitch.GMAction",
+  ATTACHMENT_VIEW: "GuestGlitch.AttachmentView",
   OPTION_MANAGE: "GuestGlitch.OptionManage",
 });
 
@@ -33,6 +35,12 @@ const SORT_COLUMNS = Object.freeze({
   GuestName: "gg.guestname",
   CreatedDate: "gg.createddate",
   ModifyDate: "gg.modifydate",
+});
+
+const REPORT_SORT_COLUMNS = Object.freeze({
+  ID: "gg.id", Hotel: "om.organizationname", EntryDate: "gg.entrydate",
+  RoomNumber: "gg.roomnumber", GuestName: "gg.guestname", Status: "gg.status",
+  Rate: "gg.rate", CreatedDate: "gg.createddate", ModifyDate: "gg.modifydate",
 });
 
 const FIELD_AUDIT_COLUMNS = Object.freeze({
@@ -74,4 +82,5 @@ module.exports = {
   STATUS_TRANSITIONS,
   SORT_COLUMNS,
   FIELD_AUDIT_COLUMNS,
+  REPORT_SORT_COLUMNS,
 };

@@ -1,5 +1,5 @@
 const { pool } = require("../../db");
-const { SORT_COLUMNS, FIELD_AUDIT_COLUMNS } = require("../../config/guestGlitchConstants");
+const { SORT_COLUMNS, REPORT_SORT_COLUMNS, FIELD_AUDIT_COLUMNS } = require("../../config/guestGlitchConstants");
 
 const COLUMN_MAP = Object.freeze({
   EntryDate: "entrydate", Status: "status", ResolvedBy: "resolvedby",
@@ -87,14 +87,6 @@ const findByID = async (client, id, organizationID, includeDeleted = false, lock
   return result.rows[0] || null;
 };
 
-const findOwnership = async (client, id) => {
-  const result = await client.query(
-    `SELECT organizationid, isdeleted FROM guest_glitch_entry_master WHERE id = $1 LIMIT 1;`,
-    [id]
-  );
-  return result.rows[0] || null;
-};
-
 const updateChangedFields = async (client, id, organizationID, changed, userID, username, ip) => {
   const assignments = [];
   const values = [];
@@ -126,11 +118,24 @@ const updateChangedFields = async (client, id, organizationID, changed, userID, 
 
 const softDelete = async (client, id, organizationID, userID, ip) => {
   const result = await client.query(
-    `UPDATE guest_glitch_entry_master SET
-       isdeleted = TRUE, deleteddate = CURRENT_TIMESTAMP, deletedby = $1,
-       modifyby = $1::text, modifydate = CURRENT_TIMESTAMP, modifiedip = $2
-     WHERE id = $3 AND organizationid = $4 AND isdeleted = FALSE RETURNING id;`,
-    [userID, ip, id, organizationID]
+    `UPDATE guest_glitch_entry_master
+     SET isdeleted = TRUE,
+         deleteddate = CURRENT_TIMESTAMP,
+         deletedby = $1,
+         modifyby = $2,
+         modifydate = CURRENT_TIMESTAMP,
+         modifiedip = $3
+     WHERE id = $4
+       AND organizationid = $5
+       AND isdeleted = FALSE
+     RETURNING id;`,
+    [
+      userID,
+      String(userID),
+      ip,
+      id,
+      organizationID,
+    ]
   );
   return result.rows[0] || null;
 };
@@ -149,7 +154,9 @@ const list = async (data, organizationID) => {
   const scalarFilters = { status: "gg.status", roomNumber: "gg.roomnumber", complaint: "gg.complaint", guestStatus: "gg.gueststatus", companyName: "gg.companyname", complaintSource: "gg.complaintsource", raiseSource: "gg.raisesource", createdBy: "gg.createdby", updatedBy: "gg.updatedby" };
   for (const [field, column] of Object.entries(scalarFilters)) if (data[field]) add(`${column} ILIKE ?`, `%${data[field]}%`);
   for (const [field, column] of [["departmentIds", "departmentids"], ["receivedByIds", "receivedbyids"], ["informedToIds", "informedtoids"]]) {
-    if (data[field]?.length) add(`gg.${column} @> ?::jsonb`, JSON.stringify(data[field]));
+    if (data[field]?.length) {
+      add(`EXISTS (SELECT 1 FROM jsonb_array_elements_text(gg.${column}) AS selected_id(value) WHERE selected_id.value::bigint = ANY(?::bigint[]))`, data[field]);
+    }
   }
   const where = filters.join(" AND ");
   const count = await pool.query(`SELECT COUNT(*)::bigint AS total FROM guest_glitch_entry_master gg WHERE ${where};`, values);
@@ -178,6 +185,72 @@ const listOptions = async (organizationID, optionType = null) => {
   return result.rows;
 };
 
+const buildReportFilters = (data, organizationID) => {
+  const filters = ["gg.organizationid = $1", "gg.isdeleted = FALSE"];
+  const values = [organizationID];
+  const add = (sql, value) => { values.push(value); filters.push(sql.replace("?", `$${values.length}`)); };
+  if (data.search) {
+    values.push(`%${data.search}%`);
+    const p = `$${values.length}`;
+    filters.push(`(gg.guestname ILIKE ${p} OR gg.roomnumber ILIKE ${p} OR gg.complaint ILIKE ${p} OR gg.companyname ILIKE ${p})`);
+  }
+  if (data.fromDate) add("gg.entrydate >= ?", data.fromDate);
+  if (data.toDate) add("gg.entrydate <= ?", data.toDate);
+  for (const [field, column] of Object.entries({ status: "gg.status", roomNumber: "gg.roomnumber", guestName: "gg.guestname", complaint: "gg.complaint", complaintSource: "gg.complaintsource", raiseSource: "gg.raisesource" })) {
+    if (data[field]) add(`${column} ILIKE ?`, `%${data[field]}%`);
+  }
+  if (data.departmentIds?.length) add(
+    "EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(gg.departmentids, '[]'::jsonb)) selected(value) WHERE selected.value::bigint = ANY(?::bigint[]))",
+    data.departmentIds
+  );
+  return { filters, values };
+};
+
+const reportList = async (data, organizationID) => {
+  const { filters, values } = buildReportFilters(data, organizationID);
+  const where = filters.join(" AND ");
+  const count = await pool.query(`SELECT COUNT(*)::bigint total FROM guest_glitch_entry_master gg WHERE ${where};`, values);
+  const limit = Number(data.pageSize), offset = (Number(data.page) - 1) * limit;
+  const queryValues = [...values, limit, offset];
+  const sort = REPORT_SORT_COLUMNS[data.sortBy];
+  const direction = String(data.sortDirection).toUpperCase() === "ASC" ? "ASC" : "DESC";
+  const result = await pool.query(
+    `SELECT gg.*, om.organizationname AS hotel
+     FROM guest_glitch_entry_master gg
+     INNER JOIN organization_master om ON om.organizationid = gg.organizationid
+     WHERE ${where}
+     ORDER BY ${sort} ${direction}, gg.id DESC
+     LIMIT $${queryValues.length - 1} OFFSET $${queryValues.length};`, queryValues
+  );
+  return { rows: result.rows, total: Number(count.rows[0].total) };
+};
+
+const findReportByID = async (client, id, organizationID, lock = false) => {
+  const result = await client.query(
+    `SELECT gg.*, om.organizationname AS hotel
+     FROM guest_glitch_entry_master gg
+     INNER JOIN organization_master om ON om.organizationid = gg.organizationid
+     WHERE gg.id = $1 AND gg.organizationid = $2 AND gg.isdeleted = FALSE
+     LIMIT 1 ${lock ? "FOR UPDATE OF gg" : ""};`, [id, organizationID]
+  );
+  return result.rows[0] || null;
+};
+
+const resolveSelections = async (client, organizationID, rows) => {
+  const unique = (field) => [...new Set(rows.flatMap((row) => row[field] || []).map(Number))];
+  const [departments, users] = await Promise.all([
+    validateDepartments(client, organizationID, unique("departmentids")),
+    validateUsers(client, organizationID, [...new Set([...unique("receivedbyids"), ...unique("informedtoids")])]),
+  ]);
+  const departmentMap = new Map(departments.map((item) => [Number(item.departmentid), item.departmentname]));
+  const userMap = new Map(users.map((item) => [Number(item.userid), item.fullname || item.username]));
+  return rows.map((row) => ({
+    departments: (row.departmentids || []).map(Number).map((id) => ({ id, name: departmentMap.get(id) || null })),
+    receivedByUsers: (row.receivedbyids || []).map(Number).map((id) => ({ id, name: userMap.get(id) || null })),
+    informedToUsers: (row.informedtoids || []).map(Number).map((id) => ({ id, name: userMap.get(id) || null })),
+  }));
+};
+
 const upsertOption = async (data) => {
   const result = await pool.query(
     `INSERT INTO guest_glitch_option_master
@@ -196,5 +269,6 @@ const upsertOption = async (data) => {
 
 module.exports = {
   COLUMN_MAP, getClient, validateDepartments, validateUsers, findOption, insert,
-  findByID, findOwnership, updateChangedFields, softDelete, list, listOptions, upsertOption,
+  findByID, updateChangedFields, softDelete, list, listOptions, upsertOption,
+  reportList, findReportByID, resolveSelections,
 };
