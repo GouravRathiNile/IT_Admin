@@ -1,9 +1,9 @@
 const { pool } = require("../../db");
-const {
-  retryableDatabaseResponse,
-} = require("../../utils/retryableDatabaseError");
+const {retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
 const generateDocumentUrl = require("../../AzurConfigration/Capex/AzureGetData");
 const { formatDate } = require("../../utils/dateFormatter");
+
+// ==============================================================Default roles
 const DEFAULT_APPROVALS = Object.freeze([
   { LevelNo: 1, ApprovalRole: "GM" },
   { LevelNo: 2, ApprovalRole: "CEO" },
@@ -11,13 +11,12 @@ const DEFAULT_APPROVALS = Object.freeze([
 ]);
 const APPROVAL_ROLES = new Set(["GM", "CEO", "OWNER"]);
 
-// ============================================================ Shared Response Helpers
+// ============================================================ Shared Response Helpers(Create Helpers)
 const fail = (message, statusCode = 400) => ({
   success: false,
   statusCode,
   message,
 });
-
 // Merge organization overrides with the GM -> CEO -> OWNER defaults.
 const mergeApprovalConfiguration = (configuredRows) => {
   const approvals = new Map(
@@ -40,7 +39,6 @@ const mergeApprovalConfiguration = (configuredRows) => {
     (left, right) => left.LevelNo - right.LevelNo,
   );
 };
-
 // CAPEX currently supports only these three business approval roles.
 const approvalConfigurationIsValid = (approvals) =>
   approvals.length > 0 &&
@@ -51,7 +49,6 @@ const approvalConfigurationIsValid = (approvals) =>
         .toUpperCase(),
     ),
   );
-
 // Roll back only when a transaction was successfully started.
 const rollback = async (client, transactionStarted) => {
   if (!client || !transactionStarted) return;
@@ -62,13 +59,11 @@ const rollback = async (client, transactionStarted) => {
     console.error("CAPEX Rollback Error:", error.message);
   }
 };
-
 // Roll back database work and return the requested failure response.
 const cleanupAndFail = async (client, transactionStarted, response) => {
   await rollback(client, transactionStarted);
   return response;
 };
-
 // Reserve numeric IDs safely because the existing CAPEX ID columns have no defaults.
 const reserveNumericIDs = async (client, tableName, columnName, count = 1) => {
   if (count < 1) return [];
@@ -93,7 +88,6 @@ const reserveNumericIDs = async (client, tableName, columnName, count = 1) => {
 
   return Array.from({ length: count }, (_value, index) => firstID + index);
 };
-
 // ============================================================ Create CAPEX
 const createCapex = async (data) => {
   let client;
@@ -295,7 +289,7 @@ const createCapex = async (data) => {
   }
 };
 
-// ============================================================ Read Query and Mapping Helpers
+// ============================================================ Read Query and Mapping Helpers(Get Helpers)
 // The lateral query derives the first non-approved stage for each CAPEX.
 const CAPEX_SELECT = `
   SELECT
@@ -311,22 +305,21 @@ const CAPEX_SELECT = `
     cm.Total,
     cm.IsVoid,
     cm.VoidRemarks,
-    cm.CreatedBy,
     cm.CreatedDate,
-    cm.ModifiedBy,
-    cm.ModifiedDate,
+    
 
     CASE
       WHEN UPPER(COALESCE(approval_state.FinalStatus, 'PENDING'))
            IN ('APPROVED', 'REJECTED')
-        THEN NULL
+      THEN NULL
       ELSE current_stage.ApprovalRole
     END AS CurrentApprovalRole,
 
     CASE
       WHEN UPPER(COALESCE(approval_state.FinalStatus, 'PENDING'))
            IN ('APPROVED', 'REJECTED')
-        THEN approval_state.FinalStatus
+      THEN approval_state.FinalStatus
+
       ELSE COALESCE(
         current_stage.Status,
         approval_state.FinalStatus,
@@ -349,29 +342,50 @@ const CAPEX_SELECT = `
   LEFT JOIN LATERAL
   (
     SELECT
-      stage.ApprovalRole,
-      stage.Status,
-      stage.LevelNo
-    FROM
-    (
-      VALUES
-        (1, 'GM', approval_state.GMStatus),
-        (2, 'CEO', approval_state.CEOStatus),
-        (3, 'OWNER', approval_state.OwnerStatus)
-    ) AS stage(LevelNo, ApprovalRole, Status)
+      cfg.ApprovalRole,
 
-   WHERE UPPER(
-    COALESCE(stage.Status, 'PENDING')
-) NOT IN ('APPROVED', 'REJECTED')
+      CASE UPPER(cfg.ApprovalRole)
+        WHEN 'GM'
+          THEN COALESCE(approval_state.GMStatus, 'PENDING')
 
-    ORDER BY stage.LevelNo ASC
+        WHEN 'CEO'
+          THEN COALESCE(approval_state.CEOStatus, 'PENDING')
+
+        WHEN 'OWNER'
+          THEN COALESCE(approval_state.OwnerStatus, 'PENDING')
+      END AS Status,
+
+      cfg.ApprovalLevel,
+      cfg.ApprovalOrder
+
+    FROM Capex_Approval_Config cfg
+
+    WHERE cfg.OrganizationID = cm.OrganizationID
+      AND cfg.IsDeleted = FALSE
+
+      AND UPPER(
+        CASE UPPER(cfg.ApprovalRole)
+          WHEN 'GM'
+            THEN COALESCE(approval_state.GMStatus, 'PENDING')
+
+          WHEN 'CEO'
+            THEN COALESCE(approval_state.CEOStatus, 'PENDING')
+
+          WHEN 'OWNER'
+            THEN COALESCE(approval_state.OwnerStatus, 'PENDING')
+        END
+      ) NOT IN ('APPROVED', 'REJECTED')
+
+    ORDER BY
+      cfg.ApprovalOrder ASC,
+      cfg.ApprovalLevel ASC
+
     LIMIT 1
 
   ) current_stage ON TRUE
 
   WHERE cm.IsDeleted = FALSE
 `;
-
 // Convert PostgreSQL lowercase row keys into the public CAPEX response shape.
 const mapMaster = (row) => ({
   CapexID: Number(row.capexid),
@@ -395,7 +409,6 @@ const mapMaster = (row) => ({
   Documents: [],
   Approvals: [],
 });
-
 // Generate a short-lived read URL while preserving stored blob paths in the DB.
 const mapDocument = (row) => ({
   CapexDocumentID: Number(row.capexdocumentid),
@@ -406,7 +419,6 @@ const mapDocument = (row) => ({
   FileType: row.filetype,
   FileSize: row.filesize == null ? null : Number(row.filesize),
 });
-
 // Return approval fields without exposing soft-delete/audit internals.
 const mapApproval = (row) => ({
   CapexApprovalID: Number(row.capexapprovalid),
@@ -418,15 +430,14 @@ const mapApproval = (row) => ({
     row.statusapprovedby == null ? null : Number(row.statusapprovedby),
   Remarks: row.remarks,
 });
-
 // Fetch documents and approvals in batches to avoid N+1 database queries.
 const attachRelatedData = async (capexRows) => {
   if (capexRows.length === 0) return [];
 
   const capexIDs = capexRows.map((row) => Number(row.capexid));
   const [documentsResult, approvalsResult] = await Promise.all([
-    pool.query(
-      `
+  pool.query(
+    `
       SELECT
         CapexDocumentID,
         CapexID,
@@ -439,35 +450,64 @@ const attachRelatedData = async (capexRows) => {
       WHERE CapexID = ANY($1::bigint[])
         AND IsDeleted = FALSE
       ORDER BY CapexID ASC, CapexDocumentID ASC;
-      `,
-      [capexIDs],
-    ),
-    pool.query(
-      `
+    `,
+    [capexIDs],
+  ),
+
+  pool.query(
+    `
       SELECT
         ca.CapexApprovalID,
         ca.CapexID,
-        stage.LevelNo,
-        stage.ApprovalRole,
-        stage.Status,
-        stage.StatusDateTime,
-        stage.StatusApprovedBy,
-        stage.Remarks
+        cfg.ApprovalLevel AS LevelNo,
+        cfg.ApprovalRole,
+
+        CASE cfg.ApprovalRole
+          WHEN 'GM' THEN ca.GMStatus
+          WHEN 'CEO' THEN ca.CEOStatus
+          WHEN 'OWNER' THEN ca.OwnerStatus
+        END AS Status,
+
+        CASE cfg.ApprovalRole
+          WHEN 'GM' THEN ca.GMStatusDateTime
+          WHEN 'CEO' THEN ca.CEOStatusDateTime
+          WHEN 'OWNER' THEN ca.OwnerStatusDateTime
+        END AS StatusDateTime,
+
+        CASE cfg.ApprovalRole
+          WHEN 'GM' THEN ca.GMStatusApprovedBy
+          WHEN 'CEO' THEN ca.CEOStatusApprovedBy
+          WHEN 'OWNER' THEN ca.OwnerStatusApprovedBy
+        END AS StatusApprovedBy,
+
+        CASE cfg.ApprovalRole
+          WHEN 'GM' THEN ca.GMRemarks
+          WHEN 'CEO' THEN ca.CEORemarks
+          WHEN 'OWNER' THEN ca.OwnerRemarks
+        END AS Remarks
+
       FROM Capex_Approval ca
-      CROSS JOIN LATERAL
-      (
-        VALUES
-          (1, 'GM', ca.GMStatus, ca.GMStatusDateTime, ca.GMStatusApprovedBy, ca.GMRemarks),
-          (2, 'CEO', ca.CEOStatus, ca.CEOStatusDateTime, ca.CEOStatusApprovedBy, ca.CEORemarks),
-          (3, 'OWNER', ca.OwnerStatus, ca.OwnerStatusDateTime, ca.OwnerStatusApprovedBy, ca.OwnerRemarks)
-      ) AS stage(LevelNo, ApprovalRole, Status, StatusDateTime, StatusApprovedBy, Remarks)
+
+      INNER JOIN Capex_Approval_Config cfg
+        ON cfg.OrganizationID = (
+          SELECT OrganizationID
+          FROM Capex_Master
+          WHERE CapexID = ca.CapexID
+        )
+
+       AND cfg.IsDeleted = FALSE
+
       WHERE ca.CapexID = ANY($1::bigint[])
         AND ca.IsDeleted = FALSE
-      ORDER BY ca.CapexID ASC, stage.LevelNo ASC, ca.CapexApprovalID ASC;
-      `,
-      [capexIDs],
-    ),
-  ]);
+
+      ORDER BY
+        ca.CapexID ASC,
+        cfg.ApprovalLevel ASC,
+        ca.CapexApprovalID ASC;
+    `,
+    [capexIDs],
+  ),
+]);
 
   const byID = new Map(
     capexRows.map((row) => {
@@ -486,7 +526,6 @@ const attachRelatedData = async (capexRows) => {
 
   return capexRows.map((row) => byID.get(Number(row.capexid)));
 };
-
 // ============================================================ Get All CAPEX
 const getAllCapex = async (data) => {
   try {
@@ -1047,7 +1086,6 @@ const getAllCapex = async (data) => {
     return fail("Unable to fetch CAPEX records at this time.", 503);
   }
 };
-
 // ============================================================ Get CAPEX By ID
 const getCapexById = async (data) => {
   try {
@@ -1077,7 +1115,7 @@ const getCapexById = async (data) => {
   }
 };
 
-// ============================================================ Mutation Helpers
+// ============================================================ Mutation Helpers (Update ,Delete,Approval Helpers)
 // Read the effective approval configuration for one organization.
 const getMergedApprovals = async (client, organizationID) => {
   const result = await client.query(
@@ -1120,44 +1158,6 @@ const getMergedApprovals = async (client, organizationID) => {
     IsMandatory: true,
   }));
 };
-
-// Create the approval-stage snapshot attached to one CAPEX record.
-const insertApprovalRows = async (client, capexID, approvals, userID) => {
-  const approvalIDs = await reserveNumericIDs(
-    client,
-    "Capex_Approval",
-    "CapexApprovalID",
-    approvals.length,
-  );
-
-  for (const [index, approval] of approvals.entries()) {
-    await client.query(
-      `
-      INSERT INTO Capex_Approval
-      (
-        CapexApprovalID,
-        CapexID,
-        LevelNo,
-        ApprovalRole,
-        Status,
-        StatusDateTime,
-        IsDeleted,
-        CreatedBy,
-        CreatedDate
-      )
-      VALUES ($1, $2, $3, $4, 'Pending', CURRENT_TIMESTAMP, FALSE, $5, CURRENT_TIMESTAMP);
-      `,
-      [
-        approvalIDs[index],
-        capexID,
-        approval.LevelNo,
-        approval.ApprovalRole,
-        userID,
-      ],
-    );
-  }
-};
-
 // Distinguish not-found records from authorization failures.
 const capexExists = async (client, capexID) => {
   const result = await client.query(
@@ -1166,48 +1166,6 @@ const capexExists = async (client, capexID) => {
   );
   return result.rows.length > 0;
 };
-
-// Verify active user and organization mapping before organization reassignment.
-const validateOrganizationAccess = async (client, userID, organizationID) => {
-  const result = await client.query(
-    `
-    SELECT 1
-    FROM user_org_mapping uom
-    INNER JOIN user_master um ON um.UserID = uom.UserID
-    INNER JOIN Organization_Master om ON om.OrganizationID = uom.OrganizationID
-    WHERE uom.UserID = $1
-      AND uom.OrganizationID = $2
-      AND uom.IsActive = TRUE
-      AND uom.IsDeleted = FALSE
-      AND um.IsActive = TRUE
-      AND um.IsDeleted = FALSE
-      AND COALESCE(um.IsLocked, FALSE) = FALSE
-      AND om.IsActive = TRUE
-      AND om.IsDeleted = FALSE
-      AND om.ActivationStatus = TRUE
-    LIMIT 1;
-    `,
-    [userID, organizationID],
-  );
-  return result.rows.length > 0;
-};
-
-// Atomically reserve the next organization-specific CAPEX number.
-const nextCapexNumber = async (client, organizationID) => {
-  const result = await client.query(
-    `
-    INSERT INTO Capex_Organization_Sequence (OrganizationID, LastCapexNumber)
-    VALUES ($1, 1)
-    ON CONFLICT (OrganizationID)
-    DO UPDATE SET
-      LastCapexNumber = Capex_Organization_Sequence.LastCapexNumber + 1
-    RETURNING LastCapexNumber;
-    `,
-    [organizationID],
-  );
-  return Number(result.rows[0].lastcapexnumber);
-};
-
 // ============================================================ Partial Update CAPEX
 const updateCapex = async (data) => {
   let client;
@@ -1534,7 +1492,6 @@ const updateCapex = async (data) => {
     }
   }
 };
-
 // ============================================================ Soft Delete CAPEX
 const deleteCapex = async (data) => {
   let client;
@@ -1646,18 +1603,16 @@ const deleteCapex = async (data) => {
     }
   }
 };
-
 // ============================================================ Approval Workflow
-// Lock and process only the current configured approval stage.
 const processCapexApproval = async (data) => {
   let client;
   let transactionStarted = false;
 
-  console.log("PROCESS CAPEX APPROVAL DATA:", JSON.stringify(data));
+  // console.log("PROCESS CAPEX APPROVAL DATA:", JSON.stringify(data));
 
   try {
     // ============================================================
-    // 1. Normalize input
+    // 1. NORMALIZE INPUT
     // ============================================================
 
     const approverRole = String(data.UserType || "")
@@ -1671,7 +1626,7 @@ const processCapexApproval = async (data) => {
     const remarks = String(data.Remarks || "").trim();
 
     // ============================================================
-    // 2. Validate action
+    // 2. VALIDATE ACTION
     // ============================================================
 
     if (!["APPROVE", "REJECT", "RETURN"].includes(action)) {
@@ -1679,7 +1634,7 @@ const processCapexApproval = async (data) => {
     }
 
     // ============================================================
-    // 3. Remarks required for REJECT / RETURN
+    // 3. REMARKS REQUIRED
     // ============================================================
 
     if (["REJECT", "RETURN"].includes(action) && !remarks) {
@@ -1687,7 +1642,7 @@ const processCapexApproval = async (data) => {
     }
 
     // ============================================================
-    // 4. Validate role
+    // 4. VALIDATE ROLE
     // ============================================================
 
     if (!APPROVAL_ROLES.has(approverRole)) {
@@ -1695,7 +1650,7 @@ const processCapexApproval = async (data) => {
     }
 
     // ============================================================
-    // 5. DB Connection
+    // 5. DB CONNECTION
     // ============================================================
 
     client = await pool.connect();
@@ -1704,7 +1659,7 @@ const processCapexApproval = async (data) => {
     transactionStarted = true;
 
     // ============================================================
-    // 6. Get CAPEX
+    // 6. GET CAPEX MASTER
     // ============================================================
 
     const masterResult = await client.query(
@@ -1724,7 +1679,7 @@ const processCapexApproval = async (data) => {
     );
 
     // ============================================================
-    // 7. CAPEX not found
+    // 7. CAPEX NOT FOUND
     // ============================================================
 
     if (masterResult.rows.length === 0) {
@@ -1742,11 +1697,11 @@ const processCapexApproval = async (data) => {
     const capex = masterResult.rows[0];
 
     // ============================================================
-    // 8. Get organization-specific / default approval config
+    // 8. GET APPROVAL CONFIGURATION
     //
-    // getMergedApprovals() should:
-    // 1. First check organization configuration
-    // 2. If not found, use default configuration
+    // getMergedApprovals():
+    // 1. Organization-specific configuration
+    // 2. If organization config not found -> DEFAULT
     // ============================================================
 
     const configuredStages = await getMergedApprovals(
@@ -1774,7 +1729,7 @@ const processCapexApproval = async (data) => {
     }
 
     // ============================================================
-    // 9. Get CAPEX Approval
+    // 9. GET CAPEX APPROVAL
     // ============================================================
 
     const approvalResult = await client.query(
@@ -1813,7 +1768,7 @@ const processCapexApproval = async (data) => {
     );
 
     // ============================================================
-    // 10. Approval row not found
+    // 10. APPROVAL ROW NOT FOUND
     // ============================================================
 
     if (approvalResult.rows.length === 0) {
@@ -1827,7 +1782,7 @@ const processCapexApproval = async (data) => {
     const approval = approvalResult.rows[0];
 
     // ============================================================
-    // 11. Get role-specific approval data
+    // 11. ROLE DATA HELPER
     // ============================================================
 
     const getRoleData = (role) => {
@@ -1862,7 +1817,7 @@ const processCapexApproval = async (data) => {
     };
 
     // ============================================================
-    // 12. Build stages
+    // 12. BUILD APPROVAL STAGES
     // ============================================================
 
     const stages = configuredStages.map((stage) => {
@@ -1881,50 +1836,32 @@ const processCapexApproval = async (data) => {
       };
     });
 
-    console.log("CAPEX APPROVAL STAGES:", JSON.stringify(stages));
+    // console.log("CAPEX APPROVAL STAGES:", JSON.stringify(stages));
 
     // ============================================================
-    // 13. Final status already completed
-    // ============================================================
-
-    if (
-      ["APPROVED", "REJECTED"].includes(
-        String(approval.finalstatus || "")
-          .trim()
-          .toUpperCase(),
-      )
-    ) {
-      await rollback(client, transactionStarted);
-
-      transactionStarted = false;
-
-      return fail(
-        `This CAPEX record is already ${String(
-          approval.finalstatus,
-        ).toLowerCase()}.`,
-        400,
-      );
-    }
-
-    // ============================================================
-    // 14. Find current pending stage
+    // 13. FIND CURRENT STAGE
     //
-    // Example:
+    // IMPORTANT:
     //
-    // GM      = Approved
-    // CEO     = Pending
-    // OWNER   = Pending
+    // APPROVED  -> skip
+    // PENDING   -> current
+    // RETURNED  -> current
+    // REJECTED  -> current
     //
-    // currentIndex = CEO
-    // currentRole  = CEO
+    // This means:
+    //
+    // GM REJECTED
+    // CEO PENDING
+    //
+    // GM is current again and can APPROVE.
     // ============================================================
 
     const currentIndex = stages.findIndex(
-      (stage) => !["APPROVED"].includes(stage.status),
+      (stage) => stage.status !== "APPROVED",
     );
 
     // ============================================================
-    // 15. All stages approved
+    // 14. ALL APPROVED
     // ============================================================
 
     if (currentIndex === -1) {
@@ -1942,7 +1879,7 @@ const processCapexApproval = async (data) => {
     const currentStatus = currentStage.status;
 
     // ============================================================
-    // 16. Find user's own approval stage
+    // 15. FIND USER'S STAGE
     // ============================================================
 
     const userStageIndex = stages.findIndex(
@@ -1965,54 +1902,68 @@ const processCapexApproval = async (data) => {
     const userStatus = userStage.status;
 
     // ============================================================
-    // 17. Determine whether user can perform action
+    // 16. CHECK PERMISSION
     //
-    // RULE:
+    // RULES
     //
-    // A. Current pending role can perform APPROVE/REJECT/RETURN
+    // ------------------------------------------------------------
+    // CASE 1:
+    // Current role can APPROVE / REJECT / RETURN
     //
-    // B. Previous APPROVED role can ALSO perform
-    //    REJECT/RETURN while next stage is PENDING.
+    // Pending:
+    // GM -> APPROVE
+    // GM -> REJECT
+    // GM -> RETURN
     //
-    // Example:
+    // ------------------------------------------------------------
+    // CASE 2:
+    // Rejected current role can APPROVE again
+    //
+    // GM REJECTED
+    // ->
+    // GM APPROVE
+    //
+    // ------------------------------------------------------------
+    // CASE 3:
+    // Previous APPROVED role can REJECT / RETURN
+    // while next role is PENDING.
     //
     // GM APPROVED
     // CEO PENDING
     //
-    // GM => APPROVE  ❌
-    // GM => REJECT   ✅
-    // GM => RETURN   ✅
+    // GM:
+    // APPROVE  -> NO
+    // REJECT   -> YES
+    // RETURN   -> YES
     //
-    // CEO => APPROVE  ✅
-    // CEO => REJECT   ✅
-    // CEO => RETURN   ✅
+    // CEO:
+    // APPROVE  -> YES
+    // REJECT   -> YES
+    // RETURN   -> YES
     // ============================================================
 
     let canPerformAction = false;
 
     // ------------------------------------------------------------
     // CASE 1:
-    // User is the current pending stage
+    // USER IS CURRENT STAGE
+    //
+    // PENDING / RETURNED / REJECTED
     // ------------------------------------------------------------
 
     if (
       userStageIndex === currentIndex &&
-      ["PENDING", "RETURNED"].includes(userStatus)
+      ["PENDING", "RETURNED", "REJECTED"].includes(userStatus)
     ) {
       canPerformAction = true;
     }
 
     // ------------------------------------------------------------
     // CASE 2:
-    // User is previous approved stage
+    // PREVIOUS APPROVED STAGE
     //
-    // User can REJECT / RETURN while next stage is pending.
-    //
-    // GM Approved -> CEO Pending
-    // GM can Reject/Return
-    //
-    // CEO Approved -> OWNER Pending
-    // CEO can Reject/Return
+    // Can only REJECT / RETURN
+    // while next stage is pending.
     // ------------------------------------------------------------
 
     const nextStage = stages[userStageIndex + 1];
@@ -2028,7 +1979,7 @@ const processCapexApproval = async (data) => {
     }
 
     // ============================================================
-    // 18. Permission denied
+    // 17. PERMISSION DENIED
     // ============================================================
 
     if (!canPerformAction) {
@@ -2040,39 +1991,13 @@ const processCapexApproval = async (data) => {
     }
 
     // ============================================================
-    // IMPORTANT:
-    //
-    // Action role is user's role, NOT currentRole.
-    //
-    // Example:
-    //
-    // GM Approved
-    // CEO Pending
-    // GM Reject
-    //
-    // We must update GM column, NOT CEO column.
-    // ============================================================
-
-    const actionRole = approverRole;
-
-    // ============================================================
-    // 19. Convert action to DB status
-    // ============================================================
-
-    const newStatus =
-      action === "APPROVE"
-        ? "Approved"
-        : action === "REJECT"
-          ? "Rejected"
-          : "Returned";
-
-    // ============================================================
-    // 20. Update role status helper
+    // 18. UPDATE ROLE APPROVAL HELPER
     // ============================================================
 
     const updateRoleApproval = async (role, status, userId, roleRemarks) => {
       let query = "";
-      let params = [
+
+      const params = [
         status,
         userId,
         roleRemarks || null,
@@ -2136,14 +2061,9 @@ const processCapexApproval = async (data) => {
     };
 
     // ============================================================
-    // 21. APPROVE
+    // 19. APPROVE
     //
-    // Only CURRENT stage can APPROVE.
-    //
-    // GM Approved -> CEO Pending
-    // GM cannot approve again.
-    //
-    // CEO can approve.
+    // APPROVE ONLY CURRENT STAGE
     // ============================================================
 
     if (action === "APPROVE") {
@@ -2159,19 +2079,19 @@ const processCapexApproval = async (data) => {
       }
 
       // ----------------------------------------------------------
-      // Update current user's stage
+      // Update current role
       // ----------------------------------------------------------
 
-      await updateRoleApproval(actionRole, "Approved", data.UserID, remarks);
+      await updateRoleApproval(approverRole, "Approved", data.UserID, remarks);
 
       // ----------------------------------------------------------
-      // Check next stage
+      // Find next stage
       // ----------------------------------------------------------
 
       const followingStage = stages[currentIndex + 1];
 
       // ----------------------------------------------------------
-      // More approval pending
+      // NEXT APPROVAL EXISTS
       // ----------------------------------------------------------
 
       if (followingStage) {
@@ -2198,22 +2118,22 @@ const processCapexApproval = async (data) => {
 
           message: "CAPEX approved successfully.",
 
-          data: {
-            CapexID: Number(capex.capexid),
+          // data: {
+          //   CapexID: Number(capex.capexid),
 
-            CapexNumber: Number(capex.capexnumber),
+          //   CapexNumber: Number(capex.capexnumber),
 
-            CurrentStatus: "Pending",
+          //   CurrentStatus: "Pending",
 
-            CurrentApprovalRole: followingStage.role,
+          //   CurrentApprovalRole: followingStage.role,
 
-            Action: "APPROVE",
-          },
+          //   Action: "APPROVE",
+          // },
         };
       }
 
       // ----------------------------------------------------------
-      // No next stage = FINAL APPROVAL
+      // FINAL APPROVAL
       // ----------------------------------------------------------
 
       await client.query(
@@ -2239,39 +2159,43 @@ const processCapexApproval = async (data) => {
 
         message: "CAPEX finally approved successfully.",
 
-        data: {
-          CapexID: Number(capex.capexid),
+        // data: {
+        //   CapexID: Number(capex.capexid),
 
-          CapexNumber: Number(capex.capexnumber),
+        //   CapexNumber: Number(capex.capexnumber),
 
-          CurrentStatus: "Approved",
+        //   CurrentStatus: "Approved",
 
-          CurrentApprovalRole: null,
+        //   CurrentApprovalRole: null,
 
-          Action: "APPROVE",
-        },
+        //   Action: "APPROVE",
+        // },
       };
     }
 
     // ============================================================
-    // 22. REJECT
+    // 20. REJECT
     //
-    // Current pending role can reject.
+    // Current stage can reject.
     //
-    // Previous approved role can ALSO reject while
-    // next stage is pending.
+    // Previous approved stage can also reject
+    // while next stage is pending.
     //
     // Example:
     //
-    // GM Approved
-    // CEO Pending
+    // GM APPROVED
+    // CEO PENDING
     //
-    // GM Reject => GM becomes Rejected
-    // FinalStatus = Rejected
+    // GM REJECT
+    //
+    // GM -> REJECTED
+    // FinalStatus -> REJECTED
+    //
+    // Later GM can APPROVE again.
     // ============================================================
 
     if (action === "REJECT") {
-      await updateRoleApproval(actionRole, "Rejected", data.UserID, remarks);
+      await updateRoleApproval(approverRole, "Rejected", data.UserID, remarks);
 
       await client.query(
         `
@@ -2296,42 +2220,40 @@ const processCapexApproval = async (data) => {
 
         message: "CAPEX rejected successfully.",
 
-        data: {
-          CapexID: Number(capex.capexid),
+        // data: {
+        //   CapexID: Number(capex.capexid),
 
-          CapexNumber: Number(capex.capexnumber),
+        //   CapexNumber: Number(capex.capexnumber),
 
-          CurrentStatus: "Rejected",
+        //   CurrentStatus: "Rejected",
 
-          CurrentApprovalRole: null,
+        //   CurrentApprovalRole: approverRole,
 
-          Action: "REJECT",
-        },
+        //   Action: "REJECT",
+        // },
       };
     }
 
     // ============================================================
-    // 23. RETURN
-    //
-    // If current stage returns:
-    //
-    // CEO Pending -> CEO Returned
-    //
-    // If previous approved stage returns:
-    //
-    // GM Approved -> CEO Pending
-    // GM Return
-    //
-    // GM becomes Returned
-    // Then GM becomes current stage again.
+    // 21. RETURN
     // ============================================================
 
     if (action === "RETURN") {
-      await updateRoleApproval(actionRole, "Returned", data.UserID, remarks);
+      // ----------------------------------------------------------
+      // If previous approved role returns
+      //
+      // Example:
+      //
+      // GM APPROVED
+      // CEO PENDING
+      //
+      // GM RETURN
+      //
+      // GM becomes RETURNED
+      // GM becomes current stage
+      // ----------------------------------------------------------
 
-      // ----------------------------------------------------------
-      // Reset FinalStatus
-      // ----------------------------------------------------------
+      await updateRoleApproval(approverRole, "Returned", data.UserID, remarks);
 
       await client.query(
         `
@@ -2356,22 +2278,22 @@ const processCapexApproval = async (data) => {
 
         message: "CAPEX returned successfully.",
 
-        data: {
-          CapexID: Number(capex.capexid),
+        // data: {
+        //   CapexID: Number(capex.capexid),
 
-          CapexNumber: Number(capex.capexnumber),
+        //   CapexNumber: Number(capex.capexnumber),
 
-          CurrentStatus: "Returned",
+        //   CurrentStatus: "Returned",
 
-          CurrentApprovalRole: actionRole,
+        //   CurrentApprovalRole: approverRole,
 
-          Action: "RETURN",
-        },
+        //   Action: "RETURN",
+        // },
       };
     }
 
     // ============================================================
-    // Should never reach here
+    // 22. FALLBACK
     // ============================================================
 
     await rollback(client, transactionStarted);
@@ -2397,7 +2319,8 @@ const processCapexApproval = async (data) => {
     }
   }
 };
-// ============================================================ Report SQL
+
+// ============================================================ Report SQL (Summary and other reports Helpers)
 // PostgreSQL derives effective status and aggregates authorized CAPEX records.
 const REPORT_DATA_CTE = `
   WITH capex_data AS
@@ -2407,161 +2330,239 @@ const REPORT_DATA_CTE = `
       cm.OrganizationID,
       cm.Department,
       COALESCE(cm.Total, 0)::numeric AS Total,
+
       CASE
-        WHEN cm.IsVoid = TRUE THEN 'Void'
-        WHEN COALESCE(approval_state.HasRejected, FALSE) THEN 'Rejected'
-        WHEN COALESCE(approval_state.HasReturned, FALSE) THEN 'Returned'
-        WHEN approval_state.ApprovalCount > 0
-          AND COALESCE(approval_state.AllApproved, FALSE) THEN 'Approved'
+
+        -- ====================================================
+        -- 1. VOID
+        -- ====================================================
+        WHEN cm.IsVoid = TRUE
+          THEN 'Void'
+
+        -- ====================================================
+        -- 2. REJECTED
+        -- ====================================================
+        WHEN
+          UPPER(COALESCE(ca.GMStatus, '')) = 'REJECTED'
+          OR UPPER(COALESCE(ca.CEOStatus, '')) = 'REJECTED'
+          OR UPPER(COALESCE(ca.OwnerStatus, '')) = 'REJECTED'
+          OR UPPER(COALESCE(ca.FinalStatus, '')) = 'REJECTED'
+        THEN 'Rejected'
+
+        -- ====================================================
+        -- 3. RETURNED
+        -- ====================================================
+        WHEN
+          UPPER(COALESCE(ca.GMStatus, '')) = 'RETURNED'
+          OR UPPER(COALESCE(ca.CEOStatus, '')) = 'RETURNED'
+          OR UPPER(COALESCE(ca.OwnerStatus, '')) = 'RETURNED'
+          OR UPPER(COALESCE(ca.FinalStatus, '')) = 'RETURNED'
+        THEN 'Returned'
+
+        -- ====================================================
+        -- 4. FINALLY APPROVED
+        -- ====================================================
+        WHEN
+          UPPER(COALESCE(ca.GMStatus, '')) = 'APPROVED'
+          AND UPPER(COALESCE(ca.CEOStatus, '')) = 'APPROVED'
+          AND UPPER(COALESCE(ca.OwnerStatus, '')) = 'APPROVED'
+        THEN 'Approved'
+
+        -- ====================================================
+        -- 5. OTHERWISE PENDING
+        -- ====================================================
         ELSE 'Pending'
+
       END AS Status
+
     FROM Capex_Master cm
-    LEFT JOIN LATERAL
-    (
-      SELECT
-        COUNT(*)::integer AS ApprovalCount,
-        BOOL_OR(UPPER(COALESCE(ca.Status, '')) = 'REJECTED') AS HasRejected,
-        BOOL_OR(UPPER(COALESCE(ca.Status, '')) = 'RETURNED') AS HasReturned,
-        BOOL_AND(UPPER(COALESCE(ca.Status, '')) = 'APPROVED') AS AllApproved
-      FROM Capex_Approval ca
-      WHERE ca.CapexID = cm.CapexID
-        AND ca.IsDeleted = FALSE
-    ) approval_state ON TRUE
+
+    LEFT JOIN Capex_Approval ca
+      ON ca.CapexID = cm.CapexID
+      AND ca.IsDeleted = FALSE
+
     WHERE cm.IsDeleted = FALSE
-      AND EXISTS
-      (
-        SELECT 1
-        FROM user_org_mapping uom
-        INNER JOIN user_master um
-          ON um.UserID = uom.UserID
-         AND um.IsActive = TRUE
-         AND um.IsDeleted = FALSE
-         AND COALESCE(um.IsLocked, FALSE) = FALSE
-        INNER JOIN Organization_Master om
-          ON om.OrganizationID = uom.OrganizationID
-         AND om.IsActive = TRUE
-         AND om.IsDeleted = FALSE
-         AND om.ActivationStatus = TRUE
-        WHERE uom.UserID = $1
-          AND uom.OrganizationID = cm.OrganizationID
-          AND uom.IsActive = TRUE
-          AND uom.IsDeleted = FALSE
+
+      -- ====================================================
+      -- OPTIONAL ORGANIZATION FILTER
+      --
+      -- $1 = NULL
+      --     => ALL organizations
+      --
+      -- $1 = 10
+      --     => ONLY organization 10
+      -- ====================================================
+      AND (
+        $1::bigint IS NULL
+        OR cm.OrganizationID = $1::bigint
       )
-      AND ($2::bigint IS NULL OR cm.OrganizationID = $2)
-      AND ($3::text IS NULL OR LOWER(cm.Department) = LOWER($3))
-      AND ($5::date IS NULL OR cm.CreatedDate >= $5::date)
-      AND ($6::date IS NULL OR cm.CreatedDate < ($6::date + INTERVAL '1 day'))
-  ),
-  filtered_capex AS
-  (
-    SELECT *
-    FROM capex_data
-    WHERE $4::text IS NULL OR UPPER(Status) = UPPER($4)
   )
 `;
-
 // Keep parameter positions identical for every report query.
 const reportParameters = (data) => {
   const filters = data.Filters || {};
+
   return [
-    data.UserID,
     filters.OrganizationID ?? null,
-    filters.Department ?? null,
-    filters.Status ?? null,
-    filters.FromDate ?? null,
-    filters.ToDate ?? null,
   ];
 };
-
 // Read/report failures return synchronously; they are not background-retried.
 const reportFailure = (error, reportName) => {
   console.error(`${reportName} Error:`, error.message);
-  return fail(`Unable to generate ${reportName} at this time.`, 503);
-};
 
+  return fail(
+    `Unable to generate ${reportName} at this time.`,
+    503
+  );
+};
 // ============================================================ Summary Report
 const getCapexSummaryReport = async (data) => {
   try {
+console.log("Received Filters:", JSON.stringify(data.Filters));
+    console.log("Query params:", reportParameters(data));
     const result = await pool.query(
-      `${REPORT_DATA_CTE}
-       SELECT
-         COUNT(*)::bigint AS TotalCapex,
-         COALESCE(SUM(Total), 0) AS TotalAmount,
-         COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
-         COALESCE(SUM(Total) FILTER (WHERE Status = 'Pending'), 0) AS PendingAmount,
-         COUNT(*) FILTER (WHERE Status = 'Approved')::bigint AS ApprovedCount,
-         COALESCE(SUM(Total) FILTER (WHERE Status = 'Approved'), 0) AS ApprovedAmount,
-         COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
-         COALESCE(SUM(Total) FILTER (WHERE Status = 'Rejected'), 0) AS RejectedAmount,
-         COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount,
-         COALESCE(SUM(Total) FILTER (WHERE Status = 'Returned'), 0) AS ReturnedAmount,
-         COUNT(*) FILTER (WHERE Status = 'Void')::bigint AS VoidCount,
-         COALESCE(SUM(Total) FILTER (WHERE Status = 'Void'), 0) AS VoidAmount
-       FROM filtered_capex;`,
-      reportParameters(data),
+      `
+      ${REPORT_DATA_CTE}
+
+      SELECT
+
+        -- ====================================================
+        -- TOTAL
+        -- ====================================================
+
+        COUNT(*)::bigint AS TotalCapex,
+
+        COALESCE(
+          SUM(Total),
+          0
+        ) AS TotalAmount,
+
+
+        -- ====================================================
+        -- PENDING
+        -- ====================================================
+
+        COUNT(*) FILTER (
+          WHERE Status = 'Pending'
+        )::bigint AS PendingCount,
+
+        COALESCE(
+          SUM(Total) FILTER (
+            WHERE Status = 'Pending'
+          ),
+          0
+        ) AS PendingAmount,
+
+
+        -- ====================================================
+        -- APPROVED
+        -- ====================================================
+
+        COUNT(*) FILTER (
+          WHERE Status = 'Approved'
+        )::bigint AS ApprovedCount,
+
+        COALESCE(
+          SUM(Total) FILTER (
+            WHERE Status = 'Approved'
+          ),
+          0
+        ) AS ApprovedAmount,
+
+
+        -- ====================================================
+        -- REJECTED
+        -- ====================================================
+
+        COUNT(*) FILTER (
+          WHERE Status = 'Rejected'
+        )::bigint AS RejectedCount,
+
+        COALESCE(
+          SUM(Total) FILTER (
+            WHERE Status = 'Rejected'
+          ),
+          0
+        ) AS RejectedAmount,
+
+
+        -- ====================================================
+        -- RETURNED
+        -- ====================================================
+
+        COUNT(*) FILTER (
+          WHERE Status = 'Returned'
+        )::bigint AS ReturnedCount,
+
+        COALESCE(
+          SUM(Total) FILTER (
+            WHERE Status = 'Returned'
+          ),
+          0
+        ) AS ReturnedAmount,
+
+
+        -- ====================================================
+        -- VOID
+        -- ====================================================
+
+        COUNT(*) FILTER (
+          WHERE Status = 'Void'
+        )::bigint AS VoidCount,
+
+        COALESCE(
+          SUM(Total) FILTER (
+            WHERE Status = 'Void'
+          ),
+          0
+        ) AS VoidAmount
+
+      FROM capex_data;
+      `,
+
+      reportParameters(data)
     );
 
+
     const row = result.rows[0];
+
+
     return {
       success: true,
+
       message: "CAPEX summary report fetched successfully.",
+
       data: {
         TotalCapex: Number(row.totalcapex),
         TotalAmount: Number(row.totalamount),
+
         PendingCount: Number(row.pendingcount),
         PendingAmount: Number(row.pendingamount),
+
         ApprovedCount: Number(row.approvedcount),
         ApprovedAmount: Number(row.approvedamount),
+
         RejectedCount: Number(row.rejectedcount),
         RejectedAmount: Number(row.rejectedamount),
+
         ReturnedCount: Number(row.returnedcount),
         ReturnedAmount: Number(row.returnedamount),
+
         VoidCount: Number(row.voidcount),
         VoidAmount: Number(row.voidamount),
       },
     };
-  } catch (error) {
-    return reportFailure(error, "CAPEX summary report");
-  }
-};
 
-// ============================================================ Status Report
-const getCapexStatusReport = async (data) => {
-  try {
-    const result = await pool.query(
-      `${REPORT_DATA_CTE}
-       SELECT
-         Status,
-         COUNT(*)::bigint AS Count,
-         COALESCE(SUM(Total), 0) AS TotalAmount
-       FROM filtered_capex
-       GROUP BY Status
-       ORDER BY
-         CASE Status
-           WHEN 'Pending' THEN 1
-           WHEN 'Approved' THEN 2
-           WHEN 'Rejected' THEN 3
-           WHEN 'Returned' THEN 4
-           WHEN 'Void' THEN 5
-           ELSE 6
-         END;`,
-      reportParameters(data),
+  } catch (error) {
+
+    return reportFailure(
+      error,
+      "CAPEX summary report"
     );
 
-    return {
-      success: true,
-      message: "CAPEX status report fetched successfully.",
-      data: result.rows.map((row) => ({
-        Status: row.status,
-        Count: Number(row.count),
-        TotalAmount: Number(row.totalamount),
-      })),
-    };
-  } catch (error) {
-    return reportFailure(error, "CAPEX status report");
   }
 };
-
+// ===========================================================================(Department and Organization Reports Helpers)
 // Normalize grouped PostgreSQL results into the public API response shape.
 const groupedReportRows = (rows, groupField) =>
   rows.map((row) => ({
@@ -2576,7 +2577,6 @@ const groupedReportRows = (rows, groupField) =>
     RejectedCount: Number(row.rejectedcount),
     ReturnedCount: Number(row.returnedcount),
   }));
-
 // ============================================================ Department Report
 const getCapexDepartmentReport = async (data) => {
   try {
@@ -2590,7 +2590,7 @@ const getCapexDepartmentReport = async (data) => {
          COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
          COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
          COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount
-       FROM filtered_capex
+       FROM capex_data
        GROUP BY COALESCE(Department, 'Unspecified')
        ORDER BY COALESCE(Department, 'Unspecified') ASC;`,
       reportParameters(data),
@@ -2605,33 +2605,608 @@ const getCapexDepartmentReport = async (data) => {
     return reportFailure(error, "CAPEX department report");
   }
 };
-
 // ============================================================ Organization Report
 const getCapexOrganizationReport = async (data) => {
   try {
     const result = await pool.query(
       `${REPORT_DATA_CTE}
        SELECT
-         OrganizationID,
+         cm.OrganizationID,
+         COALESCE(om.ShortName, 'Unspecified') AS ShortName,
+
          COUNT(*)::bigint AS Count,
-         COALESCE(SUM(Total), 0) AS TotalAmount,
-         COUNT(*) FILTER (WHERE Status = 'Approved')::bigint AS ApprovedCount,
-         COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
-         COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
-         COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount
-       FROM filtered_capex
-       GROUP BY OrganizationID
-       ORDER BY OrganizationID ASC;`,
+
+         COALESCE(SUM(cm.Total), 0) AS TotalAmount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Approved'
+         )::bigint AS ApprovedCount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Pending'
+         )::bigint AS PendingCount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Rejected'
+         )::bigint AS RejectedCount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Returned'
+         )::bigint AS ReturnedCount
+
+       FROM capex_data cm
+
+       LEFT JOIN Organization_Master om
+         ON om.OrganizationID = cm.OrganizationID
+         AND om.IsDeleted = FALSE
+
+       GROUP BY
+         cm.OrganizationID,
+         om.ShortName
+
+       ORDER BY
+         cm.OrganizationID ASC;`,
       reportParameters(data),
     );
 
     return {
       success: true,
       message: "CAPEX organization report fetched successfully.",
-      data: groupedReportRows(result.rows, "OrganizationID"),
+      data: result.rows.map((row) => ({
+        OrganizationID: Number(row.organizationid),
+        ShortName: row.shortname,
+        Count: Number(row.count),
+        TotalAmount: Number(row.totalamount),
+        ApprovedCount: Number(row.approvedcount),
+        PendingCount: Number(row.pendingcount),
+        RejectedCount: Number(row.rejectedcount),
+        ReturnedCount: Number(row.returnedcount),
+      })),
     };
   } catch (error) {
     return reportFailure(error, "CAPEX organization report");
+  }
+};
+
+// ============================================================ Get Approval Config
+const getApprovalConfig = async (data) => {
+  try {
+    const { OrganizationID } = data;
+
+    let query = `
+      SELECT
+        CapexApprovalConfigID,
+        OrganizationID,
+        ApprovalLevel,
+        ApprovalRole,
+        ApprovalOrder,
+        IsMandatory,
+        CreatedBy,
+        CreatedDate,
+        ModifiedBy,
+        ModifiedDate
+      FROM Capex_Approval_Config
+      WHERE IsDeleted = FALSE
+    `;
+
+    const params = [];
+
+    if (OrganizationID !== null && OrganizationID !== undefined) {
+      params.push(OrganizationID);
+
+      query += `
+        AND OrganizationID = $${params.length}
+      `;
+    }
+
+    query += `
+      ORDER BY
+        OrganizationID ASC,
+        ApprovalOrder ASC,
+        ApprovalLevel ASC,
+        CapexApprovalConfigID ASC;
+    `;
+
+    const result = await pool.query(query, params);
+
+    return {
+      success: true,
+      message: "CAPEX approval configuration fetched successfully.",
+      data: result.rows.map((row) => ({
+        CapexApprovalConfigID: Number(row.capexapprovalconfigid),
+        OrganizationID: Number(row.organizationid),
+        ApprovalLevel: Number(row.approvallevel),
+        ApprovalRole: row.approvalrole,
+        ApprovalOrder: Number(row.approvalorder),
+        IsMandatory: row.ismandatory,
+        CreatedBy:
+          row.createdby == null ? null : Number(row.createdby),
+        CreatedDate: row.createddate,
+        ModifiedBy:
+          row.modifiedby == null ? null : Number(row.modifiedby),
+        ModifiedDate: row.modifieddate,
+      })),
+    };
+  } catch (error) {
+    console.error("Get CAPEX Approval Config Error:", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
+
+    return fail(
+      "Unable to fetch CAPEX approval configuration at this time.",
+      500
+    );
+  }
+};
+// ============================================================Create Approval Config
+const createApprovalConfig = async (data) => {
+  let client;
+  let transactionStarted = false;
+
+  try {
+    console.log("SAVE CAPEX DATA =>", JSON.stringify(data, null, 2));
+
+    const OrganizationID = Number(data.OrganizationID);
+
+    const approvals = Array.isArray(data.Approvals)
+      ? data.Approvals
+      : [];
+
+    if (!Number.isInteger(OrganizationID) || OrganizationID <= 0) {
+      return fail("OrganizationID is required.", 400);
+    }
+
+    if (approvals.length === 0) {
+      return fail(
+        "At least one approval configuration is required.",
+        400
+      );
+    }
+
+    // ============================================================
+    // NORMALIZE + VALIDATE
+    // ============================================================
+
+    const normalizedApprovals = approvals.map((approval) => ({
+      ApprovalLevel: Number(approval.ApprovalLevel),
+
+      ApprovalRole: String(approval.ApprovalRole || "")
+        .trim()
+        .toUpperCase(),
+
+      ApprovalOrder: Number(approval.ApprovalOrder),
+
+      IsMandatory:
+        approval.IsMandatory === undefined
+          ? true
+          : Boolean(approval.IsMandatory),
+    }));
+
+    const levels = new Set();
+    const roles = new Set();
+
+    for (const approval of normalizedApprovals) {
+      const {
+        ApprovalLevel,
+        ApprovalRole,
+        ApprovalOrder,
+      } = approval;
+
+      if (
+        !Number.isInteger(ApprovalLevel) ||
+        ApprovalLevel < 1
+      ) {
+        return fail(
+          "ApprovalLevel must be a positive integer.",
+          400
+        );
+      }
+
+      if (
+        !Number.isInteger(ApprovalOrder) ||
+        ApprovalOrder < 1
+      ) {
+        return fail(
+          "ApprovalOrder must be a positive integer.",
+          400
+        );
+      }
+
+      if (!APPROVAL_ROLES.has(ApprovalRole)) {
+        return fail(
+          "ApprovalRole must be GM, CEO, or OWNER.",
+          400
+        );
+      }
+
+      if (levels.has(ApprovalLevel)) {
+        return fail(
+          `Approval level ${ApprovalLevel} is duplicated in request.`,
+          409
+        );
+      }
+
+      if (roles.has(ApprovalRole)) {
+        return fail(
+          `${ApprovalRole} approval stage is duplicated in request.`,
+          409
+        );
+      }
+
+      levels.add(ApprovalLevel);
+      roles.add(ApprovalRole);
+    }
+
+    // ============================================================
+    // TRANSACTION
+    // ============================================================
+
+    client = await pool.connect();
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    // ============================================================
+    // GET ALL EXISTING CONFIGS
+    // Active + Deleted
+    // ============================================================
+
+    const existingResult = await client.query(
+      `
+      SELECT
+        CapexApprovalConfigID AS "CapexApprovalConfigID",
+        OrganizationID AS "OrganizationID",
+        ApprovalLevel AS "ApprovalLevel",
+        ApprovalRole AS "ApprovalRole",
+        ApprovalOrder AS "ApprovalOrder",
+        IsMandatory AS "IsMandatory",
+        IsDeleted AS "IsDeleted"
+      FROM Capex_Approval_Config
+      WHERE OrganizationID = $1
+      ORDER BY ApprovalLevel ASC, CapexApprovalConfigID ASC
+      FOR UPDATE;
+      `,
+      [OrganizationID]
+    );
+
+    const existingConfigs = existingResult.rows;
+
+    console.log(
+      "EXISTING CAPEX CONFIGS =>",
+      JSON.stringify(existingConfigs, null, 2)
+    );
+
+    // ============================================================
+    // MAP BY LEVEL
+    // ============================================================
+
+    const existingByLevel = new Map();
+
+    for (const row of existingConfigs) {
+      existingByLevel.set(
+        Number(row.ApprovalLevel),
+        row
+      );
+    }
+
+    const processedLevels = new Set();
+
+    const inserted = [];
+    const updated = [];
+    const restored = [];
+    const deleted = [];
+
+    // ============================================================
+    // INSERT / UPDATE / RESTORE
+    // ============================================================
+
+    for (const approval of normalizedApprovals) {
+      const {
+        ApprovalLevel,
+        ApprovalRole,
+        ApprovalOrder,
+        IsMandatory,
+      } = approval;
+
+      const existing = existingByLevel.get(ApprovalLevel);
+
+      // ==========================================================
+      // EXISTING RECORD
+      // ==========================================================
+
+      if (existing) {
+        const ConfigID = Number(
+          existing.CapexApprovalConfigID
+        );
+
+        if (!Number.isInteger(ConfigID)) {
+          throw new Error(
+            `Invalid CapexApprovalConfigID: ${existing.CapexApprovalConfigID}`
+          );
+        }
+
+        // --------------------------------------------------------
+        // RESTORE SOFT DELETED RECORD
+        // --------------------------------------------------------
+
+        if (existing.IsDeleted === true) {
+          await client.query(
+            `
+            UPDATE Capex_Approval_Config
+            SET
+              ApprovalRole = $1,
+              ApprovalOrder = $2,
+              IsMandatory = $3,
+              IsDeleted = FALSE,
+              ModifiedBy = $4,
+              ModifiedDate = CURRENT_TIMESTAMP
+            WHERE CapexApprovalConfigID = $5
+              AND OrganizationID = $6;
+            `,
+            [
+              ApprovalRole,
+              ApprovalOrder,
+              IsMandatory,
+              data.UserID,
+              ConfigID,
+              OrganizationID,
+            ]
+          );
+
+          restored.push(ConfigID);
+        }
+
+        // --------------------------------------------------------
+        // NORMAL UPDATE
+        // --------------------------------------------------------
+
+        else {
+          await client.query(
+            `
+            UPDATE Capex_Approval_Config
+            SET
+              ApprovalRole = $1,
+              ApprovalOrder = $2,
+              IsMandatory = $3,
+              ModifiedBy = $4,
+              ModifiedDate = CURRENT_TIMESTAMP
+            WHERE CapexApprovalConfigID = $5
+              AND OrganizationID = $6
+              AND IsDeleted = FALSE;
+            `,
+            [
+              ApprovalRole,
+              ApprovalOrder,
+              IsMandatory,
+              data.UserID,
+              ConfigID,
+              OrganizationID,
+            ]
+          );
+
+          updated.push(ConfigID);
+        }
+      }
+
+      // ==========================================================
+      // NEW INSERT
+      // ==========================================================
+
+      else {
+        const result = await client.query(
+          `
+          INSERT INTO Capex_Approval_Config
+          (
+            OrganizationID,
+            ApprovalLevel,
+            ApprovalRole,
+            ApprovalOrder,
+            IsMandatory,
+            IsDeleted,
+            CreatedBy,
+            CreatedDate
+          )
+          VALUES
+          (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            FALSE,
+            $6,
+            CURRENT_TIMESTAMP
+          )
+          RETURNING CapexApprovalConfigID;
+          `,
+          [
+            OrganizationID,
+            ApprovalLevel,
+            ApprovalRole,
+            ApprovalOrder,
+            IsMandatory,
+            data.UserID,
+          ]
+        );
+
+        const ConfigID = Number(
+          result.rows[0].CapexApprovalConfigID
+        );
+
+        inserted.push(ConfigID);
+      }
+
+      processedLevels.add(ApprovalLevel);
+    }
+
+    // ============================================================
+    // SOFT DELETE
+    // DB ME HAI BUT REQUEST ME NAHI HAI
+    // ============================================================
+
+    for (const existing of existingConfigs) {
+      const level = Number(existing.ApprovalLevel);
+
+      if (
+        existing.IsDeleted === false &&
+        !processedLevels.has(level)
+      ) {
+        const ConfigID = Number(
+          existing.CapexApprovalConfigID
+        );
+
+        if (!Number.isInteger(ConfigID)) {
+          throw new Error(
+            `Invalid CapexApprovalConfigID: ${existing.CapexApprovalConfigID}`
+          );
+        }
+
+        await client.query(
+          `
+          UPDATE Capex_Approval_Config
+          SET
+            IsDeleted = TRUE,
+            ModifiedBy = $1,
+            ModifiedDate = CURRENT_TIMESTAMP
+          WHERE CapexApprovalConfigID = $2
+            AND OrganizationID = $3
+            AND IsDeleted = FALSE;
+          `,
+          [
+            data.UserID,
+            ConfigID,
+            OrganizationID,
+          ]
+        );
+
+        deleted.push(ConfigID);
+      }
+    }
+
+    // ============================================================
+    // COMMIT
+    // ============================================================
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+
+    return {
+      success: true,
+      message:
+        "CAPEX approval configuration saved successfully.",
+
+    };
+
+  } catch (error) {
+    if (client && transactionStarted) {
+      await client.query("ROLLBACK");
+    }
+
+    console.error(
+      "Save CAPEX Approval Config Error:",
+      error.message
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) return retryResponse;
+
+    if (error.code === "23505") {
+      return fail(
+        "CAPEX approval configuration already exists.",
+        409
+      );
+    }
+
+    if (error.code === "23503") {
+      return fail(
+        "Invalid organization or user.",
+        400
+      );
+    }
+
+    return fail(
+      "Unable to save CAPEX approval configuration at this time.",
+      500
+    );
+
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+};
+// ============================================================Delete Approval Config
+const deleteApprovalConfig = async (data) => {
+  let client;
+  let transactionStarted = false;
+
+  try {
+    const ConfigID = Number(data.CapexApprovalConfigID);
+
+    if (!ConfigID) {
+      return fail("CapexApprovalConfigID is required.", 400);
+    }
+
+    client = await pool.connect();
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    const result = await client.query(
+      `
+      UPDATE Capex_Approval_Config
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP,
+        ModifiedBy = $1,
+        ModifiedDate = CURRENT_TIMESTAMP
+      WHERE CapexApprovalConfigID = $2
+        AND IsDeleted = FALSE
+      RETURNING
+        CapexApprovalConfigID,
+        OrganizationID;
+      `,
+      [data.UserID, ConfigID],
+    );
+
+    if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+
+      return fail(
+        "CAPEX approval configuration not found.",
+        404,
+      );
+    }
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+
+    return {
+      success: true,
+      message: "CAPEX approval configuration deleted successfully.",
+    
+    };
+  } catch (error) {
+    if (client && transactionStarted) {
+      await client.query("ROLLBACK");
+    }
+
+    console.error("Delete CAPEX Approval Config Error:", error.message);
+
+    const retryResponse = retryableDatabaseResponse(error);
+    if (retryResponse) return retryResponse;
+
+    return fail(
+      "Unable to delete CAPEX approval configuration at this time.",
+      500,
+    );
+  } finally {
+    if (client) client.release();
   }
 };
 
@@ -2644,7 +3219,9 @@ module.exports = {
   deleteCapex,
   processCapexApproval,
   getCapexSummaryReport,
-  getCapexStatusReport,
   getCapexDepartmentReport,
   getCapexOrganizationReport,
+   getApprovalConfig,
+  createApprovalConfig,
+  deleteApprovalConfig,
 };

@@ -15,7 +15,6 @@ const isPositiveInteger = (value) => {
     && Number.isSafeInteger(Number(normalized))
     && Number(normalized) > 0;
 };
-
 const positiveNumber = (value, fieldName) => {
   const normalized = String(value ?? "").trim();
   const number = Number(normalized);
@@ -29,7 +28,6 @@ const positiveNumber = (value, fieldName) => {
 
   return number;
 };
-
 const requiredText = (value, fieldName) => {
   if (typeof value !== "string" || !value.trim()) {
     throw new AppError(
@@ -40,7 +38,6 @@ const requiredText = (value, fieldName) => {
 
   return value.trim();
 };
-
 // Read identity and role data only from the verified JWT payload.
 const authenticatedUser = (req) => {
   const userID = Number(req.user?.UserID);
@@ -58,7 +55,6 @@ const authenticatedUser = (req) => {
     LoginType: String(req.user?.LoginType || "").trim(),
   };
 };
-
 // Send CAPEX commands/queries through the shared RabbitMQ RPC producer.
 const sendQueueResponse = async (res, action, data) => {
   const response = await producer.sendMessage(
@@ -77,7 +73,6 @@ const sendQueueResponse = async (res, action, data) => {
 
   return res.status(STATUS_CODES.SUCCESS).json(response);
 };
-
 // Normalize RabbitMQ availability failures into the shared error format.
 const handleControllerError = (error, res) => {
   if (["Response Timeout", "RabbitMQ Channel Not Initialized"].includes(error.message)) {
@@ -169,7 +164,6 @@ exports.createCapex = async (req, res) => {
     return handleError(error, res);
   }
 };
-
 // ============================================================ Get All CAPEX
 exports.getAllCapex = async (req, res) => {
   try {
@@ -246,7 +240,6 @@ exports.getAllCapex = async (req, res) => {
     return handleControllerError(error, res);
   }
 };
-
 // ============================================================ Get CAPEX By ID
 exports.getCapexById = async (req, res) => {
   try {
@@ -274,7 +267,6 @@ const optionalText = (body, fieldName) => {
   if (value === null || String(value).trim() === "") return null;
   return String(value).trim();
 };
-
 const optionalBoolean = (body, fieldName) => {
   if (!Object.prototype.hasOwnProperty.call(body, fieldName)) return undefined;
   const value = body[fieldName];
@@ -287,7 +279,6 @@ const optionalBoolean = (body, fieldName) => {
     STATUS_CODES.BAD_REQUEST
   );
 };
-
 // Parse selected document IDs from JSON arrays or comma-separated form data.
 const parseDocumentIDs = (value) => {
   if (value === undefined || value === null || value === "") return [];
@@ -323,7 +314,6 @@ const parseDocumentIDs = (value) => {
 
   return [...new Set(documentIDs)];
 };
-
 // ============================================================ Update CAPEX
 exports.updateCapex = async (req, res) => {
   let uploadedDocuments = [];
@@ -599,7 +589,6 @@ exports.deleteCapex = async (req, res) => {
     return handleControllerError(error, res);
   }
 };
-
 // ============================================================ Approval Action
 exports.approveCapex = async (req, res) => {
   try {
@@ -676,107 +665,184 @@ exports.approveCapex = async (req, res) => {
 };
 
 // ============================================================ Report Helpers
-const validDate = (value) => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(parsed.getTime())
-    && parsed.toISOString().slice(0, 10) === value;
-};
-
-// Validate optional report filters without trusting organization access.
+// Validate report filters
 const reportFilters = (req) => {
-  const {
-    OrganizationID,
-    Department,
-    Status,
-    FromDate,
-    ToDate,
-  } = req.query || {};
+  const rawOrganizationID = req.query?.OrganizationID;
 
-  if (OrganizationID !== undefined && !isPositiveInteger(OrganizationID)) {
+  // ------------------------------------------------------------
+  // Missing OR empty OrganizationID
+  // => ALL accessible organizations
+  // ------------------------------------------------------------
+
+  if (
+    rawOrganizationID === undefined ||
+    rawOrganizationID === null ||
+    String(rawOrganizationID).trim() === ""
+  ) {
+    return {
+      OrganizationID: null,
+    };
+  }
+
+  // ------------------------------------------------------------
+  // OrganizationID provided
+  // => Must be a positive integer
+  // ------------------------------------------------------------
+
+  if (!isPositiveInteger(rawOrganizationID)) {
     throw new AppError(
       "Organization ID must be a positive integer",
       STATUS_CODES.BAD_REQUEST
     );
   }
 
-  const department = typeof Department === "string" && Department.trim()
-    ? Department.trim()
-    : null;
-  const status = typeof Status === "string" && Status.trim()
-    ? Status.trim().toUpperCase()
-    : null;
-  const allowedStatuses = ["PENDING", "APPROVED", "REJECTED", "RETURNED", "VOID"];
-
-  if (status && !allowedStatuses.includes(status)) {
-    throw new AppError(
-      "Status must be Pending, Approved, Rejected, Returned, or Void",
-      STATUS_CODES.BAD_REQUEST
-    );
-  }
-
-  for (const [fieldName, value] of [["FromDate", FromDate], ["ToDate", ToDate]]) {
-    if (value !== undefined && (!value || !validDate(String(value)))) {
-      throw new AppError(
-        `${fieldName} must be in YYYY-MM-DD format`,
-        STATUS_CODES.BAD_REQUEST
-      );
-    }
-  }
-
-  if (FromDate && ToDate && String(FromDate) > String(ToDate)) {
-    throw new AppError(
-      "FromDate cannot be later than ToDate",
-      STATUS_CODES.BAD_REQUEST
-    );
-  }
-
   return {
-    OrganizationID: OrganizationID === undefined ? null : Number(OrganizationID),
-    Department: department,
-    Status: status,
-    FromDate: FromDate ? String(FromDate) : null,
-    ToDate: ToDate ? String(ToDate) : null,
+    OrganizationID: Number(rawOrganizationID),
   };
 };
-
 // All reports use the same JWT context and RabbitMQ request flow.
 const getReport = async (req, res, action) => {
   try {
     const user = authenticatedUser(req);
-    return await sendQueueResponse(res, action, {
-      UserID: user.UserID,
-      Filters: reportFilters(req),
-    });
+
+   return await sendQueueResponse(res, action, {
+  Filters: reportFilters(req),
+});
+
   } catch (error) {
     return handleControllerError(error, res);
   }
 };
-
 // ============================================================ Summary Report
-exports.getCapexSummaryReport = (req, res) => getReport(
-  req,
-  res,
-  "GET_CAPEX_SUMMARY_REPORT"
-);
-
-// ============================================================ Status Report
-exports.getCapexStatusReport = (req, res) => getReport(
-  req,
-  res,
-  "GET_CAPEX_STATUS_REPORT"
-);
-
+exports.getCapexSummaryReport = (req, res) =>
+  getReport(
+    req,
+    res,
+    "GET_CAPEX_SUMMARY_REPORT"
+  );
 // ============================================================ Department Report
 exports.getCapexDepartmentReport = (req, res) => getReport(
   req,
   res,
   "GET_CAPEX_DEPARTMENT_REPORT"
 );
-
 // ============================================================ Organization Report
 exports.getCapexOrganizationReport = (req, res) => getReport(
   req,
   res,
   "GET_CAPEX_ORGANIZATION_REPORT"
 );
+
+// ============================================================CREATE CAPEX APPROVAL CONFIG
+exports.createCapexApprovalConfig = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      Approvals,
+    } = req.body || {};
+
+    if (!OrganizationID) {
+      throw new AppError(
+        "OrganizationID is required",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    if (!Array.isArray(Approvals) || Approvals.length === 0) {
+      throw new AppError(
+        "Approvals must be a non-empty array",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const formattedApprovals = Approvals.map((approval) => ({
+      ApprovalLevel: Number(approval.ApprovalLevel),
+
+      ApprovalRole: String(
+        approval.ApprovalRole || ""
+      )
+        .trim()
+        .toUpperCase(),
+
+      ApprovalOrder: Number(
+        approval.ApprovalOrder
+      ),
+
+      IsMandatory:
+        approval.IsMandatory === undefined
+          ? true
+          : Boolean(approval.IsMandatory),
+    }));
+
+    const user = authenticatedUser(req);
+
+    return await sendQueueResponse(
+      res,
+      "CREATE_CAPEX_APPROVAL_CONFIG",
+      {
+        ...user,
+        OrganizationID: Number(OrganizationID),
+        Approvals: formattedApprovals,
+      }
+    );
+
+  } catch (error) {
+    return handleControllerError(error, res);
+  }
+};
+// ============================================================GET ALL CAPEX APPROVAL CONFIG
+exports.getCapexApprovalConfig = async (req, res) => {
+  try {
+    let OrganizationID = null;
+
+    if (
+      req.query.OrganizationID !== undefined &&
+      req.query.OrganizationID !== null &&
+      String(req.query.OrganizationID).trim() !== ""
+    ) {
+      if (!isPositiveInteger(req.query.OrganizationID)) {
+        throw new AppError(
+          "Organization ID must be a positive integer",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+
+      OrganizationID = Number(req.query.OrganizationID);
+    }
+
+    const user = authenticatedUser(req);
+
+    return await sendQueueResponse(res, "GET_CAPEX_APPROVAL_CONFIG", {
+      ...user,
+      OrganizationID,
+    });
+  } catch (error) {
+    return handleControllerError(error, res);
+  }
+};
+// ============================================================DELETE CAPEX APPROVAL CONFIG
+exports.deleteCapexApprovalConfig = async (req, res) => {
+  try {
+    const { CapexApprovalConfigID } = req.body || {};
+
+    if (!isPositiveInteger(CapexApprovalConfigID)) {
+      throw new AppError(
+        "CAPEX Approval Config ID must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const user = authenticatedUser(req);
+
+    return await sendQueueResponse(
+      res,
+      "DELETE_CAPEX_APPROVAL_CONFIG",
+      {
+        ...user,
+        CapexApprovalConfigID: Number(CapexApprovalConfigID),
+      }
+    );
+  } catch (error) {
+    return handleControllerError(error, res);
+  }
+};

@@ -737,3 +737,240 @@ if (!canPerformAction) {
     }
   }
 };
+const createApprovalConfig = async (data) => {
+  let client;
+  let transactionStarted = false;
+
+  try {
+    const OrganizationID = Number(data.OrganizationID);
+
+    const approvals = Array.isArray(data.Approvals)
+      ? data.Approvals
+      : [];
+
+    if (!OrganizationID) {
+      return fail("OrganizationID is required.", 400);
+    }
+
+    if (approvals.length === 0) {
+      return fail("At least one approval configuration is required.", 400);
+    }
+
+    // ============================================================
+    // Validate all approval configurations FIRST
+    // ============================================================
+
+    for (const approval of approvals) {
+      const ApprovalLevel = Number(approval.ApprovalLevel);
+
+      const ApprovalOrder = Number(approval.ApprovalOrder);
+
+      const ApprovalRole = String(approval.ApprovalRole || "")
+        .trim()
+        .toUpperCase();
+
+      if (!Number.isInteger(ApprovalLevel) || ApprovalLevel < 1) {
+        return fail(
+          "ApprovalLevel must be a positive integer.",
+          400
+        );
+      }
+
+      if (!Number.isInteger(ApprovalOrder) || ApprovalOrder < 1) {
+        return fail(
+          "ApprovalOrder must be a positive integer.",
+          400
+        );
+      }
+
+      if (!APPROVAL_ROLES.has(ApprovalRole)) {
+        return fail(
+          "ApprovalRole must be GM, CEO, or OWNER.",
+          400
+        );
+      }
+    }
+
+    // ============================================================
+    // DB
+    // ============================================================
+
+    client = await pool.connect();
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    // ============================================================
+    // Insert GM + CEO
+    // ============================================================
+
+    const insertedApprovals = [];
+
+    for (const approval of approvals) {
+      const ApprovalLevel = Number(approval.ApprovalLevel);
+
+      const ApprovalOrder = Number(approval.ApprovalOrder);
+
+      const ApprovalRole = String(approval.ApprovalRole || "")
+        .trim()
+        .toUpperCase();
+
+      const IsMandatory =
+        approval.IsMandatory === undefined
+          ? IsMandatoryDefault
+          : Boolean(approval.IsMandatory);
+
+      // ============================================================
+      // Duplicate Level
+      // ============================================================
+
+      const duplicateLevel = await client.query(
+        `
+        SELECT CapexApprovalConfigID
+        FROM Capex_Approval_Config
+        WHERE OrganizationID = $1
+          AND ApprovalLevel = $2
+          AND IsDeleted = FALSE
+        LIMIT 1;
+        `,
+        [OrganizationID, ApprovalLevel]
+      );
+
+      if (duplicateLevel.rows.length > 0) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+
+        return fail(
+          `Approval level ${ApprovalLevel} already exists for this organization.`,
+          409
+        );
+      }
+
+      // ============================================================
+      // Duplicate Role
+      // ============================================================
+
+      const duplicateRole = await client.query(
+        `
+        SELECT CapexApprovalConfigID
+        FROM Capex_Approval_Config
+        WHERE OrganizationID = $1
+          AND UPPER(ApprovalRole) = $2
+          AND IsDeleted = FALSE
+        LIMIT 1;
+        `,
+        [OrganizationID, ApprovalRole]
+      );
+
+      if (duplicateRole.rows.length > 0) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+
+        return fail(
+          `${ApprovalRole} approval stage already exists for this organization.`,
+          409
+        );
+      }
+
+      // ============================================================
+      // INSERT
+      // ============================================================
+
+      const result = await client.query(
+        `
+        INSERT INTO Capex_Approval_Config
+        (
+          OrganizationID,
+          ApprovalLevel,
+          ApprovalRole,
+          ApprovalOrder,
+          IsMandatory,
+          IsDeleted,
+          CreatedBy,
+          CreatedDate
+        )
+        VALUES
+        (
+          $1, $2, $3, $4, $5, FALSE, $6, CURRENT_TIMESTAMP
+        )
+        RETURNING
+          CapexApprovalConfigID,
+          OrganizationID,
+          ApprovalLevel,
+          ApprovalRole,
+          ApprovalOrder,
+          IsMandatory,
+          CreatedBy,
+          CreatedDate;
+        `,
+        [
+          OrganizationID,
+          ApprovalLevel,
+          ApprovalRole,
+          ApprovalOrder,
+          IsMandatory,
+          data.UserID,
+        ]
+      );
+
+      const row = result.rows[0];
+
+      
+    }
+
+    // ============================================================
+    // COMMIT
+    // ============================================================
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+
+    return {
+      success: true,
+      message:
+        "CAPEX approval configurations created successfully.",
+     
+    };
+
+  } catch (error) {
+
+    if (client && transactionStarted) {
+      await client.query("ROLLBACK");
+    }
+
+    console.error(
+      "Create CAPEX Approval Config Error:",
+      error.message
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) return retryResponse;
+
+    if (error.code === "23505") {
+      return fail(
+        "CAPEX approval configuration already exists.",
+        409
+      );
+    }
+
+    if (error.code === "23503") {
+      return fail(
+        "Invalid organization or user.",
+        400
+      );
+    }
+
+    return fail(
+      "Unable to create CAPEX approval configuration at this time.",
+      500
+    );
+
+  } finally {
+
+    if (client) {
+      client.release();
+    }
+  }
+};

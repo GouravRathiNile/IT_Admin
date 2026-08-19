@@ -1,7 +1,6 @@
 const CapexService = require("../../services/CapexService/CapexService");
-const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
+const {retryableDatabaseResponse} = require("../../utils/retryableDatabaseError");
 
-// Dispatch RabbitMQ actions to the matching CAPEX service operation.
 const CapexHandler = async (message) => {
   try {
     switch (message.action) {
@@ -29,14 +28,22 @@ const CapexHandler = async (message) => {
       case "GET_CAPEX_SUMMARY_REPORT":
         return await CapexService.getCapexSummaryReport(message.data);
 
-      case "GET_CAPEX_STATUS_REPORT":
-        return await CapexService.getCapexStatusReport(message.data);
-
       case "GET_CAPEX_DEPARTMENT_REPORT":
         return await CapexService.getCapexDepartmentReport(message.data);
 
       case "GET_CAPEX_ORGANIZATION_REPORT":
         return await CapexService.getCapexOrganizationReport(message.data);
+
+      // ====================================================== // CAPEX APPROVAL CONFIG CRUD
+      case "CREATE_CAPEX_APPROVAL_CONFIG":
+        return await CapexService.createApprovalConfig(message.data);
+
+      case "GET_CAPEX_APPROVAL_CONFIG":
+        return await CapexService.getApprovalConfig(message.data);
+
+      case "DELETE_CAPEX_APPROVAL_CONFIG":
+        return await CapexService.deleteApprovalConfig(message.data);
+
 
       // Reject unknown queue actions instead of calling any service.
       default:
