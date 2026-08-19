@@ -5,7 +5,7 @@ const authenticateToken = require("../../middleware/authMiddleware");
 const { createUser,getAllUsers,getUserById,getUserDropdown,updateUser,deleteUser,getUserOrganizations, getUserProducts,getUserPersonalDetails,getAllUsersTabel,updateUserPersonalDetails,updateUserOrganizations,updateUserProducts } = require("../../controllers/ITAdminController/UserController");
 
 // ========================================= Create User
-router.post("/Create", authenticateToken, upload.single("ProfilePhoto"),createUser);
+router.post("/Create", authenticateToken, upload.single("ProfilePhoto"), createUser);
 // ========================================= Delete User
 router.delete("/Delete", authenticateToken, deleteUser);
 // ========================================= Get All Users
