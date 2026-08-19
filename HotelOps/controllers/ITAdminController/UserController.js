@@ -12,7 +12,9 @@ const UserService = require("../../services/ITAdminService/UserService");
 
 // ========================================= Create User
 exports.createUser = async (req, res) => {
+
   try {
+
     const {
       EmployeeCode,
       Username,
@@ -36,47 +38,64 @@ exports.createUser = async (req, res) => {
       Products,
     } = req.body;
 
+
     // =========================================
     // VALIDATION
     // =========================================
 
     if (!Username) {
+
       throw new AppError(
         "Username is required",
         STATUS_CODES.BAD_REQUEST
       );
+
     }
 
+
     if (!PasswordHash) {
+
       throw new AppError(
         "Password is required",
         STATUS_CODES.BAD_REQUEST
       );
+
     }
+
 
     const passwordRegex =
       /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$#!%*?&])[A-Za-z\d@$!#%*?&]{6,}$/;
 
+
     if (!passwordRegex.test(PasswordHash)) {
+
       throw new AppError(
         "Password must be 6+ characters with uppercase, lowercase, number & special character",
         STATUS_CODES.BAD_REQUEST
       );
+
     }
 
+
     if (!FullName) {
+
       throw new AppError(
         "Full Name is required",
         STATUS_CODES.BAD_REQUEST
       );
+
     }
 
+
     if (!LoginType) {
+
       throw new AppError(
         "Login Type is required",
         STATUS_CODES.BAD_REQUEST
       );
+
     }
+
 
     // =========================================
     // PROFILE PHOTO
@@ -85,25 +104,20 @@ exports.createUser = async (req, res) => {
     let ProfilePhoto = null;
 
     if (req.file) {
-      ProfilePhoto = await uploadToAzure(req.file);
+
+      ProfilePhoto =
+        await uploadToAzure(req.file);
+
     }
+
 
     // =========================================
     // SUPER ADMIN ACCESS
     // =========================================
 
-    // if (
-    //   LoginType === "SuperAdmin" &&
-    //   AllOrganizationAccess === undefined
-    // ) {
-    //   throw new AppError(
-    //     "AllOrganizationAccess is required for SuperAdmin",
-    //     STATUS_CODES.BAD_REQUEST
-    //   );
-    // }
-
     const normalizedAllOrganizationAccess =
       String(AllOrganizationAccess).toLowerCase() === "true";
+
 
     // =========================================
     // PARSE ORGANIZATIONS
@@ -112,18 +126,25 @@ exports.createUser = async (req, res) => {
     let organizationMappings = [];
 
     if (Organizations) {
+
       try {
+
         organizationMappings =
           typeof Organizations === "string"
             ? JSON.parse(Organizations)
             : Organizations;
+
       } catch (error) {
+
         throw new AppError(
           "Invalid Organizations JSON",
           STATUS_CODES.BAD_REQUEST
         );
+
       }
+
     }
+
 
     // =========================================
     // PARSE PRODUCTS
@@ -149,32 +170,8 @@ exports.createUser = async (req, res) => {
 
       }
 
-      if (!Array.isArray(productMappings)) {
-
-        throw new AppError(
-          "Products must be an array",
-          STATUS_CODES.BAD_REQUEST
-        );
-
-      }
-
-      // Only validate ProductID presence
-      for (const product of productMappings) {
-
-        if (
-          !product ||
-          !product.ProductID
-        ) {
-
-          throw new AppError(
-            "ProductID is required for every product",
-            STATUS_CODES.BAD_REQUEST
-          );
-
-        }
-
-      }
     }
+
 
     // =========================================
     // LOGIN TYPE VALIDATION
@@ -183,11 +180,14 @@ exports.createUser = async (req, res) => {
     if (
       !["SuperAdmin", "Organization", "Brand"].includes(LoginType)
     ) {
+
       throw new AppError(
         "LoginType must be SuperAdmin, Organization or Brand",
         STATUS_CODES.BAD_REQUEST
       );
+
     }
+
 
     // =========================================
     // SUPER ADMIN
@@ -195,38 +195,54 @@ exports.createUser = async (req, res) => {
 
     if (LoginType === "SuperAdmin") {
 
+      // ALL ORGANIZATIONS
+
       if (normalizedAllOrganizationAccess === true) {
 
         if (
           Array.isArray(organizationMappings) &&
           organizationMappings.length > 0
         ) {
+
           throw new AppError(
             "Organizations should not be provided when AllOrganizationAccess is true",
             STATUS_CODES.BAD_REQUEST
           );
+
         }
 
-      } else {
+      }
+
+      // SELECTED ORGANIZATIONS
+
+      else {
 
         if (
           !Array.isArray(organizationMappings) ||
           organizationMappings.length === 0
         ) {
+
           throw new AppError(
             "At least one organization is required for limited SuperAdmin access",
             STATUS_CODES.BAD_REQUEST
           );
+
         }
+
       }
 
+
       if (BrandID) {
+
         throw new AppError(
           "BrandID should not be provided for SuperAdmin",
           STATUS_CODES.BAD_REQUEST
         );
+
       }
+
     }
+
 
     // =========================================
     // ORGANIZATION
@@ -235,22 +251,18 @@ exports.createUser = async (req, res) => {
     if (LoginType === "Organization") {
 
       if (BrandID) {
+
         throw new AppError(
           "BrandID should not be provided for Organization login",
           STATUS_CODES.BAD_REQUEST
         );
+
       }
 
-      // if (
-      //   !Array.isArray(organizationMappings) ||
-      //   organizationMappings.length !== 1
-      // ) {
-      //   throw new AppError(
-      //     "Organization user must have exactly one organization",
-      //     STATUS_CODES.BAD_REQUEST
-      //   );
-      // }
+      // Organization count validation intentionally disabled
+
     }
+
 
     // =========================================
     // BRAND
@@ -259,83 +271,105 @@ exports.createUser = async (req, res) => {
     if (LoginType === "Brand") {
 
       if (!BrandID) {
+
         throw new AppError(
           "BrandID is required for Brand login",
           STATUS_CODES.BAD_REQUEST
         );
+
       }
+
 
       if (
         !Array.isArray(organizationMappings) ||
         organizationMappings.length === 0
       ) {
+
         throw new AppError(
           "At least one organization is required for Brand login",
           STATUS_CODES.BAD_REQUEST
         );
+
       }
+
     }
+
 
     // =========================================
     // SEND TO RABBITMQ
     // =========================================
 
-    const response = await producer.sendMessage(
-      QUEUE.USER.REQUEST,
-      QUEUE.USER.RESPONSE,
-      {
-        action: "CREATE_USER",
+    const response =
+      await producer.sendMessage(
+        QUEUE.USER.REQUEST,
+        QUEUE.USER.RESPONSE,
+        {
 
-        data: {
-          EmployeeCode,
-          Username,
-          PasswordHash,
-          FullName,
-          Designation,
-          DepartmentID,
-          DivisionID,
-          LoginType,
-          UserType,
-          Email,
-          PhoneNumber,
-          Gender,
-          ProfilePhoto,
+          action: "CREATE_USER",
 
-          LastPasswordChangedDate,
-          PasswordExpiryDate,
-          DateOfJoining,
+          data: {
 
-          IsLocked: false,
-          IsActive: true,
-          IsDeleted: false,
+            EmployeeCode,
+            Username,
+            PasswordHash,
+            FullName,
+            Designation,
 
-          CreatedBy,
+            DepartmentID,
+            DivisionID,
 
-          BrandID,
+            LoginType,
+            UserType,
 
-          AllOrganizationAccess:
-            normalizedAllOrganizationAccess,
+            Email,
+            PhoneNumber,
+            Gender,
 
-          Organizations:
-            organizationMappings,
+            ProfilePhoto,
 
-          Products:
-            productMappings,
-        },
-      }
-    );
+            LastPasswordChangedDate,
+            PasswordExpiryDate,
+            DateOfJoining,
+
+            IsLocked: false,
+            IsActive: true,
+            IsDeleted: false,
+
+            CreatedBy,
+
+            BrandID,
+
+            AllOrganizationAccess:
+              normalizedAllOrganizationAccess,
+
+            Organizations:
+              organizationMappings,
+
+            Products:
+              productMappings,
+
+          },
+
+        }
+      );
+
 
     // =========================================
     // RABBITMQ ERROR
     // =========================================
 
     if (!response.success) {
+
       throw new AppError(
-        response.message || "Unable to create user",
+        response.message ||
+        "Unable to create user",
+
         response.statusCode ||
         STATUS_CODES.BAD_REQUEST
       );
+
     }
+
 
     // =========================================
     // RESPONSE
@@ -345,11 +379,13 @@ exports.createUser = async (req, res) => {
       .status(STATUS_CODES.CREATED)
       .json(response);
 
+
   } catch (error) {
 
     handleError(error, res);
 
   }
+
 };
 
 // ========================================= GET ALL USERS
@@ -1089,6 +1125,7 @@ exports.updateUser = async (req, res) => {
 
     }
 
+
     // ========================================================
     // ORGANIZATIONS + PRODUCTS
     // ========================================================
@@ -1120,12 +1157,33 @@ exports.updateUser = async (req, res) => {
 
     let organizationMappings = [];
 
-    if (Organizations) {
+    if (Organizations !== undefined) {
 
-      organizationMappings =
-        typeof Organizations === "string"
-          ? JSON.parse(Organizations)
-          : Organizations;
+      try {
+
+        organizationMappings =
+          typeof Organizations === "string"
+            ? JSON.parse(Organizations)
+            : Organizations;
+
+      } catch (error) {
+
+        throw new AppError(
+          "Invalid Organizations JSON",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
+
+
+      if (!Array.isArray(organizationMappings)) {
+
+        throw new AppError(
+          "Organizations must be an array",
+          STATUS_CODES.BAD_REQUEST
+        );
+
+      }
 
     }
 
@@ -1154,6 +1212,8 @@ exports.updateUser = async (req, res) => {
 
       }
 
+
+      // Products must be an array
       if (!Array.isArray(productMappings)) {
 
         throw new AppError(
@@ -1163,7 +1223,11 @@ exports.updateUser = async (req, res) => {
 
       }
 
-      // Validate ProductID
+
+      // ======================================================
+      // VALIDATE PRODUCT ID
+      // ======================================================
+
       for (const product of productMappings) {
 
         if (
@@ -1197,23 +1261,45 @@ exports.updateUser = async (req, res) => {
 
           data: {
 
-            UserID: Number(UserID),
+            UserID:
+              Number(UserID),
 
             ...userData,
+
+
+            // ==================================================
+            // PROFILE PHOTO
+            // ==================================================
 
             ...(ProfilePhoto !== undefined && {
               ProfilePhoto
             }),
 
+
+            // ==================================================
+            // ORGANIZATIONS
+            // ==================================================
+
             Organizations:
               organizationMappings,
+
+
+            // ==================================================
+            // PRODUCTS
+            // ==================================================
 
             Products:
               productMappings,
 
-            // ModifiedBy JWT se
+
+            // ==================================================
+            // MODIFIED BY
+            // ==================================================
+
             ModifiedBy:
-              Number(req.user?.UserID || UserID)
+              Number(
+                req.user?.UserID || UserID
+              )
 
           }
 
@@ -1222,7 +1308,7 @@ exports.updateUser = async (req, res) => {
 
 
     // ========================================================
-    // ERROR
+    // RABBITMQ ERROR
     // ========================================================
 
     if (!response.success) {
