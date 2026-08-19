@@ -1053,7 +1053,8 @@ exports.getAllUsersTabel = async (req, res) => {
       limit = 10,
       FullName,
       DepartmentID,
-      UserType
+      UserType,
+      OrganizationID
     } = req.query;
 
 
@@ -1067,7 +1068,8 @@ exports.getAllUsersTabel = async (req, res) => {
         limit,
         FullName,
         DepartmentID,
-        UserType
+        UserType,
+        OrganizationID
       );
 
 
