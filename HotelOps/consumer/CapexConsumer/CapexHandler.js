@@ -1,5 +1,7 @@
 const CapexService = require("../../services/CapexService/CapexService");
-const {retryableDatabaseResponse} = require("../../utils/retryableDatabaseError");
+const {
+  retryableDatabaseResponse,
+} = require("../../utils/retryableDatabaseError");
 
 const CapexHandler = async (message) => {
   try {
@@ -44,6 +46,9 @@ const CapexHandler = async (message) => {
       case "DELETE_CAPEX_APPROVAL_CONFIG":
         return await CapexService.deleteApprovalConfig(message.data);
 
+      // ====================================================== // CAPEX Pdf Apis
+      case "GENERATE_CAPEX_LIST_PDF":
+        return await CapexService.generateCapexListPdf(message.data);
 
       // Reject unknown queue actions instead of calling any service.
       default:

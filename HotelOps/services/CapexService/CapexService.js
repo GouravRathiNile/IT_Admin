@@ -2,6 +2,8 @@ const { pool } = require("../../db");
 const {retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
 const generateDocumentUrl = require("../../AzurConfigration/Capex/AzureGetData");
 const { formatDate } = require("../../utils/dateFormatter");
+const PdfPrinter = require("pdfmake");
+const path = require("path");
 
 // ==============================================================Default roles
 const DEFAULT_APPROVALS = Object.freeze([
@@ -256,16 +258,16 @@ const createCapex = async (data) => {
     return {
       success: true,
       message: "CAPEX created successfully.",
-      data: {
-        CapexID: capexID,
-        CapexNumber: capexNumber,
-        Total: total,
-        DocumentCount: documents.length,
-        Approvals: approvals.map((approval) => ({
-          ...approval,
-          Status: "Pending",
-        })),
-      },
+      // data: {
+      //   CapexID: capexID,
+      //   CapexNumber: capexNumber,
+      //   Total: total,
+      //   DocumentCount: documents.length,
+      //   Approvals: approvals.map((approval) => ({
+      //     ...approval,
+      //     Status: "Pending",
+      //   })),
+      // },
     };
   } catch (error) {
     await rollback(client, transactionStarted);
@@ -400,11 +402,7 @@ const mapMaster = (row) => ({
   Total: Number(row.total),
   IsVoid: row.isvoid,
   VoidRemarks: row.voidremarks,
-  CreatedBy: row.createdby == null ? null : Number(row.createdby),
-  CreatedDate: row.createddate,
-  ModifiedBy: row.modifiedby == null ? null : Number(row.modifiedby),
-  ModifiedDate: row.modifieddate,
-  CurrentApprovalRole: row.currentapprovalrole || null,
+  CreatedDate: formatDate(row.createddate),
   CurrentStatus: row.currentstatus,
   Documents: [],
   Approvals: [],
@@ -412,22 +410,14 @@ const mapMaster = (row) => ({
 // Generate a short-lived read URL while preserving stored blob paths in the DB.
 const mapDocument = (row) => ({
   CapexDocumentID: Number(row.capexdocumentid),
-  CapexID: Number(row.capexid),
-  CapexNumber: Number(row.capexnumber),
   FileName: row.filename,
   FilePath: row.filepath ? generateDocumentUrl(row.filepath) : null,
-  FileType: row.filetype,
-  FileSize: row.filesize == null ? null : Number(row.filesize),
 });
 // Return approval fields without exposing soft-delete/audit internals.
 const mapApproval = (row) => ({
   CapexApprovalID: Number(row.capexapprovalid),
-  LevelNo: Number(row.levelno),
   ApprovalRole: row.approvalrole,
   Status: row.status,
-  StatusDateTime: row.statusdatetime,
-  StatusApprovedBy:
-    row.statusapprovedby == null ? null : Number(row.statusapprovedby),
   Remarks: row.remarks,
 });
 // Fetch documents and approvals in batches to avoid N+1 database queries.
@@ -1447,22 +1437,22 @@ const updateCapex = async (data) => {
       success: true,
       message: "CAPEX updated successfully.",
 
-      data: {
-        CapexID: Number(updated.capexid),
-        OrganizationID: Number(updated.organizationid),
-        CapexNumber: Number(updated.capexnumber),
-        Department: updated.department,
-        Item: updated.item,
-        Description: updated.description,
-        Make: updated.make,
-        Qty: Number(updated.qty),
-        Rate: Number(updated.rate),
-        Total: Number(updated.total),
-        IsVoid: updated.isvoid,
-        VoidRemarks: updated.voidremarks,
-        DocumentsUpdated: documents.length,
-        DocumentsDeleted: deleteDocumentIDs.length,
-      },
+      // data: {
+      //   CapexID: Number(updated.capexid),
+      //   OrganizationID: Number(updated.organizationid),
+      //   CapexNumber: Number(updated.capexnumber),
+      //   Department: updated.department,
+      //   Item: updated.item,
+      //   Description: updated.description,
+      //   Make: updated.make,
+      //   Qty: Number(updated.qty),
+      //   Rate: Number(updated.rate),
+      //   Total: Number(updated.total),
+      //   IsVoid: updated.isvoid,
+      //   VoidRemarks: updated.voidremarks,
+      //   DocumentsUpdated: documents.length,
+      //   DocumentsDeleted: deleteDocumentIDs.length,
+      // },
     };
   } catch (error) {
     if (client && transactionStarted) {
@@ -2719,12 +2709,9 @@ const getApprovalConfig = async (data) => {
         ApprovalRole: row.approvalrole,
         ApprovalOrder: Number(row.approvalorder),
         IsMandatory: row.ismandatory,
-        CreatedBy:
-          row.createdby == null ? null : Number(row.createdby),
-        CreatedDate: row.createddate,
-        ModifiedBy:
-          row.modifiedby == null ? null : Number(row.modifiedby),
-        ModifiedDate: row.modifieddate,
+       
+        CreatedDate: formatDate(row.createddate),
+       
       })),
     };
   } catch (error) {
@@ -3209,6 +3196,453 @@ const deleteApprovalConfig = async (data) => {
     if (client) client.release();
   }
 };
+// ===================================================================Pdf Apis
+// ============================================================Generate CAPEX List PDF
+const generateCapexListPdf = async (capex) => {
+  const fonts = {
+    Roboto: {
+      normal: path.join(
+        process.cwd(),
+        "fonts/Roboto-Regular.ttf",
+      ),
+      bold: path.join(
+        process.cwd(),
+        "fonts/Roboto-Medium.ttf",
+      ),
+      italics: path.join(
+        process.cwd(),
+        "fonts/Roboto-SemiBold.ttf",
+      ),
+      bolditalics: path.join(
+        process.cwd(),
+        "fonts/Roboto-Bold.ttf",
+      ),
+    },
+  };
+
+  const printer = new PdfPrinter(fonts);
+
+  // ============================================================
+  // CAPEX DETAILS
+  // ============================================================
+
+  const capexDetails = [
+    [
+      { text: "CAPEX Number", style: "label" },
+      { text: String(capex.CapexNumber ?? "-"), style: "value" },
+      { text: "CAPEX ID", style: "label" },
+      { text: String(capex.CapexID ?? "-"), style: "value" },
+    ],
+    [
+      { text: "Department", style: "label" },
+      { text: capex.Department || "-", style: "value" },
+      { text: "Item", style: "label" },
+      { text: capex.Item || "-", style: "value" },
+    ],
+    [
+      { text: "Description", style: "label" },
+      {
+        text: capex.Description || "-",
+        style: "value",
+        colSpan: 3,
+      },
+      {},
+      {},
+    ],
+    [
+      { text: "Make", style: "label" },
+      { text: capex.Make || "-", style: "value" },
+      { text: "Quantity", style: "label" },
+      { text: String(capex.Qty ?? "-"), style: "value" },
+    ],
+    [
+      { text: "Rate", style: "label" },
+      {
+        text:
+          capex.Rate != null
+            ? `₹ ${Number(capex.Rate).toLocaleString("en-IN")}`
+            : "-",
+        style: "value",
+      },
+      { text: "Total", style: "label" },
+      {
+        text:
+          capex.Total != null
+            ? `₹ ${Number(capex.Total).toLocaleString("en-IN")}`
+            : "-",
+        style: "value",
+      },
+    ],
+    [
+      { text: "Status", style: "label" },
+      { text: capex.CurrentStatus || "-", style: "value" },
+      { text: "Current Role", style: "label" },
+      { text: capex.CurrentApprovalRole || "-", style: "value" },
+    ],
+    [
+      { text: "Created Date", style: "label" },
+      {
+        text: capex.CreatedDate
+          ? formatDate(capex.CreatedDate)
+          : "-",
+        style: "value",
+      },
+      { text: "Created By", style: "label" },
+      {
+        text: capex.CreatedBy != null
+          ? String(capex.CreatedBy)
+          : "-",
+        style: "value",
+      },
+    ],
+    [
+      { text: "Modified Date", style: "label" },
+      {
+        text: capex.ModifiedDate
+          ? formatDate(capex.ModifiedDate)
+          : "-",
+        style: "value",
+      },
+      { text: "Modified By", style: "label" },
+      {
+        text: capex.ModifiedBy != null
+          ? String(capex.ModifiedBy)
+          : "-",
+        style: "value",
+      },
+    ],
+  ];
+
+  // ============================================================
+  // APPROVALS
+  // ============================================================
+
+  const approvalRows = [
+    [
+      { text: "Level", style: "tableHeader" },
+      { text: "Role", style: "tableHeader" },
+      { text: "Status", style: "tableHeader" },
+      { text: "Date", style: "tableHeader" },
+      { text: "Approved By", style: "tableHeader" },
+      { text: "Remarks", style: "tableHeader" },
+    ],
+  ];
+
+  if (capex.Approvals?.length) {
+    capex.Approvals.forEach((approval) => {
+      approvalRows.push([
+        {
+          text: String(approval.LevelNo ?? "-"),
+          style: "tableCell",
+        },
+        {
+          text: approval.ApprovalRole || "-",
+          style: "tableCell",
+        },
+        {
+          text: approval.Status || "-",
+          style: "tableCell",
+        },
+        {
+          text: approval.StatusDateTime
+            ? formatDate(approval.StatusDateTime)
+            : "-",
+          style: "tableCell",
+        },
+        {
+          text:
+            approval.StatusApprovedBy != null
+              ? String(approval.StatusApprovedBy)
+              : "-",
+          style: "tableCell",
+        },
+        {
+          text: approval.Remarks || "-",
+          style: "tableCell",
+        },
+      ]);
+    });
+  } else {
+    approvalRows.push([
+      {
+        text: "No approval records found.",
+        colSpan: 6,
+        alignment: "center",
+        style: "tableCell",
+      },
+      {},
+      {},
+      {},
+      {},
+      {},
+    ]);
+  }
+
+  // ============================================================
+  // DOCUMENTS
+  // ============================================================
+
+  const documentRows = [
+    [
+      { text: "Document ID", style: "tableHeader" },
+      { text: "File Name", style: "tableHeader" },
+      { text: "File Type", style: "tableHeader" },
+      { text: "File Size", style: "tableHeader" },
+    ],
+  ];
+
+  if (capex.Documents?.length) {
+    capex.Documents.forEach((document) => {
+      documentRows.push([
+        {
+          text: String(document.CapexDocumentID ?? "-"),
+          style: "tableCell",
+        },
+        {
+          text: document.FileName || "-",
+          style: "tableCell",
+        },
+        {
+          text: document.FileType || "-",
+          style: "tableCell",
+        },
+        {
+          text:
+            document.FileSize != null
+              ? `${Number(document.FileSize).toLocaleString("en-IN")} bytes`
+              : "-",
+          style: "tableCell",
+        },
+      ]);
+    });
+  } else {
+    documentRows.push([
+      {
+        text: "No documents found.",
+        colSpan: 4,
+        alignment: "center",
+        style: "tableCell",
+      },
+      {},
+      {},
+      {},
+    ]);
+  }
+
+  // ============================================================
+  // PDF
+  // ============================================================
+
+  const docDefinition = {
+    pageSize: "A4",
+    pageMargins: [30, 30, 30, 35],
+
+    defaultStyle: {
+      font: "Roboto",
+      fontSize: 9,
+    },
+
+    content: [
+      {
+        table: {
+          widths: ["*", "auto"],
+          body: [
+            [
+              {
+                text: "CAPEX DETAILS",
+                style: "title",
+                border: [false, false, false, false],
+              },
+              {
+                text: capex.CurrentStatus || "Pending",
+                style: "status",
+                border: [false, false, false, false],
+              },
+            ],
+          ],
+        },
+        layout: "noBorders",
+        marginBottom: 15,
+      },
+
+      {
+        text: "CAPEX INFORMATION",
+        style: "sectionTitle",
+        marginBottom: 6,
+      },
+
+      {
+        table: {
+          widths: [85, "*", 85, "*"],
+          body: capexDetails,
+        },
+        layout: {
+          fillColor: (rowIndex) =>
+            rowIndex % 2 === 0 ? "#F5F7FA" : "#FFFFFF",
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => "#D0D7DE",
+          vLineColor: () => "#D0D7DE",
+          paddingLeft: () => 7,
+          paddingRight: () => 7,
+          paddingTop: () => 6,
+          paddingBottom: () => 6,
+        },
+        marginBottom: 18,
+      },
+
+      {
+        text: "APPROVAL DETAILS",
+        style: "sectionTitle",
+        marginBottom: 6,
+      },
+
+      {
+        table: {
+          headerRows: 1,
+          widths: [35, 60, 65, 85, 65, "*"],
+          body: approvalRows,
+        },
+        layout: {
+          fillColor: (rowIndex) =>
+            rowIndex === 0
+              ? "#4472C4"
+              : rowIndex % 2 === 0
+                ? "#F2F5FA"
+                : "#FFFFFF",
+
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => "#C5D0E0",
+          vLineColor: () => "#C5D0E0",
+          paddingLeft: () => 5,
+          paddingRight: () => 5,
+          paddingTop: () => 5,
+          paddingBottom: () => 5,
+        },
+        marginBottom: 18,
+      },
+
+      {
+        text: "DOCUMENTS",
+        style: "sectionTitle",
+        marginBottom: 6,
+      },
+
+      {
+        table: {
+          headerRows: 1,
+          widths: [65, "*", 100, 100],
+          body: documentRows,
+        },
+        layout: {
+          fillColor: (rowIndex) =>
+            rowIndex === 0
+              ? "#4472C4"
+              : rowIndex % 2 === 0
+                ? "#F2F5FA"
+                : "#FFFFFF",
+
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => "#C5D0E0",
+          vLineColor: () => "#C5D0E0",
+          paddingLeft: () => 5,
+          paddingRight: () => 5,
+          paddingTop: () => 5,
+          paddingBottom: () => 5,
+        },
+      },
+    ],
+
+    footer: (currentPage, pageCount) => ({
+      columns: [
+        {
+          text: "CAPEX Management",
+          alignment: "left",
+          fontSize: 8,
+          color: "#666666",
+        },
+        {
+          text: `Page ${currentPage} of ${pageCount}`,
+          alignment: "right",
+          fontSize: 8,
+          color: "#666666",
+        },
+      ],
+      margin: [30, 5, 30, 0],
+    }),
+
+    styles: {
+      title: {
+        fontSize: 18,
+        bold: true,
+        color: "#1F2937",
+      },
+
+      status: {
+        fontSize: 10,
+        bold: true,
+        color: "#4472C4",
+        alignment: "right",
+      },
+
+      sectionTitle: {
+        fontSize: 11,
+        bold: true,
+        color: "#4472C4",
+      },
+
+      label: {
+        fontSize: 8,
+        bold: true,
+        color: "#555555",
+      },
+
+      value: {
+        fontSize: 9,
+        color: "#222222",
+      },
+
+      tableHeader: {
+        fontSize: 8,
+        bold: true,
+        color: "#FFFFFF",
+      },
+
+      tableCell: {
+        fontSize: 8,
+        color: "#222222",
+      },
+    },
+  };
+
+  // ============================================================
+  // PDF -> Buffer
+  // ============================================================
+
+  return new Promise((resolve, reject) => {
+    try {
+      const pdfDoc = printer.createPdfKitDocument(docDefinition);
+
+      const chunks = [];
+
+      pdfDoc.on("data", (chunk) => {
+        chunks.push(chunk);
+      });
+
+      pdfDoc.on("end", () => {
+        resolve(Buffer.concat(chunks));
+      });
+
+      pdfDoc.on("error", reject);
+
+      pdfDoc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
 
 // ============================================================ Exports
 module.exports = {
@@ -3224,4 +3658,5 @@ module.exports = {
    getApprovalConfig,
   createApprovalConfig,
   deleteApprovalConfig,
+  generateCapexListPdf,
 };

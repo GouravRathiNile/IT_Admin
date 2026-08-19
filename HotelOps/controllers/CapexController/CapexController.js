@@ -103,7 +103,19 @@ exports.createCapex = async (req, res) => {
       Rate,
       Total,
     } = req.body || {};
+if (!OrganizationID) {
+  throw new AppError(
+    "Organization ID is required",
+    STATUS_CODES.BAD_REQUEST
+  );
+}
 
+if (!Department) {
+  throw new AppError(
+    "Department is required",
+    STATUS_CODES.BAD_REQUEST
+  );
+}
     const userID = req.user.UserID;
     const data = {
       OrganizationID,
@@ -842,6 +854,62 @@ exports.deleteCapexApprovalConfig = async (req, res) => {
         CapexApprovalConfigID: Number(CapexApprovalConfigID),
       }
     );
+  } catch (error) {
+    return handleControllerError(error, res);
+  }
+};
+
+// ============================================================PDF Apis
+// ============================================================Generate CAPEX List PDF
+exports.generateCapexListPdf = async (req, res) => {
+  try {
+    // ================= OrganizationID =================
+
+    let OrganizationID = null;
+
+    if (
+      req.query.OrganizationID !== undefined &&
+      req.query.OrganizationID !== null &&
+      String(req.query.OrganizationID).trim() !== ""
+    ) {
+      if (!isPositiveInteger(req.query.OrganizationID)) {
+        throw new AppError(
+          "Organization ID must be a positive integer",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+
+      OrganizationID = Number(req.query.OrganizationID);
+    }
+
+    // ================= Status =================
+
+    let Status = null;
+
+    if (
+      req.query.Status !== undefined &&
+      req.query.Status !== null &&
+      String(req.query.Status).trim() !== ""
+    ) {
+      Status = String(req.query.Status).trim().toUpperCase();
+
+      if (!["PENDING", "APPROVED", "REJECTED"].includes(Status)) {
+        throw new AppError(
+          "Status must be Pending, Approved, or Rejected",
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+    }
+
+    // ================= Send To Queue =================
+
+    const user = authenticatedUser(req);
+
+    return await sendQueueResponse(res, "GENERATE_CAPEX_LIST_PDF", {
+      ...user,
+      OrganizationID,
+      Status,
+    });
   } catch (error) {
     return handleControllerError(error, res);
   }
