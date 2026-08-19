@@ -254,7 +254,7 @@ const getAllDepartments = async (
         dm.DivisionID,
         div.DivisionName,
 
-
+       dm.products,
         dm.CreatedDateTime
 
 
@@ -294,7 +294,8 @@ const getAllDepartments = async (
 
       DivisionID: row.divisionid,
       DivisionName: row.divisionname,
-
+ Products:
+        row.products || [],
       CreatedDateTime: row.createddatetime
         ? formatDate(row.createddatetime)
         : null,

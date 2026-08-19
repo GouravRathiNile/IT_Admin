@@ -2319,81 +2319,77 @@ const getUserOrganizations = async (UserID) => {
 // ============================================================User wise product
 const getUserProducts = async (UserID) => {
   try {
-
     const result = await pool.query(
       `
       SELECT
-
         upm.UserID,
-
         upm.ProductID,
 
         pm.ProductName,
-        pm.ProductLabel
+        pm.ProductLabel,
+
+        pcm.ProductCategoryID AS CategoryID,
+        pcm.CategoryName AS CategoryName,
+        pcm.ShortName AS CategoryShortName
 
       FROM user_product_mapping upm
 
       LEFT JOIN Product_Master pm
         ON upm.ProductID = pm.ProductID
 
+      LEFT JOIN Product_Category_Master pcm
+        ON pm.ProductCategoryID = pcm.ProductCategoryID
+
       WHERE upm.UserID = $1
         AND upm.IsActive = TRUE
         AND upm.IsDeleted = FALSE
 
-      ORDER BY
-        pm.ProductName ASC;
+      ORDER BY pcm.ProductCategoryID ASC, pm.ProductName ASC;
       `,
       [UserID]
     );
 
+    // Category-wise grouping
+    const groupedData = result.rows.reduce((acc, row) => {
+      const categoryId = row.categoryid;
+
+      if (!acc[categoryId]) {
+        acc[categoryId] = {
+          CategoryID: row.categoryid,
+          CategoryName: row.categoryname,
+          CategoryShortName: row.categoryshortname,
+          Products: [],
+        };
+      }
+
+      acc[categoryId].Products.push({
+        ProductID: row.productid,
+        ProductName: row.productname,
+        ProductLabel: row.productlabel,
+      });
+
+      return acc;
+    }, {});
 
     return {
-
       success: true,
-
-      message:
-        "User products fetched successfully",
-
-      Count:
-        result.rows.length,
-
-      data:
-        result.rows.map((row) => ({
-
-          UserID:
-            row.userid,
-
-          ProductID:
-            row.productid,
-
-          ProductName:
-            row.productname,
-
-          ProductLabel:
-            row.productlabel,
-
-        })),
-
+      message: "User products fetched successfully",
+      Count: Object.keys(groupedData).length,
+      data: Object.values(groupedData),
     };
 
   } catch (error) {
-
     console.log(
       "Get User Products Error:",
       error.message
     );
 
     return {
-
       success: false,
-
-      message:
-        error.message,
-
+      message: error.message,
     };
-
   }
-};
+};  
 // ============================================================
 // USER PERSONAL DETAILS
 // ============================================================

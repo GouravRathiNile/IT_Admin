@@ -7,6 +7,8 @@ const AppError = require("../../utils/AppError");
 const handleError = require("../../utils/errorHandler");
 //==================================================Azur
 const uploadToAzure = require("../../AzurConfigration/Capex/AzureUpload");
+// =========================================================Get Data From service
+const CapexService = require("../../services/CapexService/CapexService");
 
 // ============================================================ Validation Helpers
 const isPositiveInteger = (value) => {
@@ -240,13 +242,23 @@ exports.getAllCapex = async (req, res) => {
 
     // ================= Send To Queue =================
 
-    return await sendQueueResponse(res, "GET_ALL_CAPEX", {
-      ...user,
-      OrganizationID,
-      Status,
-      page,
-      PageSize,
-    });
+  const response = await CapexService.getAllCapex({
+  ...user,
+  OrganizationID,
+  Status,
+  page,
+  PageSize,
+});
+
+if (!response.success) {
+  throw new AppError(
+    response.message || "Unable to fetch CAPEX records",
+    response.statusCode || STATUS_CODES.BAD_REQUEST,
+    response.errors
+  );
+}
+
+return res.status(STATUS_CODES.SUCCESS).json(response);
 
   } catch (error) {
     return handleControllerError(error, res);
@@ -263,10 +275,21 @@ exports.getCapexById = async (req, res) => {
     }
 
     const user = authenticatedUser(req);
-    return await sendQueueResponse(res, "GET_CAPEX_BY_ID", {
+    
+    const response = await CapexService.getCapexById({
       ...user,
       CapexID: Number(req.params.id),
     });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch CAPEX",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
   } catch (error) {
     return handleControllerError(error, res);
   }
@@ -726,25 +749,65 @@ const getReport = async (req, res, action) => {
   }
 };
 // ============================================================ Summary Report
-exports.getCapexSummaryReport = (req, res) =>
-  getReport(
-    req,
-    res,
-    "GET_CAPEX_SUMMARY_REPORT"
-  );
-// ============================================================ Department Report
-exports.getCapexDepartmentReport = (req, res) => getReport(
-  req,
-  res,
-  "GET_CAPEX_DEPARTMENT_REPORT"
-);
-// ============================================================ Organization Report
-exports.getCapexOrganizationReport = (req, res) => getReport(
-  req,
-  res,
-  "GET_CAPEX_ORGANIZATION_REPORT"
-);
+exports.getCapexSummaryReport = async (req, res) => {
+  try {
+    const response = await CapexService.getCapexSummaryReport({
+      Filters: reportFilters(req),
+    });
 
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch CAPEX summary report",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    return handleControllerError(error, res);
+  }
+};
+// ============================================================ Department Report
+exports.getCapexDepartmentReport = async (req, res) => {
+  try {
+    const response = await CapexService.getCapexDepartmentReport({
+      Filters: reportFilters(req),
+    });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch CAPEX department report",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    return handleControllerError(error, res);
+  }
+};
+// ============================================================ Organization Report
+exports.getCapexOrganizationReport = async (req, res) => {
+  try {
+    const response = await CapexService.getCapexOrganizationReport({
+      Filters: reportFilters(req),
+    });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch CAPEX organization report",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    return handleControllerError(error, res);
+  }
+};
 // ============================================================CREATE CAPEX APPROVAL CONFIG
 exports.createCapexApprovalConfig = async (req, res) => {
   try {
@@ -822,12 +885,19 @@ exports.getCapexApprovalConfig = async (req, res) => {
       OrganizationID = Number(req.query.OrganizationID);
     }
 
-    const user = authenticatedUser(req);
-
-    return await sendQueueResponse(res, "GET_CAPEX_APPROVAL_CONFIG", {
-      ...user,
+    const response = await CapexService.getApprovalConfig({
       OrganizationID,
     });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch CAPEX approval configuration",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors
+      );
+    }
+
+    return res.status(STATUS_CODES.SUCCESS).json(response);
   } catch (error) {
     return handleControllerError(error, res);
   }
