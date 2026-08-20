@@ -3,16 +3,16 @@ const controller = require("../../controllers/GuestGlitchController/GuestGlitchC
 const authenticateToken = require("../../middleware/authMiddleware");
 const organizationContext = require("../../middleware/organizationContextMiddleware");
 const requirePermission = require("../../middleware/permissionMiddleware");
-const guestGlitchUpload = require("../../middleware/guestGlitchUpload");
+const upload = require("../../middleware/upload");
 const { PERMISSIONS } = require("../../config/guestGlitchConstants");
 
 const router = express.Router();
 router.use(authenticateToken, organizationContext);
 
-router.post("/create", requirePermission(PERMISSIONS.CREATE), guestGlitchUpload, controller.create);
+router.post("/create", requirePermission(PERMISSIONS.CREATE), upload.guestGlitchUpload, controller.create);
 router.get("/list", requirePermission(PERMISSIONS.VIEW), controller.list);
 router.get("/get/:id", requirePermission(PERMISSIONS.VIEW), controller.get);
-router.put("/update", requirePermission(PERMISSIONS.UPDATE), guestGlitchUpload, controller.update);
+router.put("/update", requirePermission(PERMISSIONS.UPDATE), upload.guestGlitchUpload, controller.update);
 router.delete("/delete", requirePermission(PERMISSIONS.DELETE), controller.remove);
 router.patch("/status-update", requirePermission(PERMISSIONS.STATUS_UPDATE), controller.updateStatus);
 router.get("/options/list", requirePermission(PERMISSIONS.VIEW), controller.listOptions);

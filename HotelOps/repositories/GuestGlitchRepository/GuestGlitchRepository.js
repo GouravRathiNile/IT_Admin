@@ -7,7 +7,7 @@ const COLUMN_MAP = Object.freeze({
   RoomNumber: "roomnumber", Time: "time", Complaint: "complaint",
   ServiceRecovery: "servicerecovery", DetailedInvestigation: "detailedinvestigation",
   InternalActionTaken: "internalactiontaken", CompanyName: "companyname", Rate: "rate",
-  CheckInDate: "checkindate", CheckOutDate: "checkoutdate", UpdatedBy: "updatedby",
+  CheckInDate: "checkindate", CheckOutDate: "checkoutdate",
   GMComment: "gmcomment", ProcessLapse: "processlapse", Department: "department",
   SRA_Room: "sra_room", SRA_Food: "sra_food", SRA_Other: "sra_other",
   RaiseSource: "raisesource", ComplaintSource: "complaintsource",
@@ -87,32 +87,98 @@ const findByID = async (client, id, organizationID, includeDeleted = false, lock
   return result.rows[0] || null;
 };
 
-const updateChangedFields = async (client, id, organizationID, changed, userID, username, ip) => {
+// const updateChangedFields = async (client, id, organizationID, changed, userID, username, ip) => {
+//   const assignments = [];
+//   const values = [];
+//   const add = (sql, value) => { values.push(value); assignments.push(`${sql} = $${values.length}`); };
+
+//   for (const [field, value] of Object.entries(changed)) {
+//     const column = COLUMN_MAP[field];
+//     if (!column) continue;
+//     add(column, JSON_FIELDS.has(field) ? JSON.stringify(value) : value);
+//     const audit = FIELD_AUDIT_COLUMNS[field];
+//     if (audit) {
+//       add(audit[0], userID);
+//       assignments.push(`${audit[1]} = CURRENT_TIMESTAMP`);
+//     }
+//   }
+//   add("modifyby", String(userID));
+//   add("updatedby", username);
+//   add("modifiedip", ip);
+//   assignments.push("modifydate = CURRENT_TIMESTAMP");
+//   values.push(id, organizationID);
+//   const result = await client.query(
+//     `UPDATE guest_glitch_entry_master SET ${assignments.join(", ")}
+//      WHERE id = $${values.length - 1} AND organizationid = $${values.length} AND isdeleted = FALSE
+//      RETURNING id;`,
+//     values
+//   );
+//   return result.rows[0] || null;
+// };
+
+const updateChangedFields = async (
+  client,
+  id,
+  organizationID,
+  changed,
+  userID,
+  username,
+  ip
+) => {
   const assignments = [];
   const values = [];
-  const add = (sql, value) => { values.push(value); assignments.push(`${sql} = $${values.length}`); };
+
+  const add = (sql, value) => {
+    values.push(value);
+    assignments.push(`${sql} = $${values.length}`);
+  };
 
   for (const [field, value] of Object.entries(changed)) {
+
+    // UpdatedBy is an audit field.
+    // It is handled separately below from the authenticated user.
+    if (field === "UpdatedBy") {
+      continue;
+    }
+
     const column = COLUMN_MAP[field];
+
     if (!column) continue;
-    add(column, JSON_FIELDS.has(field) ? JSON.stringify(value) : value);
+
+    add(
+      column,
+      JSON_FIELDS.has(field)
+        ? JSON.stringify(value)
+        : value
+    );
+
     const audit = FIELD_AUDIT_COLUMNS[field];
+
     if (audit) {
       add(audit[0], userID);
       assignments.push(`${audit[1]} = CURRENT_TIMESTAMP`);
     }
   }
+
+  // Audit fields - assigned exactly once
   add("modifyby", String(userID));
   add("updatedby", username);
   add("modifiedip", ip);
+
   assignments.push("modifydate = CURRENT_TIMESTAMP");
+
   values.push(id, organizationID);
+
   const result = await client.query(
-    `UPDATE guest_glitch_entry_master SET ${assignments.join(", ")}
-     WHERE id = $${values.length - 1} AND organizationid = $${values.length} AND isdeleted = FALSE
+    `UPDATE guest_glitch_entry_master
+     SET ${assignments.join(", ")}
+     WHERE id = $${values.length - 1}
+       AND organizationid = $${values.length}
+       AND isdeleted = FALSE
      RETURNING id;`,
     values
   );
+
   return result.rows[0] || null;
 };
 
@@ -140,37 +206,241 @@ const softDelete = async (client, id, organizationID, userID, ip) => {
   return result.rows[0] || null;
 };
 
+// const list = async (data, organizationID) => {
+//   const filters = ["gg.organizationid = $1", "gg.isdeleted = FALSE"];
+//   const values = [organizationID];
+//   const add = (condition, value) => { values.push(value); filters.push(condition.replace("?", `$${values.length}`)); };
+//   if (data.search) add("(gg.guestname ILIKE ? OR gg.roomnumber ILIKE ? OR gg.complaint ILIKE ? OR gg.companyname ILIKE ?)", `%${data.search}%`);
+//   if (data.search) {
+//     const p = `$${values.length}`;
+//     filters[filters.length - 1] = `(gg.guestname ILIKE ${p} OR gg.roomnumber ILIKE ${p} OR gg.complaint ILIKE ${p} OR gg.companyname ILIKE ${p})`;
+//   }
+//   if (data.fromDate) add("gg.entrydate >= ?", data.fromDate);
+//   if (data.toDate) add("gg.entrydate <= ?", data.toDate);
+//   const scalarFilters = { status: "gg.status", roomNumber: "gg.roomnumber", complaint: "gg.complaint", guestStatus: "gg.gueststatus", companyName: "gg.companyname", complaintSource: "gg.complaintsource", raiseSource: "gg.raisesource", createdBy: "gg.createdby", updatedBy: "gg.updatedby" };
+//   for (const [field, column] of Object.entries(scalarFilters)) if (data[field]) add(`${column} ILIKE ?`, `%${data[field]}%`);
+//   for (const [field, column] of [["departmentIds", "departmentids"], ["receivedByIds", "receivedbyids"], ["informedToIds", "informedtoids"]]) {
+//     if (data[field]?.length) {
+//       add(`EXISTS (SELECT 1 FROM jsonb_array_elements_text(gg.${column}) AS selected_id(value) WHERE selected_id.value::bigint = ANY(?::bigint[]))`, data[field]);
+//     }
+//   }
+//   const where = filters.join(" AND ");
+//   const count = await pool.query(`SELECT COUNT(*)::bigint AS total FROM guest_glitch_entry_master gg WHERE ${where};`, values);
+//   const page = Number(data.page), pageSize = Number(data.pageSize), offset = (page - 1) * pageSize;
+//   const sortColumn = SORT_COLUMNS[data.sortBy];
+//   const direction = String(data.sortDirection).toUpperCase() === "ASC" ? "ASC" : "DESC";
+//   const queryValues = [...values, pageSize, offset];
+//   const rows = await pool.query(
+//     `SELECT gg.* FROM guest_glitch_entry_master gg WHERE ${where}
+//      ORDER BY ${sortColumn} ${direction}, gg.id DESC
+//      LIMIT $${queryValues.length - 1} OFFSET $${queryValues.length};`,
+//     queryValues
+//   );
+//   return { rows: rows.rows, total: Number(count.rows[0].total) };
+// };
 const list = async (data, organizationID) => {
-  const filters = ["gg.organizationid = $1", "gg.isdeleted = FALSE"];
+  const filters = [
+    "gg.organizationid = $1",
+    "gg.isdeleted = FALSE",
+  ];
+
   const values = [organizationID];
-  const add = (condition, value) => { values.push(value); filters.push(condition.replace("?", `$${values.length}`)); };
-  if (data.search) add("(gg.guestname ILIKE ? OR gg.roomnumber ILIKE ? OR gg.complaint ILIKE ? OR gg.companyname ILIKE ?)", `%${data.search}%`);
+
+  const add = (condition, value) => {
+    values.push(value);
+    filters.push(
+      condition.replace("?", `$${values.length}`)
+    );
+  };
+
+  // ---------------------------------------------------------
+  // General search
+  // ---------------------------------------------------------
   if (data.search) {
+    values.push(`%${data.search}%`);
     const p = `$${values.length}`;
-    filters[filters.length - 1] = `(gg.guestname ILIKE ${p} OR gg.roomnumber ILIKE ${p} OR gg.complaint ILIKE ${p} OR gg.companyname ILIKE ${p})`;
+
+    filters.push(`
+      (
+        gg.guestname ILIKE ${p}
+        OR gg.roomnumber ILIKE ${p}
+        OR gg.complaint ILIKE ${p}
+        OR gg.companyname ILIKE ${p}
+      )
+    `);
   }
-  if (data.fromDate) add("gg.entrydate >= ?", data.fromDate);
-  if (data.toDate) add("gg.entrydate <= ?", data.toDate);
-  const scalarFilters = { status: "gg.status", roomNumber: "gg.roomnumber", complaint: "gg.complaint", guestStatus: "gg.gueststatus", companyName: "gg.companyname", complaintSource: "gg.complaintsource", raiseSource: "gg.raisesource", createdBy: "gg.createdby", updatedBy: "gg.updatedby" };
-  for (const [field, column] of Object.entries(scalarFilters)) if (data[field]) add(`${column} ILIKE ?`, `%${data[field]}%`);
-  for (const [field, column] of [["departmentIds", "departmentids"], ["receivedByIds", "receivedbyids"], ["informedToIds", "informedtoids"]]) {
-    if (data[field]?.length) {
-      add(`EXISTS (SELECT 1 FROM jsonb_array_elements_text(gg.${column}) AS selected_id(value) WHERE selected_id.value::bigint = ANY(?::bigint[]))`, data[field]);
+
+  // ---------------------------------------------------------
+  // Date filters
+  // ---------------------------------------------------------
+  if (data.fromDate) {
+    add("gg.entrydate >= ?", data.fromDate);
+  }
+
+  if (data.toDate) {
+    add("gg.entrydate <= ?", data.toDate);
+  }
+
+  // ---------------------------------------------------------
+  // Scalar filters
+  // ---------------------------------------------------------
+  const scalarFilters = {
+    status: "gg.status",
+    guestStatus: "gg.gueststatus",
+    roomNumber: "gg.roomnumber",
+    guestName: "gg.guestname",
+    complaint: "gg.complaint",
+    complaintSource: "gg.complaintsource",
+    raiseSource: "gg.raisesource",
+    processLapse: "gg.processlapse",
+    processLapseCategory: "gg.processlapsecategory",
+    companyName: "gg.companyname",
+    internalActionTaken: "gg.internalactiontaken",
+    internalActionTakenCategory:
+      "gg.internalactiontakencategory",
+    createdBy: "gg.createdby",
+    updatedBy: "gg.updatedby",
+  };
+
+  for (const [field, column] of Object.entries(scalarFilters)) {
+    if (data[field]) {
+      add(`${column} ILIKE ?`, `%${data[field]}%`);
     }
   }
+
+  // ---------------------------------------------------------
+  // Check-in / Check-out date filters
+  // ---------------------------------------------------------
+  if (data.checkInDate) {
+    add("gg.checkindate >= ?", data.checkInDate);
+  }
+
+  if (data.checkOutDate) {
+    add("gg.checkoutdate <= ?", data.checkOutDate);
+  }
+
+  // ---------------------------------------------------------
+  // Department / user multi-select filters
+  // ---------------------------------------------------------
+  for (const [field, column] of [
+    ["departmentIds", "departmentids"],
+    ["receivedByIds", "receivedbyids"],
+    ["informedToIds", "informedtoids"],
+  ]) {
+    if (data[field]?.length) {
+      add(
+        `
+        EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(
+            COALESCE(gg.${column}, '[]'::jsonb)
+          ) AS selected_id(value)
+          WHERE selected_id.value::bigint =
+                ANY(?::bigint[])
+        )
+        `,
+        data[field]
+      );
+    }
+  }
+
   const where = filters.join(" AND ");
-  const count = await pool.query(`SELECT COUNT(*)::bigint AS total FROM guest_glitch_entry_master gg WHERE ${where};`, values);
-  const page = Number(data.page), pageSize = Number(data.pageSize), offset = (page - 1) * pageSize;
-  const sortColumn = SORT_COLUMNS[data.sortBy];
-  const direction = String(data.sortDirection).toUpperCase() === "ASC" ? "ASC" : "DESC";
-  const queryValues = [...values, pageSize, offset];
-  const rows = await pool.query(
-    `SELECT gg.* FROM guest_glitch_entry_master gg WHERE ${where}
-     ORDER BY ${sortColumn} ${direction}, gg.id DESC
-     LIMIT $${queryValues.length - 1} OFFSET $${queryValues.length};`,
+
+  // ---------------------------------------------------------
+  // Count
+  // ---------------------------------------------------------
+  const count = await pool.query(
+    `
+    SELECT COUNT(*)::bigint AS total
+    FROM guest_glitch_entry_master gg
+    WHERE ${where};
+    `,
+    values
+  );
+
+  const page = Number(data.page);
+  const pageSize = Number(data.pageSize);
+  const offset = (page - 1) * pageSize;
+
+  const sortColumn =
+    SORT_COLUMNS[data.sortBy] || SORT_COLUMNS.EntryDate;
+
+  const direction =
+    String(data.sortDirection).toUpperCase() === "ASC"
+      ? "ASC"
+      : "DESC";
+
+  const queryValues = [
+    ...values,
+    pageSize,
+    offset,
+  ];
+
+  // ---------------------------------------------------------
+  // IMPORTANT:
+  // Do NOT use SELECT gg.*
+  // ---------------------------------------------------------
+  const result = await pool.query(
+    `
+    SELECT
+      gg.id,
+      gg.organizationid,
+      om.organizationname,
+
+      gg.entrydate,
+      gg.time,
+
+      gg.roomnumber,
+      gg.guestname,
+      gg.gueststatus,
+
+      gg.departmentids,
+      gg.receivedbyids,
+      gg.informedtoids,
+
+      gg.complaint,
+      gg.status,
+
+      gg.complaintsource,
+      gg.raisesource,
+
+      gg.processlapse,
+      gg.processlapsecategory,
+
+      gg.servicerecovery,
+
+      gg.internalactiontaken,
+      gg.internalactiontakencategory,
+
+      gg.companyname,
+
+      gg.checkindate,
+      gg.checkoutdate,
+
+      gg.createdby,
+      gg.updatedby
+
+    FROM guest_glitch_entry_master gg
+
+    INNER JOIN organization_master om
+      ON om.organizationid = gg.organizationid
+
+    WHERE ${where}
+
+    ORDER BY
+      ${sortColumn} ${direction},
+      gg.id DESC
+
+    LIMIT $${queryValues.length - 1}
+    OFFSET $${queryValues.length};
+    `,
     queryValues
   );
-  return { rows: rows.rows, total: Number(count.rows[0].total) };
+
+  return {
+    rows: result.rows,
+    total: Number(count.rows[0].total),
+  };
 };
 
 const listOptions = async (organizationID, optionType = null) => {
@@ -206,23 +476,86 @@ const buildReportFilters = (data, organizationID) => {
   return { filters, values };
 };
 
+// const reportList = async (data, organizationID) => {
+//   const { filters, values } = buildReportFilters(data, organizationID);
+//   const where = filters.join(" AND ");
+//   const count = await pool.query(`SELECT COUNT(*)::bigint total FROM guest_glitch_entry_master gg WHERE ${where};`, values);
+//   const limit = Number(data.pageSize), offset = (Number(data.page) - 1) * limit;
+//   const queryValues = [...values, limit, offset];
+//   const sort = REPORT_SORT_COLUMNS[data.sortBy];
+//   const direction = String(data.sortDirection).toUpperCase() === "ASC" ? "ASC" : "DESC";
+//   const result = await pool.query(
+//     `SELECT gg.*, om.organizationname AS hotel
+//      FROM guest_glitch_entry_master gg
+//      INNER JOIN organization_master om ON om.organizationid = gg.organizationid
+//      WHERE ${where}
+//      ORDER BY ${sort} ${direction}, gg.id DESC
+//      LIMIT $${queryValues.length - 1} OFFSET $${queryValues.length};`, queryValues
+//   );
+//   return { rows: result.rows, total: Number(count.rows[0].total) };
+// };
 const reportList = async (data, organizationID) => {
-  const { filters, values } = buildReportFilters(data, organizationID);
-  const where = filters.join(" AND ");
-  const count = await pool.query(`SELECT COUNT(*)::bigint total FROM guest_glitch_entry_master gg WHERE ${where};`, values);
-  const limit = Number(data.pageSize), offset = (Number(data.page) - 1) * limit;
-  const queryValues = [...values, limit, offset];
-  const sort = REPORT_SORT_COLUMNS[data.sortBy];
-  const direction = String(data.sortDirection).toUpperCase() === "ASC" ? "ASC" : "DESC";
-  const result = await pool.query(
-    `SELECT gg.*, om.organizationname AS hotel
-     FROM guest_glitch_entry_master gg
-     INNER JOIN organization_master om ON om.organizationid = gg.organizationid
-     WHERE ${where}
-     ORDER BY ${sort} ${direction}, gg.id DESC
-     LIMIT $${queryValues.length - 1} OFFSET $${queryValues.length};`, queryValues
+  const { filters, values } = buildReportFilters(
+    data,
+    organizationID
   );
-  return { rows: result.rows, total: Number(count.rows[0].total) };
+
+  const where = filters.join(" AND ");
+
+  const count = await pool.query(
+    `
+    SELECT COUNT(*)::bigint AS total
+    FROM guest_glitch_entry_master gg
+    WHERE ${where};
+    `,
+    values
+  );
+
+  const limit = Number(data.pageSize);
+  const offset =
+    (Number(data.page) - 1) * limit;
+
+  const queryValues = [
+    ...values,
+    limit,
+    offset,
+  ];
+
+  const sort =
+    REPORT_SORT_COLUMNS[data.sortBy] ||
+    REPORT_SORT_COLUMNS.EntryDate;
+
+  const direction =
+    String(data.sortDirection).toUpperCase() === "ASC"
+      ? "ASC"
+      : "DESC";
+
+  const result = await pool.query(
+    `
+    SELECT
+      gg.*,
+      om.organizationname AS hotel
+    FROM guest_glitch_entry_master gg
+
+    LEFT JOIN organization_master om
+      ON om.organizationid = gg.organizationid
+
+    WHERE ${where}
+
+    ORDER BY
+      ${sort} ${direction},
+      gg.id DESC
+
+    LIMIT $${queryValues.length - 1}
+    OFFSET $${queryValues.length};
+    `,
+    queryValues
+  );
+
+  return {
+    rows: result.rows,
+    total: Number(count.rows[0].total),
+  };
 };
 
 const findReportByID = async (client, id, organizationID, lock = false) => {
@@ -236,18 +569,89 @@ const findReportByID = async (client, id, organizationID, lock = false) => {
   return result.rows[0] || null;
 };
 
-const resolveSelections = async (client, organizationID, rows) => {
-  const unique = (field) => [...new Set(rows.flatMap((row) => row[field] || []).map(Number))];
+// const resolveSelections = async (client, organizationID, rows) => {
+//   const unique = (field) => [...new Set(rows.flatMap((row) => row[field] || []).map(Number))];
+//   const [departments, users] = await Promise.all([
+//     validateDepartments(client, organizationID, unique("departmentids")),
+//     validateUsers(client, organizationID, [...new Set([...unique("receivedbyids"), ...unique("informedtoids")])]),
+//   ]);
+//   const departmentMap = new Map(departments.map((item) => [Number(item.departmentid), item.departmentname]));
+//   const userMap = new Map(users.map((item) => [Number(item.userid), item.fullname || item.username]));
+//   return rows.map((row) => ({
+//     departments: (row.departmentids || []).map(Number).map((id) => ({ID: id, Name: departmentMap.get(id) || null})),
+//     receivedByUsers: (row.receivedbyids || []).map(Number).map((id) => ({ID: id, Name: userMap.get(id) || null})),
+//     informedToUsers: (row.informedtoids || []).map(Number).map((id) => ({ID: id, Name: userMap.get(id) || null})),
+//     // departments: (row.departmentids || []).map(Number).map((id) => ({ id, name: departmentMap.get(id) || null })),
+//     // receivedByUsers: (row.receivedbyids || []).map(Number).map((id) => ({ id, name: userMap.get(id) || null })),
+//     // informedToUsers: (row.informedtoids || []).map(Number).map((id) => ({ id, name: userMap.get(id) || null })),
+//   }));
+// };
+
+const resolveSelections = async (client, organizationID, rows = []) => {
+  const unique = (field) =>
+    [
+      ...new Set(
+        rows
+          .flatMap((row) => row[field] || [])
+          .map(Number)
+          .filter(Number.isFinite)
+      ),
+    ];
+
   const [departments, users] = await Promise.all([
-    validateDepartments(client, organizationID, unique("departmentids")),
-    validateUsers(client, organizationID, [...new Set([...unique("receivedbyids"), ...unique("informedtoids")])]),
+    validateDepartments(
+      client,
+      organizationID,
+      unique("departmentids")
+    ),
+
+    validateUsers(
+      client,
+      organizationID,
+      [
+        ...new Set([
+          ...unique("receivedbyids"),
+          ...unique("informedtoids"),
+        ]),
+      ]
+    ),
   ]);
-  const departmentMap = new Map(departments.map((item) => [Number(item.departmentid), item.departmentname]));
-  const userMap = new Map(users.map((item) => [Number(item.userid), item.fullname || item.username]));
+
+  const departmentMap = new Map(
+    departments.map((item) => [
+      Number(item.departmentid),
+      item.departmentname,
+    ])
+  );
+
+  const userMap = new Map(
+    users.map((item) => [
+      Number(item.userid),
+      item.fullname || item.username,
+    ])
+  );
+
   return rows.map((row) => ({
-    departments: (row.departmentids || []).map(Number).map((id) => ({ id, name: departmentMap.get(id) || null })),
-    receivedByUsers: (row.receivedbyids || []).map(Number).map((id) => ({ id, name: userMap.get(id) || null })),
-    informedToUsers: (row.informedtoids || []).map(Number).map((id) => ({ id, name: userMap.get(id) || null })),
+    departments: (row.departmentids || [])
+      .map(Number)
+      .map((id) => ({
+        ID: id,
+        Name: departmentMap.get(id) || null,
+      })),
+
+    receivedByUsers: (row.receivedbyids || [])
+      .map(Number)
+      .map((id) => ({
+        ID: id,
+        Name: userMap.get(id) || null,
+      })),
+
+    informedToUsers: (row.informedtoids || [])
+      .map(Number)
+      .map((id) => ({
+        ID: id,
+        Name: userMap.get(id) || null,
+      })),
   }));
 };
 
@@ -262,7 +666,7 @@ const upsertOption = async (data) => {
        modifiedby = EXCLUDED.createdby, modifieddate = CURRENT_TIMESTAMP
      RETURNING optionid;`,
     [data.OrganizationID, data.OptionType, data.OptionValue, data.DisplayName || data.OptionValue,
-      JSON.stringify(data.Metadata || {}), Number(data.SortOrder || 0), data.IsActive !== false, data.UserID]
+    JSON.stringify(data.Metadata || {}), Number(data.SortOrder || 0), data.IsActive !== false, data.UserID]
   );
   return result.rows[0];
 };

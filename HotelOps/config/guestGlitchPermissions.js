@@ -3,7 +3,8 @@ const { PERMISSIONS } = require("./guestGlitchConstants");
 const ALL_PERMISSIONS = Object.values(PERMISSIONS);
 
 const ROLE_PERMISSIONS = Object.freeze({
-  "SUPERADMIN:HOD": ALL_PERMISSIONS,
+  "SUPERADMIN": ALL_PERMISSIONS,
+
   "HOTEL:HOD": [
     PERMISSIONS.VIEW,
     PERMISSIONS.CREATE,
@@ -17,10 +18,20 @@ const ROLE_PERMISSIONS = Object.freeze({
   ],
 });
 
-const normalizeRolePart = (value) => String(value || "").trim().toUpperCase();
+const normalizeRolePart = (value) =>
+  String(value || "").trim().toUpperCase();
 
 const getPermissions = (user = {}) => {
-  const key = `${normalizeRolePart(user.LoginType)}:${normalizeRolePart(user.UserType)}`;
+  const loginType = normalizeRolePart(user.LoginType);
+  const userType = normalizeRolePart(user.UserType);
+
+  // SuperAdmin has all Guest Glitch permissions.
+  if (loginType === "SUPERADMIN") {
+    return ALL_PERMISSIONS;
+  }
+
+  const key = `${loginType}:${userType}`;
+
   return ROLE_PERMISSIONS[key] || [];
 };
 
