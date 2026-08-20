@@ -6,9 +6,9 @@ const STATUS_CODES = require("../../utils/statusCodes");
 const AppError = require("../../utils/AppError");
 const handleError = require("../../utils/errorHandler");
 //==================================================Azur
-const uploadToAzure = require("../../AzurConfigration/Capex/AzureUpload");
+const uploadToAzure = require("../../AzurConfigration/Opex/AzureUpload");
 // =========================================================Get Data From service
-const CapexService = require("../../services/CapexService/CapexService");
+const OpexService = require("../../services/OpexService/OpexService");
 
 // ============================================================ Validation Helpers
 const isPositiveInteger = (value) => {
@@ -57,17 +57,17 @@ const authenticatedUser = (req) => {
     LoginType: String(req.user?.LoginType || "").trim(),
   };
 };
-// Send CAPEX commands/queries through the shared RabbitMQ RPC producer.
+// Send Opex commands/queries through the shared RabbitMQ RPC producer.
 const sendQueueResponse = async (res, action, data) => {
   const response = await producer.sendMessage(
-    QUEUE.CAPEX.REQUEST,
-    QUEUE.CAPEX.RESPONSE,
+    QUEUE.Opex.REQUEST,
+    QUEUE.Opex.RESPONSE,
     { action, data }
   );
 
   if (!response.success) {
     throw new AppError(
-      response.message || "Unable to fetch CAPEX data",
+      response.message || "Unable to fetch Opex data",
       response.statusCode || STATUS_CODES.BAD_REQUEST,
       response.errors
     );
@@ -80,7 +80,7 @@ const handleControllerError = (error, res) => {
   if (["Response Timeout", "RabbitMQ Channel Not Initialized"].includes(error.message)) {
     return handleError(
       new AppError(
-        "CAPEX service is temporarily unavailable. Please try again shortly.",
+        "Opex service is temporarily unavailable. Please try again shortly.",
         STATUS_CODES.SERVICE_UNAVAILABLE
       ),
       res
@@ -90,8 +90,8 @@ const handleControllerError = (error, res) => {
   return handleError(error, res);
 };
 
-// ============================================================ Create CAPEX
-exports.createCapex = async (req, res) => {
+// ============================================================ Create Opex
+exports.createOpex = async (req, res) => {
   let uploadedDocuments = [];
 
   try {
@@ -145,17 +145,17 @@ if (!Department) {
     data.Documents = uploadedDocuments;
 
     const response = await producer.sendMessage(
-      QUEUE.CAPEX.REQUEST,
-      QUEUE.CAPEX.RESPONSE,
+      QUEUE.Opex.REQUEST,
+      QUEUE.Opex.RESPONSE,
       {
-        action: "CREATE_CAPEX",
+        action: "CREATE_Opex",
         data,
       }
     );
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to create CAPEX",
+        response.message || "Unable to create Opex",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
         response.errors
       );
@@ -168,7 +168,7 @@ if (!Department) {
     if (["Response Timeout", "RabbitMQ Channel Not Initialized"].includes(error.message)) {
       return handleError(
         new AppError(
-          "CAPEX service is temporarily unavailable. Please try again shortly.",
+          "Opex service is temporarily unavailable. Please try again shortly.",
           STATUS_CODES.SERVICE_UNAVAILABLE
         ),
         res
@@ -178,8 +178,8 @@ if (!Department) {
     return handleError(error, res);
   }
 };
-// ============================================================ Get All CAPEX
-exports.getAllCapex = async (req, res) => {
+// ============================================================ Get All Opex
+exports.getAllOpex = async (req, res) => {
   try {
     const user = authenticatedUser(req);
 
@@ -242,7 +242,7 @@ exports.getAllCapex = async (req, res) => {
 
     // ================= Send To Queue =================
 
-  const response = await CapexService.getAllCapex({
+  const response = await OpexService.getAllOpex({
   ...user,
   OrganizationID,
   Status,
@@ -252,7 +252,7 @@ exports.getAllCapex = async (req, res) => {
 
 if (!response.success) {
   throw new AppError(
-    response.message || "Unable to fetch CAPEX records",
+    response.message || "Unable to fetch Opex records",
     response.statusCode || STATUS_CODES.BAD_REQUEST,
     response.errors
   );
@@ -264,26 +264,26 @@ return res.status(STATUS_CODES.SUCCESS).json(response);
     return handleControllerError(error, res);
   }
 };
-// ============================================================ Get CAPEX By ID
-exports.getCapexById = async (req, res) => {
+// ============================================================ Get Opex By ID
+exports.getOpexById = async (req, res) => {
   try {
     if (!isPositiveInteger(req.params.id)) {
       throw new AppError(
-        "CAPEX ID must be a positive integer",
+        "Opex ID must be a positive integer",
         STATUS_CODES.BAD_REQUEST
       );
     }
 
     const user = authenticatedUser(req);
     
-    const response = await CapexService.getCapexById({
+    const response = await OpexService.getOpexById({
       ...user,
-      CapexID: Number(req.params.id),
+      OpexID: Number(req.params.id),
     });
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to fetch CAPEX",
+        response.message || "Unable to fetch Opex",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
         response.errors
       );
@@ -349,20 +349,20 @@ const parseDocumentIDs = (value) => {
 
   return [...new Set(documentIDs)];
 };
-// ============================================================ Update CAPEX
-exports.updateCapex = async (req, res) => {
+// ============================================================ Update Opex
+exports.updateOpex = async (req, res) => {
   let uploadedDocuments = [];
 
   try {
     const body = req.body || {};
 
     // ============================================================
-    // CAPEX ID FROM BODY
+    // Opex ID FROM BODY
     // ============================================================
 
    
 
-    const CapexID = body.CapexID;
+    const OpexID = body.OpexID;
 
     // ============================================================
     // USER
@@ -379,7 +379,7 @@ exports.updateCapex = async (req, res) => {
     // So we do not take OrganizationID from frontend.
 
     // ============================================================
-    // BASIC CAPEX FIELDS
+    // BASIC Opex FIELDS
     // ============================================================
 
     if (
@@ -462,7 +462,7 @@ exports.updateCapex = async (req, res) => {
     // ============================================================
 
     const forbiddenApprovalFields = [
-      "CapexApprovalID",
+      "OpexApprovalID",
       "LevelNo",
       "ApprovalRole",
       "Status",
@@ -482,7 +482,7 @@ exports.updateCapex = async (req, res) => {
       )
     ) {
       throw new AppError(
-        "Approval fields cannot be changed through the CAPEX update API",
+        "Approval fields cannot be changed through the Opex update API",
         STATUS_CODES.BAD_REQUEST
       );
     }
@@ -521,24 +521,24 @@ exports.updateCapex = async (req, res) => {
       deleteDocumentIDs.length === 0
     ) {
       throw new AppError(
-        "No CAPEX changes were provided",
+        "No Opex changes were provided",
         STATUS_CODES.BAD_REQUEST
       );
     }
 
     // ============================================================
-    // SEND TO CAPEX QUEUE
+    // SEND TO Opex QUEUE
     // ============================================================
 
     const response =
       await producer.sendMessage(
-        QUEUE.CAPEX.REQUEST,
-        QUEUE.CAPEX.RESPONSE,
+        QUEUE.Opex.REQUEST,
+        QUEUE.Opex.RESPONSE,
         {
-          action: "UPDATE_CAPEX",
+          action: "UPDATE_Opex",
 
           data: {
-            CapexID,
+            OpexID,
 
             ...user,
 
@@ -559,7 +559,7 @@ exports.updateCapex = async (req, res) => {
     if (!response.success) {
       throw new AppError(
         response.message ||
-          "Unable to update CAPEX",
+          "Unable to update Opex",
 
         response.statusCode ||
           STATUS_CODES.BAD_REQUEST,
@@ -584,25 +584,25 @@ exports.updateCapex = async (req, res) => {
   }
 };
 
-// ============================================================ Soft Delete CAPEX
-exports.deleteCapex = async (req, res) => {
+// ============================================================ Soft Delete Opex
+exports.deleteOpex = async (req, res) => {
   try {
-    const CapexID = req.body.CapexID;
+    const OpexID = req.body.OpexID;
 
-    if (!isPositiveInteger(CapexID)) {
+    if (!isPositiveInteger(OpexID)) {
       throw new AppError(
-        "CAPEX ID must be a positive integer",
+        "Opex ID must be a positive integer",
         STATUS_CODES.BAD_REQUEST
       );
     }
 
     const response = await producer.sendMessage(
-      QUEUE.CAPEX.REQUEST,
-      QUEUE.CAPEX.RESPONSE,
+      QUEUE.Opex.REQUEST,
+      QUEUE.Opex.RESPONSE,
       {
-        action: "DELETE_CAPEX",
+        action: "DELETE_Opex",
         data: {
-          CapexID: Number(CapexID),
+          OpexID: Number(OpexID),
           ...authenticatedUser(req),
         },
       }
@@ -610,7 +610,7 @@ exports.deleteCapex = async (req, res) => {
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to delete CAPEX",
+        response.message || "Unable to delete Opex",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
         response.errors
       );
@@ -625,13 +625,13 @@ exports.deleteCapex = async (req, res) => {
   }
 };
 // ============================================================ Approval Action
-exports.approveCapex = async (req, res) => {
+exports.approveOpex = async (req, res) => {
   try {
-    const CapexID = req.body?.CapexID;
+    const OpexID = req.body?.OpexID;
 
-    if (!isPositiveInteger(Number(CapexID))) {
+    if (!isPositiveInteger(Number(OpexID))) {
       throw new AppError(
-        "CAPEX ID must be a positive integer",
+        "Opex ID must be a positive integer",
         STATUS_CODES.BAD_REQUEST
       );
     }
@@ -665,13 +665,13 @@ exports.approveCapex = async (req, res) => {
     const user = authenticatedUser(req);
 
     const response = await producer.sendMessage(
-      QUEUE.CAPEX.REQUEST,
-      QUEUE.CAPEX.RESPONSE,
+      QUEUE.Opex.REQUEST,
+      QUEUE.Opex.RESPONSE,
       {
-        action: "PROCESS_CAPEX_APPROVAL",
+        action: "PROCESS_Opex_APPROVAL",
 
         data: {
-          CapexID: Number(CapexID),
+          OpexID: Number(OpexID),
           Action: action,
           Remarks: remarks || null,
           UserID: user.UserID,
@@ -683,7 +683,7 @@ exports.approveCapex = async (req, res) => {
     if (!response.success) {
       throw new AppError(
         response.message ||
-          "Unable to process CAPEX approval",
+          "Unable to process Opex approval",
         response.statusCode ||
           STATUS_CODES.BAD_REQUEST,
         response.errors
@@ -749,15 +749,15 @@ const getReport = async (req, res, action) => {
   }
 };
 // ============================================================ Summary Report
-exports.getCapexSummaryReport = async (req, res) => {
+exports.getOpexSummaryReport = async (req, res) => {
   try {
-    const response = await CapexService.getCapexSummaryReport({
+    const response = await OpexService.getOpexSummaryReport({
       Filters: reportFilters(req),
     });
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to fetch CAPEX summary report",
+        response.message || "Unable to fetch Opex summary report",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
         response.errors
       );
@@ -769,15 +769,15 @@ exports.getCapexSummaryReport = async (req, res) => {
   }
 };
 // ============================================================ Department Report
-exports.getCapexDepartmentReport = async (req, res) => {
+exports.getOpexDepartmentReport = async (req, res) => {
   try {
-    const response = await CapexService.getCapexDepartmentReport({
+    const response = await OpexService.getOpexDepartmentReport({
       Filters: reportFilters(req),
     });
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to fetch CAPEX department report",
+        response.message || "Unable to fetch Opex department report",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
         response.errors
       );
@@ -789,15 +789,15 @@ exports.getCapexDepartmentReport = async (req, res) => {
   }
 };
 // ============================================================ Organization Report
-exports.getCapexOrganizationReport = async (req, res) => {
+exports.getOpexOrganizationReport = async (req, res) => {
   try {
-    const response = await CapexService.getCapexOrganizationReport({
+    const response = await OpexService.getOpexOrganizationReport({
       Filters: reportFilters(req),
     });
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to fetch CAPEX organization report",
+        response.message || "Unable to fetch Opex organization report",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
         response.errors
       );
@@ -808,8 +808,8 @@ exports.getCapexOrganizationReport = async (req, res) => {
     return handleControllerError(error, res);
   }
 };
-// ============================================================CREATE CAPEX APPROVAL CONFIG
-exports.createCapexApprovalConfig = async (req, res) => {
+// ============================================================CREATE Opex APPROVAL CONFIG
+exports.createOpexApprovalConfig = async (req, res) => {
   try {
     const {
       OrganizationID,
@@ -853,7 +853,7 @@ exports.createCapexApprovalConfig = async (req, res) => {
 
     return await sendQueueResponse(
       res,
-      "CREATE_CAPEX_APPROVAL_CONFIG",
+      "CREATE_Opex_APPROVAL_CONFIG",
       {
         ...user,
         OrganizationID: Number(OrganizationID),
@@ -865,8 +865,8 @@ exports.createCapexApprovalConfig = async (req, res) => {
     return handleControllerError(error, res);
   }
 };
-// ============================================================GET ALL CAPEX APPROVAL CONFIG
-exports.getCapexApprovalConfig = async (req, res) => {
+// ============================================================GET ALL Opex APPROVAL CONFIG
+exports.getOpexApprovalConfig = async (req, res) => {
   try {
     let OrganizationID = null;
 
@@ -885,13 +885,13 @@ exports.getCapexApprovalConfig = async (req, res) => {
       OrganizationID = Number(req.query.OrganizationID);
     }
 
-    const response = await CapexService.getApprovalConfig({
+    const response = await OpexService.getApprovalConfig({
       OrganizationID,
     });
 
     if (!response.success) {
       throw new AppError(
-        response.message || "Unable to fetch CAPEX approval configuration",
+        response.message || "Unable to fetch Opex approval configuration",
         response.statusCode || STATUS_CODES.BAD_REQUEST,
         response.errors
       );
@@ -902,14 +902,14 @@ exports.getCapexApprovalConfig = async (req, res) => {
     return handleControllerError(error, res);
   }
 };
-// ============================================================DELETE CAPEX APPROVAL CONFIG
-exports.deleteCapexApprovalConfig = async (req, res) => {
+// ============================================================DELETE Opex APPROVAL CONFIG
+exports.deleteOpexApprovalConfig = async (req, res) => {
   try {
-    const { CapexApprovalConfigID } = req.body || {};
+    const { OpexApprovalConfigID } = req.body || {};
 
-    if (!isPositiveInteger(CapexApprovalConfigID)) {
+    if (!isPositiveInteger(OpexApprovalConfigID)) {
       throw new AppError(
-        "CAPEX Approval Config ID must be a positive integer",
+        "Opex Approval Config ID must be a positive integer",
         STATUS_CODES.BAD_REQUEST
       );
     }
@@ -918,10 +918,10 @@ exports.deleteCapexApprovalConfig = async (req, res) => {
 
     return await sendQueueResponse(
       res,
-      "DELETE_CAPEX_APPROVAL_CONFIG",
+      "DELETE_Opex_APPROVAL_CONFIG",
       {
         ...user,
-        CapexApprovalConfigID: Number(CapexApprovalConfigID),
+        OpexApprovalConfigID: Number(OpexApprovalConfigID),
       }
     );
   } catch (error) {
@@ -930,8 +930,8 @@ exports.deleteCapexApprovalConfig = async (req, res) => {
 };
 
 // ============================================================PDF Apis
-// ============================================================Generate CAPEX List PDF
-exports.generateCapexListPdf = async (req, res) => {
+// ============================================================Generate Opex List PDF
+exports.generateOpexListPdf = async (req, res) => {
   try {
     // ================= OrganizationID =================
 
@@ -975,7 +975,7 @@ exports.generateCapexListPdf = async (req, res) => {
 
     const user = authenticatedUser(req);
 
-    return await sendQueueResponse(res, "GENERATE_CAPEX_LIST_PDF", {
+    return await sendQueueResponse(res, "GENERATE_Opex_LIST_PDF", {
       ...user,
       OrganizationID,
       Status,

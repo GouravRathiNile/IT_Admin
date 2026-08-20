@@ -10,12 +10,6 @@ const CapexHandler = async (message) => {
       case "CREATE_CAPEX":
         return await CapexService.createCapex(message.data);
 
-      case "GET_ALL_CAPEX":
-        return await CapexService.getAllCapex(message.data);
-
-      case "GET_CAPEX_BY_ID":
-        return await CapexService.getCapexById(message.data);
-
       case "UPDATE_CAPEX":
         return await CapexService.updateCapex(message.data);
 
@@ -25,16 +19,6 @@ const CapexHandler = async (message) => {
       // ====================================================== Approval Workflow
       case "PROCESS_CAPEX_APPROVAL":
         return await CapexService.processCapexApproval(message.data);
-
-      // ====================================================== Reports
-      case "GET_CAPEX_SUMMARY_REPORT":
-        return await CapexService.getCapexSummaryReport(message.data);
-
-      case "GET_CAPEX_DEPARTMENT_REPORT":
-        return await CapexService.getCapexDepartmentReport(message.data);
-
-      case "GET_CAPEX_ORGANIZATION_REPORT":
-        return await CapexService.getCapexOrganizationReport(message.data);
 
       // ====================================================== // CAPEX APPROVAL CONFIG CRUD
       case "CREATE_CAPEX_APPROVAL_CONFIG":
