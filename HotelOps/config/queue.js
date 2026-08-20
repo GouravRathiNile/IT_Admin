@@ -38,6 +38,10 @@ module.exports = {
     REQUEST: "guest_glitch_request_queue",
     RESPONSE: "guest_glitch_response_queue",
   },
+  GUEST_MEET: {
+    REQUEST: "guest_meet_request_queue",
+    RESPONSE: "guest_meet_response_queue",
+  },
   CAPEX: {
     REQUEST: "capex_request_queue",
     RESPONSE: "capex_response_queue",

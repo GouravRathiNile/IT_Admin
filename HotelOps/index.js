@@ -23,6 +23,7 @@ const ProductRoutes = require("./routes/ITAdminRoutes/ProductRoutes");
 const UserRoutes = require("./routes/ITAdminRoutes/UserRoutes");
 const HotelOpsLoginRoutes = require("./routes/ITAdminRoutes/HotelOpsLoginRoutes");
 const GuestGlitchRoutes = require("./routes/GuestGlitchRoutes/GuestGlitchRoutes");
+const GuestMeetRoutes = require("./routes/GuestMeetRoute/GuestMeetRoute");
 const CapexRoutes = require("./routes/CapexRoute/CapexRoute");
 const OpexRoutes = require("./routes/OpexRoute/OpexRoute");
 // ==========================================Consumers
@@ -35,6 +36,7 @@ const ProductHandler = require("./consumer/ITAdminConsumer/ProductHandler");
 const UserHandler = require("./consumer/ITAdminConsumer/UserHandler");
 const HotelOpsLoginHandler = require("./consumer/ITAdminConsumer/HotelOpsLoginHandler");
 const GuestGlitchHandler = require("./consumer/GuestGlitchConsumer/GuestGlitchHandler");
+const GuestMeetHandler = require("./consumer/GuestMeetConsumer/GuestMeetHandler");
 const CapexHandler = require("./consumer/CapexConsumer/CapexHandler");
 const OpexHandler = require("./consumer/OpexConsumer/OpexHandler");
 // ==========================================Packages Start
@@ -54,6 +56,7 @@ app.use("/api/ProductMaster", ProductRoutes);
 app.use("/api/UserMaster", UserRoutes);
 app.use("/api/HotelOpsLogin", HotelOpsLoginRoutes);
 app.use("/api/GuestGlitch", GuestGlitchRoutes);
+app.use("/api/guestmeet", GuestMeetRoutes);
 app.use("/api/Capex", CapexRoutes);
 app.use("/api/Opex", OpexRoutes);
 // =========================================Default Route
@@ -124,6 +127,11 @@ const startServer = async () => {
       QUEUE.GUEST_GLITCH.REQUEST,
       QUEUE.GUEST_GLITCH.RESPONSE,
       GuestGlitchHandler
+    );
+    await startConsumer(
+      QUEUE.GUEST_MEET.REQUEST,
+      QUEUE.GUEST_MEET.RESPONSE,
+      GuestMeetHandler
     );
     await startConsumer(
       QUEUE.CAPEX.REQUEST,

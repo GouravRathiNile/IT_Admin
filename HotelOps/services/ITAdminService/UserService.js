@@ -4231,7 +4231,8 @@ const updateUser = async (data) => {
 
     } = data;
 
-
+const finalAllOrganizationAccess =
+  AllOrganizationAccess === true;
     // ========================================================
     // 1. CHECK USER
     // ========================================================
@@ -4456,7 +4457,7 @@ const updateUser = async (data) => {
       // ------------------------------------------
 
       if (
-        AllOrganizationAccess === true
+        finalAllOrganizationAccess === true
       ) {
 
         // No organization mapping required.
@@ -4506,7 +4507,7 @@ const updateUser = async (data) => {
 
 
       if (
-        AllOrganizationAccess === true
+        finalAllOrganizationAccess === true
       ) {
 
         throw new Error(
@@ -4548,7 +4549,7 @@ const updateUser = async (data) => {
 
 
       if (
-        AllOrganizationAccess === true
+        finalAllOrganizationAccess === true
       ) {
 
         throw new Error(
@@ -4661,7 +4662,7 @@ const updateUser = async (data) => {
           finalProfilePhoto,
 
           LoginType === "SuperAdmin"
-            ? (AllOrganizationAccess ?? false)
+            ? (finalAllOrganizationAccess ?? false)
             : false,
 
           LastPasswordChangedDate || null,
@@ -4875,7 +4876,7 @@ const updateUser = async (data) => {
 
     if (
       LoginType === "SuperAdmin" &&
-      AllOrganizationAccess === true
+      finalAllOrganizationAccess === true
     ) {
 
       // No mapping rows required.
@@ -4889,7 +4890,7 @@ const updateUser = async (data) => {
 
     else if (
       LoginType === "SuperAdmin" &&
-      AllOrganizationAccess === false
+      finalAllOrganizationAccess === false
     ) {
 
       for (
