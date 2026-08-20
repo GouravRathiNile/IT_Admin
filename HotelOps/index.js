@@ -55,7 +55,7 @@ app.use("/api/UserMaster", UserRoutes);
 app.use("/api/HotelOpsLogin", HotelOpsLoginRoutes);
 app.use("/api/GuestGlitch", GuestGlitchRoutes);
 app.use("/api/Capex", CapexRoutes);
-app.use("/api/Opex", CapexRoutes);
+app.use("/api/Opex", OpexRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({

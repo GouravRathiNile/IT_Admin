@@ -2389,7 +2389,59 @@ const getUserProducts = async (UserID) => {
       message: error.message,
     };
   }
-};  
+};
+// ============================================================User wise product List
+const getUserProductsList = async (UserID) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        upm.UserID,
+        upm.ProductID,
+
+        pm.ProductName,
+        pm.ProductLabel
+
+      FROM user_product_mapping upm
+
+      LEFT JOIN Product_Master pm
+        ON upm.ProductID = pm.ProductID
+
+      WHERE upm.UserID = $1
+        AND upm.IsActive = TRUE
+        AND upm.IsDeleted = FALSE
+
+      ORDER BY pm.ProductName ASC;
+      `,
+      [UserID]
+    );
+
+    return {
+      success: true,
+
+      message: "User products fetched successfully",
+
+      Count: result.rows.length,
+
+      data: result.rows.map((row) => ({
+        ProductID: row.productid,
+        ProductName: row.productname,
+        ProductLabel: row.productlabel,
+      })),
+    };
+
+  } catch (error) {
+    console.log(
+      "Get User Products Error:",
+      error.message
+    );
+
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+};
 // ============================================================
 // USER PERSONAL DETAILS
 // ============================================================
@@ -2794,10 +2846,8 @@ const getAllUsersTabel = async (
               SELECT COALESCE(
                 json_agg(
                   json_build_object(
-                    'BrandID', om.BrandID,
-                    'BrandName', bm.BrandName,
+                    
                     'OrganizationID', om.OrganizationID,
-                    'OrganizationName', om.OrganizationName,
                     'ShortName', om.ShortName
                   )
                   ORDER BY om.OrganizationName ASC
@@ -2819,10 +2869,8 @@ const getAllUsersTabel = async (
               SELECT COALESCE(
                 json_agg(
                   json_build_object(
-                    'BrandID', om.BrandID,
-                    'BrandName', bm.BrandName,
+                   
                     'OrganizationID', uom.OrganizationID,
-                    'OrganizationName', om.OrganizationName,
                     'ShortName', om.ShortName
                   )
                   ORDER BY om.OrganizationName ASC
@@ -2853,10 +2901,8 @@ const getAllUsersTabel = async (
             json_agg(
               json_build_object(
                 'ProductID', pm.ProductID,
-                'ProductName', pm.ProductName,
-                'ProductLabel', pm.ProductLabel,
-                'ProductCategoryID', pm.ProductCategoryID,
-                'CategoryName', pcm.CategoryName
+                'ProductName', pm.ProductName
+               
               )
               ORDER BY pm.ProductName ASC
             ),
@@ -7498,4 +7544,5 @@ module.exports = {
   updateUserPersonalDetails,
   updateUserOrganizations,
   updateUserProducts,
+  getUserProductsList
 };

@@ -753,6 +753,51 @@ exports.getUserProducts = async (req, res) => {
 
   }
 };
+// =========================================User wise product List
+exports.getUserProductsList = async (req, res) => {
+
+  try {
+
+    // JWT se UserID
+    const UserID = req.user.UserID;
+
+
+    if (!UserID) {
+
+      throw new AppError(
+        "User ID not found in token",
+        STATUS_CODES.UNAUTHORIZED
+      );
+
+    }
+
+
+    const response =
+      await UserService.getUserProductsList(UserID);
+
+
+    if (!response.success) {
+
+      throw new AppError(
+        response.message ||
+        "Unable to fetch user products",
+
+        STATUS_CODES.BAD_REQUEST
+      );
+
+    }
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+
+    handleError(error, res);
+
+  }
+};
 // ============================================================
 // GET USER PERSONAL DETAILS
 // ============================================================

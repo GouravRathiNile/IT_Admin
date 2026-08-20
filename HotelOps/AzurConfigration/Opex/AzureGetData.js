@@ -7,7 +7,7 @@ const {
 const accountName = "hotelopsdevstorage";
 const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY;
 
-const containerName = "dox";
+const containerName = "doc";
 
 const sharedKeyCredential = new StorageSharedKeyCredential(
   accountName,

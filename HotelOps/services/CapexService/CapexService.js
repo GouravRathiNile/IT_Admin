@@ -2352,10 +2352,7 @@ const REPORT_DATA_CTE = `
         -- ====================================================
         -- 4. FINALLY APPROVED
         -- ====================================================
-        WHEN
-          UPPER(COALESCE(ca.GMStatus, '')) = 'APPROVED'
-          AND UPPER(COALESCE(ca.CEOStatus, '')) = 'APPROVED'
-          AND UPPER(COALESCE(ca.OwnerStatus, '')) = 'APPROVED'
+        WHEN UPPER(COALESCE(ca.FinalStatus, '')) = 'APPROVED'
         THEN 'Approved'
 
         -- ====================================================

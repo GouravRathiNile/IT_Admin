@@ -7,11 +7,19 @@ const path = require("path");
 
 // ==============================================================Default roles
 const DEFAULT_APPROVALS = Object.freeze([
-  { LevelNo: 1, ApprovalRole: "GM" },
-  { LevelNo: 2, ApprovalRole: "CEO" },
-  { LevelNo: 3, ApprovalRole: "OWNER" },
+  { LevelNo: 1, ApprovalRole: "HOD" },
+  { LevelNo: 2, ApprovalRole: "FC" },
+  { LevelNo: 3, ApprovalRole: "GM" },
+  { LevelNo: 4, ApprovalRole: "RD-FC" },
+  { LevelNo: 5, ApprovalRole: "CEO" },
 ]);
-const APPROVAL_ROLES = new Set(["GM", "CEO", "OWNER"]);
+const APPROVAL_ROLES = new Set([
+  "HOD",
+  "FC",
+  "GM",
+  "RD-FC",
+  "CEO",
+]);
 
 // ============================================================ Shared Response Helpers(Create Helpers)
 const fail = (message, statusCode = 400) => ({
@@ -19,7 +27,7 @@ const fail = (message, statusCode = 400) => ({
   statusCode,
   message,
 });
-// Merge organization overrides with the GM -> CEO -> OWNER defaults.
+// Merge organization overrides with the HOD -> FC -> GM -> RD-FC -> CEO defaults.
 const mergeApprovalConfiguration = (configuredRows) => {
   const approvals = new Map(
     DEFAULT_APPROVALS.map((approval) => [approval.LevelNo, approval]),
@@ -41,7 +49,7 @@ const mergeApprovalConfiguration = (configuredRows) => {
     (left, right) => left.LevelNo - right.LevelNo,
   );
 };
-// Opex currently supports only these three business approval roles.
+// Opex currently supports HOD, FC, GM, RD-FC and CEO approval roles.
 const approvalConfigurationIsValid = (approvals) =>
   approvals.length > 0 &&
   approvals.every((approval) =>
@@ -74,6 +82,7 @@ const reserveNumericIDs = async (client, tableName, columnName, count = 1) => {
     Opex_Master: "OpexID",
     Opex_Documents: "OpexDocumentID",
     Opex_Approval: "OpexApprovalID",
+    Opex_Approval_Config: "OpexApprovalConfigID",
   };
 
   if (allowedColumns[tableName] !== columnName) {
@@ -94,13 +103,20 @@ const reserveNumericIDs = async (client, tableName, columnName, count = 1) => {
 const createOpex = async (data) => {
   let client;
   let transactionStarted = false;
-  const documents = Array.isArray(data.Documents) ? data.Documents : [];
+
+  const documents = Array.isArray(data.Documents)
+    ? data.Documents
+    : [];
 
   try {
     client = await pool.connect();
+
     await client.query("BEGIN");
     transactionStarted = true;
 
+    // ========================================================
+    // 1. Generate Organization-wise Opex Number
+    // ========================================================
     const sequenceResult = await client.query(
       `
       INSERT INTO Opex_Organization_Sequence
@@ -109,26 +125,29 @@ const createOpex = async (data) => {
         LastOpexNumber
       )
       VALUES ($1, 1)
+
       ON CONFLICT (OrganizationID)
       DO UPDATE SET
-        LastOpexNumber = Opex_Organization_Sequence.LastOpexNumber + 1
+        LastOpexNumber =
+          Opex_Organization_Sequence.LastOpexNumber + 1
+
       RETURNING LastOpexNumber;
       `,
-      [data.OrganizationID],
+      [data.OrganizationID]
     );
 
-    const OpexNumber = Number(sequenceResult.rows[0].lastOpexnumber);
-    const [OpexID] = await reserveNumericIDs(
-      client,
-      "Opex_Master",
-      "OpexID",
+    const OpexNumber = Number(
+      sequenceResult.rows[0].lastopexnumber
     );
 
+    // ========================================================
+    // 2. Create Opex Master
+    // OpexID = AUTO INCREMENT
+    // ========================================================
     const masterResult = await client.query(
       `
       INSERT INTO Opex_Master
       (
-        OpexID,
         OrganizationID,
         OpexNumber,
         Department,
@@ -145,13 +164,23 @@ const createOpex = async (data) => {
       )
       VALUES
       (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        FALSE, FALSE, $11, CURRENT_TIMESTAMP
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        FALSE,
+        FALSE,
+        $10,
+        CURRENT_TIMESTAMP
       )
       RETURNING OpexID, Total;
       `,
       [
-        OpexID,
         data.OrganizationID,
         OpexNumber,
         data.Department,
@@ -162,23 +191,25 @@ const createOpex = async (data) => {
         data.Rate,
         data.Total,
         data.CreatedBy,
-      ],
+      ]
     );
 
-    const total = Number(masterResult.rows[0].total);
+    // DB generated OpexID
+    const OpexID = masterResult.rows[0].opexid;
 
-    const documentIDs = await reserveNumericIDs(
-      client,
-      "Opex_Documents",
-      "OpexDocumentID",
-      documents.length,
+    const total = Number(
+      masterResult.rows[0].total
     );
-    for (const [index, document] of documents.entries()) {
+
+    // ========================================================
+    // 3. Create Documents
+    // OpexDocumentID = AUTO INCREMENT
+    // ========================================================
+    for (const document of documents) {
       await client.query(
         `
         INSERT INTO Opex_Documents
         (
-          OpexDocumentID,
           OpexID,
           OpexNumber,
           FileName,
@@ -189,10 +220,20 @@ const createOpex = async (data) => {
           CreatedBy,
           CreatedDate
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8, CURRENT_TIMESTAMP);
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          FALSE,
+          $7,
+          CURRENT_TIMESTAMP
+        );
         `,
         [
-          documentIDs[index],
           OpexID,
           OpexNumber,
           document.FileName,
@@ -200,124 +241,159 @@ const createOpex = async (data) => {
           document.FileType,
           document.FileSize,
           data.CreatedBy,
-        ],
+        ]
       );
     }
 
+    // ========================================================
+    // 4. Approval Configuration
+    // ========================================================
     const approvalConfigResult = await client.query(
       `
-      SELECT ApprovalLevel AS LevelNo, ApprovalRole
+      SELECT
+        ApprovalLevel AS LevelNo,
+        ApprovalRole
       FROM Opex_Approval_Config
       WHERE OrganizationID = $1
         AND IsDeleted = FALSE
-      ORDER BY ApprovalOrder ASC, ApprovalLevel ASC, OpexApprovalConfigID ASC;
+      ORDER BY
+        ApprovalOrder ASC,
+        ApprovalLevel ASC,
+        OpexApprovalConfigID ASC;
       `,
-      [data.OrganizationID],
+      [data.OrganizationID]
     );
 
-    const approvals = mergeApprovalConfiguration(approvalConfigResult.rows);
+    const approvals = mergeApprovalConfiguration(
+      approvalConfigResult.rows
+    );
 
+    // ========================================================
+    // 5. Validate Approval Configuration
+    // ========================================================
     if (!approvalConfigurationIsValid(approvals)) {
       return await cleanupAndFail(
         client,
         transactionStarted,
         fail(
           "Opex approval configuration contains an invalid approval role.",
-          400,
-        ),
+          400
+        )
       );
     }
 
-    const [approvalID] = await reserveNumericIDs(
-      client,
-      "Opex_Approval",
-      "OpexApprovalID",
-    );
+    // ========================================================
+    // 6. Create Approval
+    // OpexApprovalID = AUTO INCREMENT
+    // ========================================================
     await client.query(
       `
       INSERT INTO Opex_Approval
       (
-        OpexApprovalID,
         OpexID,
+        HODStatus,
+        FCStatus,
         GMStatus,
+        RDFCStatus,
         CEOStatus,
-        OwnerStatus,
         FinalStatus,
         IsDeleted,
         CreatedBy,
         CreatedDate
       )
-      VALUES ($1, $2, 'Pending', 'Pending', 'Pending', 'Pending', FALSE, $3, CURRENT_TIMESTAMP);
+      VALUES
+      (
+        $1,
+        'Pending',
+        'Pending',
+        'Pending',
+        'Pending',
+        'Pending',
+        'Pending',
+        FALSE,
+        $2,
+        CURRENT_TIMESTAMP
+      );
       `,
-      [approvalID, OpexID, data.CreatedBy],
+      [
+        OpexID,
+        data.CreatedBy,
+      ]
     );
 
+    // ========================================================
+    // 7. Commit
+    // ========================================================
     await client.query("COMMIT");
     transactionStarted = false;
 
     return {
       success: true,
       message: "Opex created successfully.",
-      // data: {
-      //   OpexID: OpexID,
-      //   OpexNumber: OpexNumber,
-      //   Total: total,
-      //   DocumentCount: documents.length,
-      //   Approvals: approvals.map((approval) => ({
-      //     ...approval,
-      //     Status: "Pending",
-      //   })),
-      // },
     };
+
   } catch (error) {
     await rollback(client, transactionStarted);
 
-    console.error("Create Opex Error:", error.message);
+    console.error(
+      "Create Opex Error:",
+      error.message
+    );
 
-    const retryResponse = retryableDatabaseResponse(error);
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
     if (retryResponse) return retryResponse;
 
     if (error.code === "23503") {
-      return fail("Invalid Opex organization or related data.", 400);
+      return fail(
+        "Invalid Opex organization or related data.",
+        400
+      );
     }
 
     if (error.code === "23505") {
-      return fail("A Opex record with the same details already exists.", 409);
+      return fail(
+        "A Opex record with the same details already exists.",
+        409
+      );
     }
 
-    return fail("Unable to create Opex at this time.", 500);
+    return fail(
+      "Unable to create Opex at this time.",
+      500
+    );
+
   } finally {
     if (client) client.release();
   }
 };
-
 // ============================================================ Read Query and Mapping Helpers(Get Helpers)
 // The lateral query derives the first non-approved stage for each Opex.
 const Opex_SELECT = `
-  SELECT
-    cm.OpexID,
-    cm.OrganizationID,
-    cm.OpexNumber,
-    cm.Department,
-    cm.Item,
-    cm.Description,
-    cm.Make,
-    cm.Qty,
-    cm.Rate,
-    cm.Total,
-    cm.IsVoid,
-    cm.VoidRemarks,
-    cm.CreatedDate,
-    
+  SELECT 
+    cm.OpexID, 
+    cm.OrganizationID, 
+    cm.OpexNumber, 
+    cm.Department, 
+    cm.Item, 
+    cm.Description, 
+    cm.Make, 
+    cm.Qty, 
+    cm.Rate, 
+    cm.Total, 
+    cm.IsVoid, 
+    cm.VoidRemarks, 
+    cm.CreatedDate, 
 
-    CASE
+    CASE 
       WHEN UPPER(COALESCE(approval_state.FinalStatus, 'PENDING'))
            IN ('APPROVED', 'REJECTED')
       THEN NULL
       ELSE current_stage.ApprovalRole
     END AS CurrentApprovalRole,
 
-    CASE
+    CASE 
       WHEN UPPER(COALESCE(approval_state.FinalStatus, 'PENDING'))
            IN ('APPROVED', 'REJECTED')
       THEN approval_state.FinalStatus
@@ -343,38 +419,79 @@ const Opex_SELECT = `
 
   LEFT JOIN LATERAL
   (
-    SELECT
+    SELECT 
       cfg.ApprovalRole,
 
       CASE UPPER(cfg.ApprovalRole)
+
+        WHEN 'HOD'
+          THEN COALESCE(approval_state.HODStatus, 'PENDING')
+
+        WHEN 'FC'
+          THEN COALESCE(approval_state.FCStatus, 'PENDING')
+
         WHEN 'GM'
           THEN COALESCE(approval_state.GMStatus, 'PENDING')
+
+        WHEN 'RD-FC'
+          THEN COALESCE(approval_state.RDFCStatus, 'PENDING')
 
         WHEN 'CEO'
           THEN COALESCE(approval_state.CEOStatus, 'PENDING')
 
-        WHEN 'OWNER'
-          THEN COALESCE(approval_state.OwnerStatus, 'PENDING')
       END AS Status,
 
       cfg.ApprovalLevel,
       cfg.ApprovalOrder
 
-    FROM Opex_Approval_Config cfg
+    FROM
+    (
+      SELECT configured.ApprovalLevel, configured.ApprovalRole, configured.ApprovalOrder
+      FROM Opex_Approval_Config configured
+      WHERE configured.OrganizationID = cm.OrganizationID
+        AND configured.IsDeleted = FALSE
 
-    WHERE cfg.OrganizationID = cm.OrganizationID
-      AND cfg.IsDeleted = FALSE
+      UNION ALL
+
+      SELECT defaults.ApprovalLevel, defaults.ApprovalRole, defaults.ApprovalOrder
+      FROM
+      (
+        VALUES
+          (1, 'HOD', 1),
+          (2, 'FC', 2),
+          (3, 'GM', 3),
+          (4, 'RD-FC', 4),
+          (5, 'CEO', 5)
+      ) AS defaults(ApprovalLevel, ApprovalRole, ApprovalOrder)
+      WHERE NOT EXISTS
+      (
+        SELECT 1
+        FROM Opex_Approval_Config configured
+        WHERE configured.OrganizationID = cm.OrganizationID
+          AND configured.IsDeleted = FALSE
+      )
+    ) cfg
+
+    WHERE TRUE
 
       AND UPPER(
         CASE UPPER(cfg.ApprovalRole)
+
+          WHEN 'HOD'
+            THEN COALESCE(approval_state.HODStatus, 'PENDING')
+
+          WHEN 'FC'
+            THEN COALESCE(approval_state.FCStatus, 'PENDING')
+
           WHEN 'GM'
             THEN COALESCE(approval_state.GMStatus, 'PENDING')
+
+          WHEN 'RD-FC'
+            THEN COALESCE(approval_state.RDFCStatus, 'PENDING')
 
           WHEN 'CEO'
             THEN COALESCE(approval_state.CEOStatus, 'PENDING')
 
-          WHEN 'OWNER'
-            THEN COALESCE(approval_state.OwnerStatus, 'PENDING')
         END
       ) NOT IN ('APPROVED', 'REJECTED')
 
@@ -390,9 +507,9 @@ const Opex_SELECT = `
 `;
 // Convert PostgreSQL lowercase row keys into the public Opex response shape.
 const mapMaster = (row) => ({
-  OpexID: Number(row.Opexid),
+  OpexID: Number(row.opexid),
   OrganizationID: Number(row.organizationid),
-  OpexNumber: Number(row.Opexnumber),
+  OpexNumber: Number(row.opexnumber),
   Department: row.department,
   Item: row.item,
   Description: row.description,
@@ -409,13 +526,13 @@ const mapMaster = (row) => ({
 });
 // Generate a short-lived read URL while preserving stored blob paths in the DB.
 const mapDocument = (row) => ({
-  OpexDocumentID: Number(row.Opexdocumentid),
+  OpexDocumentID: Number(row.opexdocumentid),
   FileName: row.filename,
   FilePath: row.filepath ? generateDocumentUrl(row.filepath) : null,
 });
 // Return approval fields without exposing soft-delete/audit internals.
 const mapApproval = (row) => ({
-  OpexApprovalID: Number(row.Opexapprovalid),
+  OpexApprovalID: Number(row.opexapprovalid),
   ApprovalRole: row.approvalrole,
   Status: row.status,
   Remarks: row.remarks,
@@ -424,102 +541,159 @@ const mapApproval = (row) => ({
 const attachRelatedData = async (OpexRows) => {
   if (OpexRows.length === 0) return [];
 
-  const OpexIDs = OpexRows.map((row) => Number(row.Opexid));
+  const OpexIDs = OpexRows.map((row) => Number(row.opexid));
+
   const [documentsResult, approvalsResult] = await Promise.all([
-  pool.query(
-    `
-      SELECT
-        OpexDocumentID,
-        OpexID,
-        OpexNumber,
-        FileName,
-        FilePath,
-        FileType,
-        FileSize
-      FROM Opex_Documents
-      WHERE OpexID = ANY($1::bigint[])
-        AND IsDeleted = FALSE
-      ORDER BY OpexID ASC, OpexDocumentID ASC;
-    `,
-    [OpexIDs],
-  ),
+    pool.query(
+      `
+        SELECT
+          OpexDocumentID,
+          OpexID,
+          OpexNumber,
+          FileName,
+          FilePath,
+          FileType,
+          FileSize
+        FROM Opex_Documents
+        WHERE OpexID = ANY($1::bigint[])
+          AND IsDeleted = FALSE
+        ORDER BY OpexID ASC, OpexDocumentID ASC;
+      `,
+      [OpexIDs],
+    ),
 
-  pool.query(
-    `
-      SELECT
-        ca.OpexApprovalID,
-        ca.OpexID,
-        cfg.ApprovalLevel AS LevelNo,
-        cfg.ApprovalRole,
+    pool.query(
+      `
+        SELECT
+          ca.OpexApprovalID,
+          ca.OpexID,
 
-        CASE cfg.ApprovalRole
-          WHEN 'GM' THEN ca.GMStatus
-          WHEN 'CEO' THEN ca.CEOStatus
-          WHEN 'OWNER' THEN ca.OwnerStatus
-        END AS Status,
+          cfg.ApprovalLevel AS LevelNo,
+          cfg.ApprovalRole,
 
-        CASE cfg.ApprovalRole
-          WHEN 'GM' THEN ca.GMStatusDateTime
-          WHEN 'CEO' THEN ca.CEOStatusDateTime
-          WHEN 'OWNER' THEN ca.OwnerStatusDateTime
-        END AS StatusDateTime,
+          CASE UPPER(cfg.ApprovalRole)
+            WHEN 'HOD' THEN ca.HODStatus
+            WHEN 'FC' THEN ca.FCStatus
+            WHEN 'GM' THEN ca.GMStatus
+            WHEN 'RD-FC' THEN ca.RDFCStatus
+            WHEN 'CEO' THEN ca.CEOStatus
+          END AS Status,
 
-        CASE cfg.ApprovalRole
-          WHEN 'GM' THEN ca.GMStatusApprovedBy
-          WHEN 'CEO' THEN ca.CEOStatusApprovedBy
-          WHEN 'OWNER' THEN ca.OwnerStatusApprovedBy
-        END AS StatusApprovedBy,
+          CASE UPPER(cfg.ApprovalRole)
+            WHEN 'HOD' THEN ca.HODStatusDateTime
+            WHEN 'FC' THEN ca.FCStatusDateTime
+            WHEN 'GM' THEN ca.GMStatusDateTime
+            WHEN 'RD-FC' THEN ca.RDFCStatusDateTime
+            WHEN 'CEO' THEN ca.CEOStatusDateTime
+          END AS StatusDateTime,
 
-        CASE cfg.ApprovalRole
-          WHEN 'GM' THEN ca.GMRemarks
-          WHEN 'CEO' THEN ca.CEORemarks
-          WHEN 'OWNER' THEN ca.OwnerRemarks
-        END AS Remarks
+          CASE UPPER(cfg.ApprovalRole)
+            WHEN 'HOD' THEN ca.HODStatusApprovedBy
+            WHEN 'FC' THEN ca.FCStatusApprovedBy
+            WHEN 'GM' THEN ca.GMStatusApprovedBy
+            WHEN 'RD-FC' THEN ca.RDFCStatusApprovedBy
+            WHEN 'CEO' THEN ca.CEOStatusApprovedBy
+          END AS StatusApprovedBy,
 
-      FROM Opex_Approval ca
+          CASE UPPER(cfg.ApprovalRole)
+            WHEN 'HOD' THEN ca.HODRemarks
+            WHEN 'FC' THEN ca.FCRemarks
+            WHEN 'GM' THEN ca.GMRemarks
+            WHEN 'RD-FC' THEN ca.RDFCRemarks
+            WHEN 'CEO' THEN ca.CEORemarks
+          END AS Remarks
 
-      INNER JOIN Opex_Approval_Config cfg
-        ON cfg.OrganizationID = (
-          SELECT OrganizationID
-          FROM Opex_Master
-          WHERE OpexID = ca.OpexID
-        )
+        FROM Opex_Approval ca
 
-       AND cfg.IsDeleted = FALSE
+        INNER JOIN Opex_Master master
+          ON master.OpexID = ca.OpexID
 
-      WHERE ca.OpexID = ANY($1::bigint[])
-        AND ca.IsDeleted = FALSE
+        CROSS JOIN LATERAL
+        (
+          SELECT configured.ApprovalLevel, configured.ApprovalRole, configured.ApprovalOrder
+          FROM Opex_Approval_Config configured
+          WHERE configured.OrganizationID = master.OrganizationID
+            AND configured.IsDeleted = FALSE
 
-      ORDER BY
-        ca.OpexID ASC,
-        cfg.ApprovalLevel ASC,
-        ca.OpexApprovalID ASC;
-    `,
-    [OpexIDs],
-  ),
-]);
+          UNION ALL
+
+          SELECT defaults.ApprovalLevel, defaults.ApprovalRole, defaults.ApprovalOrder
+          FROM
+          (
+            VALUES
+              (1, 'HOD', 1),
+              (2, 'FC', 2),
+              (3, 'GM', 3),
+              (4, 'RD-FC', 4),
+              (5, 'CEO', 5)
+          ) AS defaults(ApprovalLevel, ApprovalRole, ApprovalOrder)
+          WHERE NOT EXISTS
+          (
+            SELECT 1
+            FROM Opex_Approval_Config configured
+            WHERE configured.OrganizationID = master.OrganizationID
+              AND configured.IsDeleted = FALSE
+          )
+        ) cfg
+
+        WHERE ca.OpexID = ANY($1::bigint[])
+          AND ca.IsDeleted = FALSE
+
+        ORDER BY
+          ca.OpexID ASC,
+          cfg.ApprovalOrder ASC,
+          cfg.ApprovalLevel ASC,
+          ca.OpexApprovalID ASC;
+      `,
+      [OpexIDs],
+    ),
+  ]);
+
+  // ============================================================
+  // Map Opex
+  // ============================================================
 
   const byID = new Map(
     OpexRows.map((row) => {
       const Opex = mapMaster(row);
+
+      // ✅ FIX
       return [Opex.OpexID, Opex];
     }),
   );
 
+  // ============================================================
+  // Attach Documents
+  // ============================================================
+
   for (const row of documentsResult.rows) {
-    byID.get(Number(row.Opexid))?.Documents.push(mapDocument(row));
+    byID
+      .get(Number(row.opexid))
+      ?.Documents.push(mapDocument(row));
   }
+
+  // ============================================================
+  // Attach Approvals
+  // ============================================================
 
   for (const row of approvalsResult.rows) {
-    byID.get(Number(row.Opexid))?.Approvals.push(mapApproval(row));
+    byID
+      .get(Number(row.opexid))
+      ?.Approvals.push(mapApproval(row));
   }
 
-  return OpexRows.map((row) => byID.get(Number(row.Opexid)));
+  // ============================================================
+  // Return
+  // ============================================================
+
+  return OpexRows.map((row) =>
+    byID.get(Number(row.opexid))
+  );
 };
 // ============================================================ Get All Opex
 const getAllOpex = async (data) => {
   try {
-    console.log("GET ALL Opex DATA:", JSON.stringify(data));
+    // console.log("GET ALL Opex DATA:", JSON.stringify(data));
 
     // =====================================================
     // Pagination
@@ -593,25 +767,34 @@ const getAllOpex = async (data) => {
     // STATUS FILTER
     // =====================================================
 
-    if (["GM", "CEO", "OWNER"].includes(userType)) {
+    const approverStatusColumns = {
+      HOD: "approval_state.HODStatus",
+      FC: "approval_state.FCStatus",
+      GM: "approval_state.GMStatus",
+      "RD-FC": "approval_state.RDFCStatus",
+      CEO: "approval_state.CEOStatus",
+    };
+    const approverStatusColumn = approverStatusColumns[userType];
+
+    if (approverStatusColumn) {
       // ---------------------------------------------------
       // GM
       // ---------------------------------------------------
 
-      if (userType === "GM") {
+      if (["HOD", "FC", "GM", "RD-FC", "CEO"].includes(userType)) {
         if (approvalStatus) {
           params.push(approvalStatus);
 
           query += `
             AND UPPER(
               COALESCE(
-                approval_state.GMStatus,
+                ${approverStatusColumn},
                 'PENDING'
               )
             ) = $${params.length}
           `;
         } else {
-          params.push("GM");
+          params.push(userType);
 
           query += `
             AND UPPER(
@@ -629,196 +812,6 @@ const getAllOpex = async (data) => {
             ) = 'PENDING'
           `;
         }
-      }
-
-      // ---------------------------------------------------
-      // CEO
-      // ---------------------------------------------------
-      else if (userType === "CEO") {
-        if (approvalStatus) {
-          params.push(approvalStatus);
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                approval_state.CEOStatus,
-                'PENDING'
-              )
-            ) = $${params.length}
-          `;
-        } else {
-          params.push("CEO");
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-          `;
-        }
-      }
-
-      // ---------------------------------------------------
-      // OWNER
-      // ---------------------------------------------------
-      else if (userType === "OWNER") {
-        if (approvalStatus) {
-          params.push(approvalStatus);
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                approval_state.OwnerStatus,
-                'PENDING'
-              )
-            ) = $${params.length}
-          `;
-        } else {
-          params.push("OWNER");
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-          `;
-        }
-      }
-    }
-
-    // =====================================================
-    // HOD
-    // =====================================================
-    else if (userType === "HOD") {
-      if (approvalStatus === "REJECTED") {
-        // Any stage rejected
-        query += `
-          AND (
-            UPPER(
-              COALESCE(
-                approval_state.GMStatus,
-                ''
-              )
-            ) = 'REJECTED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.CEOStatus,
-                ''
-              )
-            ) = 'REJECTED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.OwnerStatus,
-                ''
-              )
-            ) = 'REJECTED'
-          )
-        `;
-      } else if (approvalStatus === "APPROVED") {
-        // All stages approved
-        query += `
-          AND UPPER(
-            COALESCE(
-              approval_state.GMStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-
-          AND UPPER(
-            COALESCE(
-              approval_state.CEOStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-
-          AND UPPER(
-            COALESCE(
-              approval_state.OwnerStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-        `;
-      } else if (approvalStatus === "PENDING") {
-        // Not rejected + at least one pending
-        query += `
-          AND NOT (
-            UPPER(
-              COALESCE(
-                approval_state.GMStatus,
-                ''
-              )
-            ) = 'REJECTED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.CEOStatus,
-                ''
-              )
-            ) = 'REJECTED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.OwnerStatus,
-                ''
-              )
-            ) = 'REJECTED'
-          )
-
-          AND (
-            UPPER(
-              COALESCE(
-                approval_state.GMStatus,
-                'PENDING'
-              )
-            ) <> 'APPROVED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.CEOStatus,
-                'PENDING'
-              )
-            ) <> 'APPROVED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.OwnerStatus,
-                'PENDING'
-              )
-            ) <> 'APPROVED'
-          )
-        `;
       }
     }
 
@@ -881,24 +874,14 @@ const getAllOpex = async (data) => {
     // COUNT STATUS FILTER
     // =====================================================
 
-    if (["GM", "CEO", "OWNER"].includes(userType)) {
-      let statusColumn = null;
-
-      if (userType === "GM") {
-        statusColumn = "approval_state.GMStatus";
-      } else if (userType === "CEO") {
-        statusColumn = "approval_state.CEOStatus";
-      } else if (userType === "OWNER") {
-        statusColumn = "approval_state.OwnerStatus";
-      }
-
+    if (approverStatusColumn) {
       if (approvalStatus) {
         countParams.push(approvalStatus);
 
         countQuery += `
           AND UPPER(
             COALESCE(
-              ${statusColumn},
+              ${approverStatusColumn},
               'PENDING'
             )
           ) = $${countParams.length}
@@ -908,125 +891,10 @@ const getAllOpex = async (data) => {
         countQuery += `
           AND UPPER(
             COALESCE(
-              ${statusColumn},
+              ${approverStatusColumn},
               'PENDING'
             )
           ) = 'PENDING'
-        `;
-      }
-    }
-
-    // =====================================================
-    // HOD COUNT
-    // =====================================================
-    else if (userType === "HOD") {
-      if (approvalStatus === "REJECTED") {
-        countQuery += `
-          AND (
-            UPPER(
-              COALESCE(
-                approval_state.GMStatus,
-                ''
-              )
-            ) = 'REJECTED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.CEOStatus,
-                ''
-              )
-            ) = 'REJECTED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.OwnerStatus,
-                ''
-              )
-            ) = 'REJECTED'
-          )
-        `;
-      } else if (approvalStatus === "APPROVED") {
-        countQuery += `
-          AND UPPER(
-            COALESCE(
-              approval_state.GMStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-
-          AND UPPER(
-            COALESCE(
-              approval_state.CEOStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-
-          AND UPPER(
-            COALESCE(
-              approval_state.OwnerStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-        `;
-      } else if (approvalStatus === "PENDING") {
-        countQuery += `
-          AND NOT (
-            UPPER(
-              COALESCE(
-                approval_state.GMStatus,
-                ''
-              )
-            ) = 'REJECTED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.CEOStatus,
-                ''
-              )
-            ) = 'REJECTED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.OwnerStatus,
-                ''
-              )
-            ) = 'REJECTED'
-          )
-
-          AND (
-            UPPER(
-              COALESCE(
-                approval_state.GMStatus,
-                'PENDING'
-              )
-            ) <> 'APPROVED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.CEOStatus,
-                'PENDING'
-              )
-            ) <> 'APPROVED'
-
-            OR
-
-            UPPER(
-              COALESCE(
-                approval_state.OwnerStatus,
-                'PENDING'
-              )
-            ) <> 'APPROVED'
-          )
         `;
       }
     }
@@ -1302,7 +1170,7 @@ const updateOpex = async (data) => {
 
       const OpexInfo = updateResult.rows[0];
 
-      const OpexNumber = Number(OpexInfo.Opexnumber);
+      const OpexNumber = Number(OpexInfo.opexnumber);
 
       // ----------------------------------------------------------
       // Soft delete old documents
@@ -1727,20 +1595,30 @@ const processOpexApproval = async (data) => {
       SELECT
         OpexApprovalID,
 
+        HODStatus,
+        HODStatusDateTime,
+        HODStatusApprovedBy,
+        HODRemarks,
+
+        FCStatus,
+        FCStatusDateTime,
+        FCStatusApprovedBy,
+        FCRemarks,
+
         GMStatus,
         GMStatusDateTime,
         GMStatusApprovedBy,
         GMRemarks,
 
+        RDFCStatus,
+        RDFCStatusDateTime,
+        RDFCStatusApprovedBy,
+        RDFCRemarks,
+
         CEOStatus,
         CEOStatusDateTime,
         CEOStatusApprovedBy,
         CEORemarks,
-
-        OwnerStatus,
-        OwnerStatusDateTime,
-        OwnerStatusApprovedBy,
-        OwnerRemarks,
 
         FinalStatus,
         FinalStatusDateTime
@@ -1777,6 +1655,22 @@ const processOpexApproval = async (data) => {
 
     const getRoleData = (role) => {
       switch (String(role).trim().toUpperCase()) {
+        case "HOD":
+          return {
+            status: approval.hodstatus,
+            statusDateTime: approval.hodstatusdatetime,
+            approvedBy: approval.hodstatusapprovedby,
+            remarks: approval.hodremarks,
+          };
+
+        case "FC":
+          return {
+            status: approval.fcstatus,
+            statusDateTime: approval.fcstatusdatetime,
+            approvedBy: approval.fcstatusapprovedby,
+            remarks: approval.fcremarks,
+          };
+
         case "GM":
           return {
             status: approval.gmstatus,
@@ -1785,20 +1679,20 @@ const processOpexApproval = async (data) => {
             remarks: approval.gmremarks,
           };
 
+        case "RD-FC":
+          return {
+            status: approval.rdfcstatus,
+            statusDateTime: approval.rdfcstatusdatetime,
+            approvedBy: approval.rdfcstatusapprovedby,
+            remarks: approval.rdfcremarks,
+          };
+
         case "CEO":
           return {
             status: approval.ceostatus,
             statusDateTime: approval.ceostatusdatetime,
             approvedBy: approval.ceostatusapprovedby,
             remarks: approval.ceoremarks,
-          };
-
-        case "OWNER":
-          return {
-            status: approval.ownerstatus,
-            statusDateTime: approval.ownerstatusdatetime,
-            approvedBy: approval.ownerstatusapprovedby,
-            remarks: approval.ownerremarks,
           };
 
         default:
@@ -1977,7 +1871,17 @@ const processOpexApproval = async (data) => {
 
       transactionStarted = false;
 
-      return fail(`You cannot perform ${action} action at this stage.`, 403);
+      if (userStageIndex !== currentIndex) {
+        return fail(
+          `OPEX is ${currentStatus.toLowerCase()} from ${currentRole}.`,
+          403,
+        );
+      }
+
+      return fail(
+        `The ${currentRole} approval stage is currently ${currentStatus.toLowerCase()} and cannot perform ${action.toLowerCase()} again.`,
+        403,
+      );
     }
 
     // ============================================================
@@ -1991,10 +1895,30 @@ const processOpexApproval = async (data) => {
         status,
         userId,
         roleRemarks || null,
-        approval.Opexapprovalid,
+        approval.opexapprovalid,
       ];
 
       switch (role) {
+        case "HOD":
+          query = `
+            UPDATE Opex_Approval
+            SET HODStatus = $1, HODStatusDateTime = CURRENT_TIMESTAMP,
+                HODStatusApprovedBy = $2, HODRemarks = $3,
+                ModifiedBy = $2, ModifiedDate = CURRENT_TIMESTAMP
+            WHERE OpexApprovalID = $4 AND IsDeleted = FALSE;
+          `;
+          break;
+
+        case "FC":
+          query = `
+            UPDATE Opex_Approval
+            SET FCStatus = $1, FCStatusDateTime = CURRENT_TIMESTAMP,
+                FCStatusApprovedBy = $2, FCRemarks = $3,
+                ModifiedBy = $2, ModifiedDate = CURRENT_TIMESTAMP
+            WHERE OpexApprovalID = $4 AND IsDeleted = FALSE;
+          `;
+          break;
+
         case "GM":
           query = `
             UPDATE Opex_Approval
@@ -2011,6 +1935,16 @@ const processOpexApproval = async (data) => {
 
           break;
 
+        case "RD-FC":
+          query = `
+            UPDATE Opex_Approval
+            SET RDFCStatus = $1, RDFCStatusDateTime = CURRENT_TIMESTAMP,
+                RDFCStatusApprovedBy = $2, RDFCRemarks = $3,
+                ModifiedBy = $2, ModifiedDate = CURRENT_TIMESTAMP
+            WHERE OpexApprovalID = $4 AND IsDeleted = FALSE;
+          `;
+          break;
+
         case "CEO":
           query = `
             UPDATE Opex_Approval
@@ -2019,22 +1953,6 @@ const processOpexApproval = async (data) => {
               CEOStatusDateTime = CURRENT_TIMESTAMP,
               CEOStatusApprovedBy = $2,
               CEORemarks = $3,
-              ModifiedBy = $2,
-              ModifiedDate = CURRENT_TIMESTAMP
-            WHERE OpexApprovalID = $4
-              AND IsDeleted = FALSE;
-          `;
-
-          break;
-
-        case "OWNER":
-          query = `
-            UPDATE Opex_Approval
-            SET
-              OwnerStatus = $1,
-              OwnerStatusDateTime = CURRENT_TIMESTAMP,
-              OwnerStatusApprovedBy = $2,
-              OwnerRemarks = $3,
               ModifiedBy = $2,
               ModifiedDate = CURRENT_TIMESTAMP
             WHERE OpexApprovalID = $4
@@ -2096,7 +2014,7 @@ const processOpexApproval = async (data) => {
           WHERE OpexApprovalID = $2
             AND IsDeleted = FALSE;
           `,
-          [data.UserID, approval.Opexapprovalid],
+          [data.UserID, approval.opexapprovalid],
         );
 
         await client.query("COMMIT");
@@ -2137,7 +2055,7 @@ const processOpexApproval = async (data) => {
         WHERE OpexApprovalID = $2
           AND IsDeleted = FALSE;
         `,
-        [data.UserID, approval.Opexapprovalid],
+        [data.UserID, approval.opexapprovalid],
       );
 
       await client.query("COMMIT");
@@ -2147,7 +2065,7 @@ const processOpexApproval = async (data) => {
       return {
         success: true,
 
-        message: "Opex finally approved successfully.",
+        message: "Opex approved successfully.",
 
         // data: {
         //   OpexID: Number(Opex.Opexid),
@@ -2198,7 +2116,7 @@ const processOpexApproval = async (data) => {
         WHERE OpexApprovalID = $2
           AND IsDeleted = FALSE;
         `,
-        [data.UserID, approval.Opexapprovalid],
+        [data.UserID, approval.opexapprovalid],
       );
 
       await client.query("COMMIT");
@@ -2256,7 +2174,7 @@ const processOpexApproval = async (data) => {
         WHERE OpexApprovalID = $2
           AND IsDeleted = FALSE;
         `,
-        [data.UserID, approval.Opexapprovalid],
+        [data.UserID, approval.opexapprovalid],
       );
 
       await client.query("COMMIT");
@@ -2333,9 +2251,11 @@ const REPORT_DATA_CTE = `
         -- 2. REJECTED
         -- ====================================================
         WHEN
-          UPPER(COALESCE(ca.GMStatus, '')) = 'REJECTED'
+          UPPER(COALESCE(ca.HODStatus, '')) = 'REJECTED'
+          OR UPPER(COALESCE(ca.FCStatus, '')) = 'REJECTED'
+          OR UPPER(COALESCE(ca.GMStatus, '')) = 'REJECTED'
+          OR UPPER(COALESCE(ca.RDFCStatus, '')) = 'REJECTED'
           OR UPPER(COALESCE(ca.CEOStatus, '')) = 'REJECTED'
-          OR UPPER(COALESCE(ca.OwnerStatus, '')) = 'REJECTED'
           OR UPPER(COALESCE(ca.FinalStatus, '')) = 'REJECTED'
         THEN 'Rejected'
 
@@ -2343,19 +2263,18 @@ const REPORT_DATA_CTE = `
         -- 3. RETURNED
         -- ====================================================
         WHEN
-          UPPER(COALESCE(ca.GMStatus, '')) = 'RETURNED'
+          UPPER(COALESCE(ca.HODStatus, '')) = 'RETURNED'
+          OR UPPER(COALESCE(ca.FCStatus, '')) = 'RETURNED'
+          OR UPPER(COALESCE(ca.GMStatus, '')) = 'RETURNED'
+          OR UPPER(COALESCE(ca.RDFCStatus, '')) = 'RETURNED'
           OR UPPER(COALESCE(ca.CEOStatus, '')) = 'RETURNED'
-          OR UPPER(COALESCE(ca.OwnerStatus, '')) = 'RETURNED'
           OR UPPER(COALESCE(ca.FinalStatus, '')) = 'RETURNED'
         THEN 'Returned'
 
         -- ====================================================
         -- 4. FINALLY APPROVED
         -- ====================================================
-        WHEN
-          UPPER(COALESCE(ca.GMStatus, '')) = 'APPROVED'
-          AND UPPER(COALESCE(ca.CEOStatus, '')) = 'APPROVED'
-          AND UPPER(COALESCE(ca.OwnerStatus, '')) = 'APPROVED'
+        WHEN UPPER(COALESCE(ca.FinalStatus, '')) = 'APPROVED'
         THEN 'Approved'
 
         -- ====================================================
@@ -2408,8 +2327,8 @@ const reportFailure = (error, reportName) => {
 // ============================================================ Summary Report
 const getOpexSummaryReport = async (data) => {
   try {
-console.log("Received Filters:", JSON.stringify(data.Filters));
-    console.log("Query params:", reportParameters(data));
+// console.log("Received Filters:", JSON.stringify(data.Filters));
+    // console.log("Query params:", reportParameters(data));
     const result = await pool.query(
       `
       ${REPORT_DATA_CTE}
@@ -2523,7 +2442,7 @@ console.log("Received Filters:", JSON.stringify(data.Filters));
       message: "Opex summary report fetched successfully.",
 
       data: {
-        TotalOpex: Number(row.totalOpex),
+        TotalOpex: Number(row.totalopex),
         TotalAmount: Number(row.totalamount),
 
         PendingCount: Number(row.pendingcount),
@@ -2703,7 +2622,7 @@ const getApprovalConfig = async (data) => {
       success: true,
       message: "Opex approval configuration fetched successfully.",
       data: result.rows.map((row) => ({
-        OpexApprovalConfigID: Number(row.Opexapprovalconfigid),
+        OpexApprovalConfigID: Number(row.opexapprovalconfigid),
         OrganizationID: Number(row.organizationid),
         ApprovalLevel: Number(row.approvallevel),
         ApprovalRole: row.approvalrole,
@@ -2802,7 +2721,7 @@ const createApprovalConfig = async (data) => {
 
       if (!APPROVAL_ROLES.has(ApprovalRole)) {
         return fail(
-          "ApprovalRole must be GM, CEO, or OWNER.",
+          "ApprovalRole must be HOD, FC, GM, RD-FC, or CEO.",
           400
         );
       }
@@ -2981,10 +2900,17 @@ const createApprovalConfig = async (data) => {
       // ==========================================================
 
       else {
+        const [ConfigID] = await reserveNumericIDs(
+          client,
+          "Opex_Approval_Config",
+          "OpexApprovalConfigID",
+        );
+
         const result = await client.query(
           `
           INSERT INTO Opex_Approval_Config
           (
+            OpexApprovalConfigID,
             OrganizationID,
             ApprovalLevel,
             ApprovalRole,
@@ -3001,13 +2927,15 @@ const createApprovalConfig = async (data) => {
             $3,
             $4,
             $5,
-            FALSE,
             $6,
+            FALSE,
+            $7,
             CURRENT_TIMESTAMP
           )
-          RETURNING OpexApprovalConfigID;
+          RETURNING OpexApprovalConfigID AS "OpexApprovalConfigID";
           `,
           [
+            ConfigID,
             OrganizationID,
             ApprovalLevel,
             ApprovalRole,
@@ -3017,11 +2945,11 @@ const createApprovalConfig = async (data) => {
           ]
         );
 
-        const ConfigID = Number(
+        const savedConfigID = Number(
           result.rows[0].OpexApprovalConfigID
         );
 
-        inserted.push(ConfigID);
+        inserted.push(savedConfigID);
       }
 
       processedLevels.add(ApprovalLevel);

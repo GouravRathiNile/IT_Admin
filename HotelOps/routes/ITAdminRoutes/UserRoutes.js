@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const upload = require("../../middleware/upload");
 const authenticateToken = require("../../middleware/authMiddleware");
-const { createUser,getAllUsers,getUserById,getUserDropdown,updateUser,deleteUser,getUserOrganizations, getUserProducts,getUserPersonalDetails,getAllUsersTabel,updateUserPersonalDetails,updateUserOrganizations,updateUserProducts } = require("../../controllers/ITAdminController/UserController");
+const { createUser,getAllUsers,getUserById,getUserDropdown,updateUser,deleteUser,getUserOrganizations, getUserProducts,getUserPersonalDetails,getAllUsersTabel,updateUserPersonalDetails,updateUserOrganizations,updateUserProducts,getUserProductsList } = require("../../controllers/ITAdminController/UserController");
 
 // ========================================= Create User
 router.post("/Create", authenticateToken, upload.single("ProfilePhoto"), createUser);
@@ -18,6 +18,8 @@ router.get("/GetUserNames", authenticateToken, getUserDropdown);
 router.get("/GetUserOrganizations",authenticateToken,getUserOrganizations);
 // ===========================================User Products
 router.get("/GetUserProducts",authenticateToken,getUserProducts);
+// ===========================================User Products
+router.get("/GetUserProductsList",authenticateToken,getUserProductsList);
 // ===========================================User Personal Details
 router.get("/GetUserPersonalDetails",authenticateToken, getUserPersonalDetails);
 // ========================================= User Tabel

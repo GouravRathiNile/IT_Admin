@@ -60,8 +60,8 @@ const authenticatedUser = (req) => {
 // Send Opex commands/queries through the shared RabbitMQ RPC producer.
 const sendQueueResponse = async (res, action, data) => {
   const response = await producer.sendMessage(
-    QUEUE.Opex.REQUEST,
-    QUEUE.Opex.RESPONSE,
+    QUEUE.OPEX.REQUEST,
+    QUEUE.OPEX.RESPONSE,
     { action, data }
   );
 
@@ -145,8 +145,8 @@ if (!Department) {
     data.Documents = uploadedDocuments;
 
     const response = await producer.sendMessage(
-      QUEUE.Opex.REQUEST,
-      QUEUE.Opex.RESPONSE,
+      QUEUE.OPEX.REQUEST,
+      QUEUE.OPEX.RESPONSE,
       {
         action: "CREATE_Opex",
         data,
@@ -532,8 +532,8 @@ exports.updateOpex = async (req, res) => {
 
     const response =
       await producer.sendMessage(
-        QUEUE.Opex.REQUEST,
-        QUEUE.Opex.RESPONSE,
+        QUEUE.OPEX.REQUEST,
+        QUEUE.OPEX.RESPONSE,
         {
           action: "UPDATE_Opex",
 
@@ -597,8 +597,8 @@ exports.deleteOpex = async (req, res) => {
     }
 
     const response = await producer.sendMessage(
-      QUEUE.Opex.REQUEST,
-      QUEUE.Opex.RESPONSE,
+      QUEUE.OPEX.REQUEST,
+      QUEUE.OPEX.RESPONSE,
       {
         action: "DELETE_Opex",
         data: {
@@ -665,8 +665,8 @@ exports.approveOpex = async (req, res) => {
     const user = authenticatedUser(req);
 
     const response = await producer.sendMessage(
-      QUEUE.Opex.REQUEST,
-      QUEUE.Opex.RESPONSE,
+      QUEUE.OPEX.REQUEST,
+      QUEUE.OPEX.RESPONSE,
       {
         action: "PROCESS_Opex_APPROVAL",
 
