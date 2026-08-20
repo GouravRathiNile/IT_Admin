@@ -1,52 +1,407 @@
 const EDITABLE_FIELDS = Object.freeze([
-  "EntryDate", "Status", "ResolvedBy", "GuestName", "RoomNumber", "Time",
-  "Complaint", "ServiceRecovery", "DetailedInvestigation", "InternalActionTaken",
-  "CompanyName", "Rate", "CheckInDate", "CheckOutDate", "GMComment",
-  "ProcessLapse", "SRA_Room", "SRA_Food", "SRA_Other", "RaiseSource",
-  "ComplaintSource", "AttachmentTitle", "GuestStatus", "ProcessLapseCategory",
-  "InternalActionTakenCategory", "GetMetJson", "DepartmentIDs", "ReceivedByIDs",
-  "InformedToIDs", "DepartmentHODComments",
+  "EntryDate",
+  "Status",
+  "ResolvedBy",
+  "GuestName",
+  "RoomNumber",
+  "Time",
+  "Complaint",
+  "ServiceRecovery",
+  "DetailedInvestigation",
+  "InternalActionTaken",
+  "CompanyName",
+  "Rate",
+  "CheckInDate",
+  "CheckOutDate",
+  "GMComment",
+  "ProcessLapse",
+  "SRA_Room",
+  "SRA_Food",
+  "SRA_Other",
+  "RaiseSource",
+  "ComplaintSource",
+  "AttachmentTitle",
+  "GuestStatus",
+  "ProcessLapseCategory",
+  "InternalActionTakenCategory",
+  "GetMetJson",
+  "DepartmentIDs",
+  "ReceivedByIDs",
+  "InformedToIDs",
+  "DepartmentHODComments",
 ]);
 
 const PROTECTED_FIELDS = Object.freeze([
-  "OrganizationID", "CreatedBy", "CreatedDate", "ModifyBy", "ModifyDate",
-  "ModifiedBy", "DeletedBy", "DeletedDate", "CreatedIP", "ModifiedIP",
-  "UserID", "Username", "IP",
+  "OrganizationID",
+  "CreatedBy",
+  "CreatedDate",
+  "ModifyBy",
+  "ModifyDate",
+  "ModifiedBy",
+  "DeletedBy",
+  "DeletedDate",
+  "CreatedIP",
+  "ModifiedIP",
+  "UserID",
+  "Username",
+  "IP",
 ]);
 
-const pick = (source, fields) => fields.reduce((result, field) => {
-  if (Object.prototype.hasOwnProperty.call(source, field)) result[field] = source[field];
-  return result;
-}, {});
+const pick = (source, fields) =>
+  fields.reduce((result, field) => {
+    if (Object.prototype.hasOwnProperty.call(source, field)) {
+      result[field] = source[field];
+    }
+    return result;
+  }, {});
 
-const createDTO = (body = {}) => pick(body, EDITABLE_FIELDS);
-const updateDTO = (body = {}) => ({ ID: body.ID ?? body.id, ...pick(body, EDITABLE_FIELDS) });
+const createDTO = (body = {}) => ({
+  ...pick(body, EDITABLE_FIELDS),
+  UpdatedBy: body.UpdatedBy ?? null,
+});
+
+const updateDTO = (body = {}) => ({
+  ID: body.ID ?? body.id,
+  ...pick(body, EDITABLE_FIELDS),
+  UpdatedBy: body.UpdatedBy ?? null,
+});
 
 const parseCommaSeparatedIDs = (value) => {
-  if (value === undefined || value === null || value === "") return [];
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+
   return (Array.isArray(value) ? value : String(value).split(","))
-    .map((item) => String(item).trim());
+    .map((item) => String(item).trim())
+    .filter(Boolean);
 };
 
+/*
+ * LIST REQUEST / FILTER DTO
+ */
 const listDTO = (query = {}) => ({
   page: query.page ?? 1,
   pageSize: query.pageSize ?? 10,
+
   search: query.search ?? "",
+
   fromDate: query.fromDate ?? null,
   toDate: query.toDate ?? null,
+
   status: query.status ?? null,
+  guestStatus: query.guestStatus ?? null,
+
   departmentIds: parseCommaSeparatedIDs(query.departmentIds),
+  receivedByIds: parseCommaSeparatedIDs(query.receivedByIds),
+  informedToIds: parseCommaSeparatedIDs(query.informedToIds),
+
+  roomNumber: query.roomNumber ?? null,
+  guestName: query.guestName ?? null,
+  complaint: query.complaint ?? null,
+
+  complaintSource: query.complaintSource ?? null,
+  raiseSource: query.raiseSource ?? null,
+
+  processLapse: query.processLapse ?? null,
+  processLapseCategory: query.processLapseCategory ?? null,
+
+  companyName: query.companyName ?? null,
+
+  checkInDate: query.checkInDate ?? null,
+  checkOutDate: query.checkOutDate ?? null,
+
+  internalActionTaken: query.internalActionTaken ?? null,
+  internalActionTakenCategory:
+    query.internalActionTakenCategory ?? null,
+
+  createdBy: query.createdBy ?? null,
+  updatedBy: query.updatedBy ?? null,
+
   sortBy: query.sortBy ?? "EntryDate",
   sortDirection: query.sortDirection ?? "DESC",
 });
 
+/*
+ * REPORT FILTER DTO
+ */
 const reportListDTO = (query = {}) => ({
   ...listDTO(query),
-  roomNumber: query.roomNumber ?? null,
-  guestName: query.guestName ?? null,
-  complaint: query.complaint ?? null,
-  complaintSource: query.complaintSource ?? null,
-  raiseSource: query.raiseSource ?? null,
 });
 
-module.exports = { EDITABLE_FIELDS, PROTECTED_FIELDS, createDTO, updateDTO, listDTO, reportListDTO, parseCommaSeparatedIDs };
+/*
+ * LIST RESPONSE DTO
+ *
+ * Only fields required by the list UI
+ * + fields useful for filtering/future filtering.
+ */
+const listResponseDTO = (row, resolved = {}) => ({
+  ID: Number(row.id),
+
+  OrganizationID:
+    row.organizationid == null
+      ? null
+      : Number(row.organizationid),
+
+  OrganizationName: row.organizationname ?? null,
+
+  EntryDate: row.entrydate,
+  Time: row.time,
+
+  RoomNumber: row.roomnumber,
+  GuestName: row.guestname,
+  GuestStatus: row.gueststatus,
+
+  Departments: resolved.departments || [],
+
+  Complaint: row.complaint,
+  Status: row.status,
+
+  ComplaintSource: row.complaintsource,
+  RaiseSource: row.raisesource,
+
+  ProcessLapse: row.processlapse,
+  ProcessLapseCategory: row.processlapsecategory,
+
+  ServiceRecovery: row.servicerecovery,
+
+  InternalActionTaken: row.internalactiontaken,
+  InternalActionTakenCategory:
+    row.internalactiontakencategory,
+
+  CompanyName: row.companyname,
+
+  CheckInDate: row.checkindate,
+  CheckOutDate: row.checkoutdate,
+
+  CreatedBy: row.createdby,
+  UpdatedBy: row.updatedby,
+});
+
+/*
+ * COMPLETE REPORT / DETAIL DTO
+ *
+ * Used by:
+ * - Guest Glitch Report Detail
+ * - Master Report
+ * - PDF generation
+ */
+const completeReportDTO = (row = {}, resolved = {}) => ({
+  ID: row.id ?? row.ID,
+
+  OrganizationID:
+    row.organizationid ?? row.OrganizationID,
+
+  OrganizationName:
+    row.organizationname ?? row.OrganizationName ?? null,
+
+  EntryDate:
+    row.entrydate ?? row.EntryDate ?? null,
+
+  Status:
+    row.status ?? row.Status ?? null,
+
+  ResolvedBy:
+    row.resolvedby ?? row.ResolvedBy ?? null,
+
+  GuestName:
+    row.guestname ?? row.GuestName ?? null,
+
+  RoomNumber:
+    row.roomnumber ?? row.RoomNumber ?? null,
+
+  Time:
+    row.time ?? row.Time ?? null,
+
+  Complaint:
+    row.complaint ?? row.Complaint ?? null,
+
+  ServiceRecovery:
+    row.servicerecovery ?? row.ServiceRecovery ?? null,
+
+  DetailedInvestigation:
+    row.detailedinvestigation ?? row.DetailedInvestigation ?? null,
+
+  InternalActionTaken:
+    row.internalactiontaken ?? row.InternalActionTaken ?? null,
+
+  CompanyName:
+    row.companyname ?? row.CompanyName ?? null,
+
+  Rate:
+    row.rate ?? row.Rate ?? null,
+
+  CheckInDate:
+    row.checkindate ?? row.CheckInDate ?? null,
+
+  CheckOutDate:
+    row.checkoutdate ?? row.CheckOutDate ?? null,
+
+  UpdatedBy:
+    row.updatedby ?? row.UpdatedBy ?? null,
+
+  GMComment:
+    row.gmcomment ?? row.GMComment ?? null,
+
+  ProcessLapse:
+    row.processlapse ?? row.ProcessLapse ?? null,
+
+  SRA_Room:
+    row.sra_room ?? row.SRA_Room ?? null,
+
+  SRA_Food:
+    row.sra_food ?? row.SRA_Food ?? null,
+
+  SRA_Other:
+    row.sra_other ?? row.SRA_Other ?? null,
+
+  RaiseSource:
+    row.raisesource ?? row.RaiseSource ?? null,
+
+  ComplaintSource:
+    row.complaintsource ?? row.ComplaintSource ?? null,
+
+  AttachmentTitle:
+    row.attachmenttitle ?? row.AttachmentTitle ?? null,
+
+  Attachment:
+    row.attachment ?? row.Attachment ?? null,
+
+  GuestStatus:
+    row.gueststatus ?? row.GuestStatus ?? null,
+
+  ProcessLapseCategory:
+    row.processlapsecategory ??
+    row.ProcessLapseCategory ??
+    null,
+
+  InternalActionTakenCategory:
+    row.internalactiontakencategory ??
+    row.InternalActionTakenCategory ??
+    null,
+
+  GetMetJson:
+    row.getmetjson ?? row.GetMetJson ?? null,
+
+  DepartmentIDs:
+    row.departmentids ?? row.DepartmentIDs ?? [],
+
+  ReceivedByIDs:
+    row.receivedbyids ?? row.ReceivedByIDs ?? [],
+
+  InformedToIDs:
+    row.informedtoids ?? row.InformedToIDs ?? [],
+
+  DepartmentHODComments:
+    row.departmenthodcomments ??
+    row.DepartmentHODComments ??
+    [],
+
+  CreatedBy:
+    row.createdby ?? row.CreatedBy ?? null,
+
+  CreatedDate:
+    row.createddate ?? row.CreatedDate ?? null,
+
+  ModifyBy:
+    row.modifyby ?? row.ModifyBy ?? null,
+
+  ModifyDate:
+    row.modifydate ?? row.ModifyDate ?? null,
+
+  Departments:
+    resolved.departments || [],
+
+  ReceivedByUsers:
+    resolved.receivedByUsers || [],
+
+  InformedToUsers:
+    resolved.informedToUsers || [],
+});
+
+const compactReportDTO = (row = {}) => ({
+  ID: Number(row.id),
+
+  OrganizationID:
+    row.organizationid == null
+      ? null
+      : Number(row.organizationid),
+
+  OrganizationName:
+    row.organizationname ??
+    row.hotel ??
+    null,
+
+  EntryDate: row.entrydate ?? null,
+  Time: row.time ?? null,
+
+  RoomNumber: row.roomnumber ?? null,
+  GuestName: row.guestname ?? null,
+  GuestStatus: row.gueststatus ?? null,
+
+  Departments:
+    row.departments ?? null,
+
+  ReceivedByUsers:
+    row.receivedByUsers ?? null,
+
+  InformedToUsers:
+    row.informedToUsers ?? null,
+
+  Complaint: row.complaint ?? null,
+  Status: row.status ?? null,
+
+  ComplaintSource:
+    row.complaintsource ?? null,
+
+  RaiseSource:
+    row.raisesource ?? null,
+
+  ProcessLapse:
+    row.processlapse ?? null,
+
+  ProcessLapseCategory:
+    row.processlapsecategory ?? null,
+
+  ServiceRecovery:
+    row.servicerecovery ?? null,
+
+  InternalActionTaken:
+    row.internalactiontaken ?? null,
+
+  InternalActionTakenCategory:
+    row.internalactiontakencategory ?? null,
+
+  CompanyName:
+    row.companyname ?? null,
+
+  Rate:
+    row.rate == null ? null : Number(row.rate),
+
+  CheckInDate:
+    row.checkindate ?? null,
+
+  CheckOutDate:
+    row.checkoutdate ?? null,
+
+  ResolvedBy:
+    row.resolvedby ?? null,
+
+  UpdatedBy:
+    row.updatedby ?? null,
+
+  GMComment:
+    row.gmcomment ?? null,
+});
+
+module.exports = {
+  EDITABLE_FIELDS,
+  PROTECTED_FIELDS,
+  createDTO,
+  updateDTO,
+  listDTO,
+  reportListDTO,
+  parseCommaSeparatedIDs,
+  listResponseDTO,
+  completeReportDTO,
+  compactReportDTO,
+};

@@ -1,7 +1,16 @@
 const repository = require("../../repositories/GuestGlitchRepository/GuestGlitchRepository");
 const { OPTION_TYPES } = require("../../config/guestGlitchConstants");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
-const { compactReportDTO, completeReportDTO } = require("../../dto/GuestGlitchReportDTO");
+// const { compactReportDTO, completeReportDTO, listResponseDTO, } = require("../../dto/GuestGlitchReportDTO");
+const {
+  createDTO,
+  updateDTO,
+  listDTO,
+  reportListDTO,
+  listResponseDTO,
+  completeReportDTO,
+  compactReportDTO,
+} = require("../../dto/GuestGlitchDTO");
 const { generateGuestGlitchPdf } = require("./GuestGlitchPdfService");
 const generateAttachmentUrl = require("../../AzurConfigration/GuestGlitch/AzureGetData");
 
@@ -65,11 +74,27 @@ const validateSelections = async (client, data, organizationID) => {
     const invalidID = (data.InformedToIDs || []).find((id) => !valid.has(Number(id)));
     return { error: fail(`InformedTo user ID ${invalidID} is invalid, inactive, or unavailable for this organization`) };
   }
+  const resolvedUsers = await repository.validateUsers(
+    client,
+    organizationID,
+    data.ResolvedBy ? [data.ResolvedBy] : []
+  );
+
+  if (
+    data.ResolvedBy &&
+    resolvedUsers.length !== 1
+  ) {
+    return {
+      error: fail(
+        `ResolvedBy user ID ${data.ResolvedBy} is invalid, inactive, or unavailable for this organization`
+      ),
+    };
+  }
   const selected = new Set((data.DepartmentIDs || []).map(Number));
   if ((data.DepartmentHODComments || []).some((item) => !selected.has(Number(item.departmentId)))) {
     return { error: fail("Department HOD comment can only be added for a selected department") };
   }
-  return { departments, receivedUsers, informedUsers };
+  return { departments, receivedUsers, informedUsers, resolvedUsers, };
 };
 
 const validateOptions = async (client, data, organizationID) => {
@@ -88,6 +113,7 @@ const applySnapshots = (data, selections) => ({
   Department: selections.departments.map((item) => item.departmentname).join(", "),
   ReceivedBy: selections.receivedUsers.map((item) => item.fullname).join(", "),
   InformedTo: selections.informedUsers.map((item) => item.fullname).join(", "),
+  ResolvedBy: selections.resolvedUsers.map((item) => item.fullname).join(", "),
 });
 
 const create = async (data) => {
@@ -111,17 +137,75 @@ const create = async (data) => {
   } finally { client.release(); }
 };
 
+// const list = async (data) => {
+//   try {
+//     const result = await repository.list(data, data.OrganizationID);
+//     return {
+//       success: true, message: "Guest Glitches fetched successfully",
+//       data: result.rows.map(mapRow),
+//       pagination: { page: Number(data.page), pageSize: Number(data.pageSize), totalRecords: result.total, totalPages: Math.ceil(result.total / Number(data.pageSize)) },
+//     };
+//   } catch (error) {
+//     console.error("List Guest Glitch Error:", error.message);
+//     return fail("Unable to retrieve guest glitches at this time.", 503);
+//   }
+// };
+
 const list = async (data) => {
+  const client = await repository.getClient();
+
   try {
-    const result = await repository.list(data, data.OrganizationID);
+    const result = await repository.list(
+      data,
+      data.OrganizationID
+    );
+
+    let resolvedSelections = [];
+
+    if (result.rows.length > 0) {
+      resolvedSelections = await repository.resolveSelections(
+        client,
+        data.OrganizationID,
+        result.rows
+      );
+    }
+
+    const mapped = result.rows.map((row, index) =>
+      listResponseDTO(
+        row,
+        resolvedSelections[index] || {
+          departments: [],
+        }
+      )
+    );
+
     return {
-      success: true, message: "Guest Glitches fetched successfully",
-      data: result.rows.map(mapRow),
-      pagination: { page: Number(data.page), pageSize: Number(data.pageSize), totalRecords: result.total, totalPages: Math.ceil(result.total / Number(data.pageSize)) },
+      success: true,
+      message: "Guest Glitches fetched successfully",
+      data: mapped,
+      pagination: {
+        page: Number(data.page),
+        pageSize: Number(data.pageSize),
+        totalRecords: result.total,
+        totalPages: Math.ceil(
+          result.total / Number(data.pageSize)
+        ),
+      },
     };
   } catch (error) {
-    console.error("List Guest Glitch Error:", error.message);
-    return fail("Unable to retrieve guest glitches at this time.", 503);
+    console.error("========== LIST GUEST GLITCH ERROR ==========");
+    console.error("Message:", error.message);
+    console.error("Stack:", error.stack);
+    console.error("Full Error:", error);
+    console.error("==============================================");
+
+    return fail(
+      "Unable to retrieve guest glitches at this time.",
+      503
+    );
+
+  } finally {
+    client.release();
   }
 };
 
@@ -136,12 +220,14 @@ const get = async (data) => {
       repository.validateUsers(client, data.OrganizationID, row.receivedbyids || []),
       repository.validateUsers(client, data.OrganizationID, row.informedtoids || []),
     ]);
-    return { success: true, message: "Guest glitch retrieved successfully.", data: {
-      ...mapRow(row),
-      departments: departments.map((item) => ({ id: Number(item.departmentid), name: item.departmentname })),
-      receivedByUsers: receivedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
-      informedToUsers: informedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
-    } };
+    return {
+      success: true, message: "Guest glitch retrieved successfully.", data: {
+        ...mapRow(row),
+        departments: departments.map((item) => ({ id: Number(item.departmentid), name: item.departmentname })),
+        receivedByUsers: receivedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
+        informedToUsers: informedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
+      }
+    };
   } catch (error) {
     console.error("Get Guest Glitch Error:", error.message);
     return fail("Unable to retrieve guest glitch at this time.", 503);
@@ -237,10 +323,12 @@ const listOptions = async (data) => {
   try {
     if (data.OptionType && !OPTION_TYPES.includes(data.OptionType)) return fail("Invalid Guest Glitch option type.");
     const rows = await repository.listOptions(data.OrganizationID, data.OptionType || null);
-    return { success: true, message: "Guest Glitch options retrieved successfully.", data: rows.map((row) => ({
-      OptionID: Number(row.optionid), OptionType: row.optiontype, OptionValue: row.optionvalue,
-      DisplayName: row.displayname, Metadata: row.metadata || {}, SortOrder: row.sortorder,
-    })) };
+    return {
+      success: true, message: "Guest Glitch options retrieved successfully.", data: rows.map((row) => ({
+        OptionID: Number(row.optionid), OptionType: row.optiontype, OptionValue: row.optionvalue,
+        DisplayName: row.displayname, Metadata: row.metadata || {}, SortOrder: row.sortorder,
+      }))
+    };
   } catch (error) {
     console.error("List Guest Glitch Options Error:", error.message);
     return fail("Unable to retrieve Guest Glitch options at this time.", 503);
@@ -266,7 +354,19 @@ const resolveReportRows = async (client, rows) => {
 const report = async (data, complete = false) => {
   const client = await repository.getClient();
   try {
-    const result = await repository.reportList(data, data.OrganizationID);
+    // const result = await repository.reportList(data, data.OrganizationID);
+    console.log("========== REPORT DEBUG ==========");
+    console.log("Report Data:", JSON.stringify(data, null, 2));
+    console.log("OrganizationID:", data.OrganizationID);
+
+    const result = await repository.reportList(
+      data,
+      data.OrganizationID
+    );
+
+    console.log("Report Result Rows:", result.rows.length);
+    console.log("Report Total:", result.total);
+    console.log("==================================");
     const resolvedRows = await resolveReportRows(client, result.rows);
     const mapped = resolvedRows.map(({ row, resolved }) => complete
       ? completeReportDTO(row, resolved)
@@ -348,11 +448,13 @@ const attachment = async (data) => {
     if (!row) return fail("Guest Glitch not found", 404);
     if (!row.attachment) return fail("Attachment not found", 404);
     const title = row.attachmenttitle || `guest-glitch-${data.ID}-attachment`;
-    return { success: true, message: "Attachment URL generated successfully", data: {
-      AttachmentTitle: title,
-      Url: generateAttachmentUrl(row.attachment, { disposition: data.disposition, filename: title }),
-      ExpiresInSeconds: 3600,
-    } };
+    return {
+      success: true, message: "Attachment URL generated successfully", data: {
+        AttachmentTitle: title,
+        Url: generateAttachmentUrl(row.attachment, { disposition: data.disposition, filename: title }),
+        ExpiresInSeconds: 3600,
+      }
+    };
   } catch (error) {
     console.error("Guest Glitch Attachment Error:", error.message);
     return fail("Unable to retrieve Guest Glitch attachment at this time.", 503);
