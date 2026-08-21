@@ -54,7 +54,17 @@ exports.createDailyEntry = async (req, res) => {
     Departures,
     Occupancy,
   } = req.body || {};
-
+ // Roomsinhouse is required
+  if (
+    Roomsinhouse === undefined ||
+    Roomsinhouse === null ||
+    Roomsinhouse === ""
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Roomsinhouse is required.",
+    });
+  }
   return sendQueueResponse(
     req,
     res,
@@ -71,24 +81,30 @@ exports.createDailyEntry = async (req, res) => {
     STATUS_CODES.CREATED,
   );
 };
-exports.getAllDailyEntries = async (req, res) => sendQueueResponse(
-  req,
-  res,
-  "GET_ALL_GUEST_MEET_DAILY",
-  {
-    OrganizationID: req.query.OrganizationID || null,
-    EntryDate: req.query.EntryDate || null,
-    FromDate: req.query.FromDate || null,
-    ToDate: req.query.ToDate || null,
-    page: Number(req.query.page) || 1,
-    PageSize: Number(req.query.PageSize) || 10,
-  },
-);
+exports.getAllDailyEntries = async (req, res) => {
+  try {
+    const data = {
+      OrganizationID: req.query.OrganizationID || null,
+      EntryDate: req.query.EntryDate || null,
+      page: Number(req.query.page) || 1,
+      PageSize: Number(req.query.PageSize) || 10,
+    };
+
+    const response = await GuestMeetService.getAllDailyEntries(data);
+
+    return res
+      .status(response.statusCode || STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
 exports.deleteDailyEntry = async (req, res) => sendQueueResponse(
   req,
   res,
   "DELETE_GUEST_MEET_DAILY",
-  { GMMasterID: req.params.id },
+  { GMMasterID: req.body.GMMasterID, },
 );
 
 // ============================================================ Guest Detail APIs
@@ -108,7 +124,39 @@ exports.createGuestDetail = async (req, res) => {
     FeedbackType,
     GuestStatus,
   } = req.body || {};
+// Required fields validation
+  if (
+    GuestName === undefined ||
+    GuestName === null ||
+    GuestName.trim() === ""
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "GuestName is required.",
+    });
+  }
 
+  if (
+    RoomNo === undefined ||
+    RoomNo === null ||
+    RoomNo === ""
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "RoomNo is required.",
+    });
+  }
+
+  if (
+    MetBy === undefined ||
+    MetBy === null ||
+    MetBy === ""
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "MetBy is required.",
+    });
+  }
   return sendQueueResponse(req, res, "CREATE_GUEST_MEET_DETAIL", {
     OrganizationID,
     GMMasterID,
@@ -125,78 +173,88 @@ exports.createGuestDetail = async (req, res) => {
     GuestStatus,
   }, STATUS_CODES.CREATED);
 };
-
 exports.updateGuestDetail = async (req, res) => sendQueueResponse(
   req,
   res,
   "UPDATE_GUEST_MEET_DETAIL",
   {
-    GMDetailID: req.params.id,
+    GMDetailID: req.body.GMDetailID,
     Changes: req.body || {},
   },
 );
-
 exports.deleteGuestDetail = async (req, res) => sendQueueResponse(
   req,
   res,
   "DELETE_GUEST_MEET_DETAIL",
-  { GMDetailID: req.params.id },
+  { GMDetailID: req.body.GMDetailID,UserID: req.user.UserID, },
 );
+exports.getGuestDetailById = async (req, res) => {
+  try {
+    const response = await GuestMeetService.getGuestDetailById({
+      GMDetailID: req.params.id,
+    });
 
-exports.getGuestDetailById = async (req, res) => sendQueueResponse(
-  req,
-  res,
-  "GET_GUEST_MEET_DETAIL",
-  { GMDetailID: req.params.id },
-);
+    return res.status(response.statusCode || STATUS_CODES.SUCCESS).json(response);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
 
 // ============================================================ Report APIs
-exports.getDateRangeReport = async (req, res) => sendQueueResponse(
-  req,
-  res,
-  "REPORT_GUEST_MEET_DATE_RANGE",
-  {
-    OrganizationID: req.query.OrganizationID || null,
-    EntryDate: req.query.EntryDate || null,
-    FromDate: req.query.FromDate || null,
-    ToDate: req.query.ToDate || null,
-    page: Number(req.query.page) || 1,
-    PageSize: Number(req.query.PageSize) || 10,
-  },
-);
+exports.getDateRangeReport = async (req, res) => {
+  try {
+    const data = {
+      OrganizationID: req.query.OrganizationID || null,
+      FromDate: req.query.FromDate || null,
+      ToDate: req.query.ToDate || null,
+      page: Number(req.query.page) || 1,
+      PageSize: Number(req.query.PageSize) || 10,
+    };
 
-exports.getFeedbackReport = async (req, res) => sendQueueResponse(
-  req,
-  res,
-  "REPORT_GUEST_MEET_FEEDBACK",
-  {
-    OrganizationID: req.query.OrganizationID || null,
-    EntryDate: req.query.EntryDate || null,
-    FromDate: req.query.FromDate || null,
-    ToDate: req.query.ToDate || null,
-  },
-);
+    const response = await GuestMeetService.getDateRangeReport(data);
 
-exports.getSummaryReport = async (req, res) => sendQueueResponse(
-  req,
-  res,
-  "REPORT_GUEST_MEET_SUMMARY",
-  {
-    OrganizationID: req.query.OrganizationID || null,
-    EntryDate: req.query.EntryDate || null,
-    FromDate: req.query.FromDate || null,
-    ToDate: req.query.ToDate || null,
-  },
-);
+    return res
+      .status(response.statusCode || STATUS_CODES.SUCCESS)
+      .json(response);
 
-exports.getMetByReport = async (req, res) => sendQueueResponse(
-  req,
-  res,
-  "REPORT_GUEST_MEET_MET_BY",
-  {
-    OrganizationID: req.query.OrganizationID || null,
-    EntryDate: req.query.EntryDate || null,
-    FromDate: req.query.FromDate || null,
-    ToDate: req.query.ToDate || null,
-  },
-);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+exports.getFeedbackReport = async (req, res) => {
+  try {
+    const data = {
+      OrganizationID: req.query.OrganizationID || null,
+      FromDate: req.query.FromDate || null,
+      ToDate: req.query.ToDate || null,
+    };
+
+    const response = await GuestMeetService.getFeedbackReport(data);
+
+    return res
+      .status(response.statusCode || STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+exports.getMetByReport = async (req, res) => {
+  try {
+    const data = {
+      OrganizationID: req.query.OrganizationID || null,
+      EntryDate: req.query.EntryDate || null,
+      FromDate: req.query.FromDate || null,
+      ToDate: req.query.ToDate || null,
+    };
+
+    const response = await GuestMeetService.getMetByReport(data);
+
+    return res
+      .status(response.statusCode || STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};

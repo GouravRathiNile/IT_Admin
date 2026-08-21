@@ -22,7 +22,7 @@ const databaseFailure = (error, operation) => {
   );
 };
 
-// ============================================================ Database Row Mapping(Get Apis Helpers)
+// ============================================================ Database Row Mapping(Get,Post Apis Helpers)
 // PostgreSQL returns unquoted column keys in lowercase; map them to API casing here.
 const mapDetail = (row) => ({
   GMDetailID: Number(row.gmdetailid),
@@ -31,16 +31,15 @@ const mapDetail = (row) => ({
   GuestName: row.guestname,
   RoomNo: row.roomno,
   BookingSource: row.bookingsource,
-  Arrival: row.arrival,
-  Departure: row.departure,
+  Arrival: formatDate(row.arrival),
+  Departure: formatDate(row.departure),
   Feedback: row.feedback,
   ActionTaken: row.actiontaken,
   MetBy: row.metby == null ? null : Number(row.metby),
-  MetOn: row.meton,
+  MetOn: formatDate(row.meton),
   FeedbackType: row.feedbacktype,
   GuestStatus: row.gueststatus,
-  CreatedDate: row.createddate,
-  ModifiedDate: row.modifieddate,
+  CreatedDate: formatDate(row.createddate),
 });
 const mapMaster = (row) => ({
   GMMasterID: Number(row.gmmasterid),
@@ -197,35 +196,98 @@ const createDailyEntry = async (data) => {
     client.release();
   }
 };
-// ============================================================ List Daily Entries
-// Return paginated masters and attach their active guest details in a batch.
+// ============================================================ Get One Daily Entry
+// Organization/date select one master; pagination applies only to its guest details.
 const getAllDailyEntries = async (data) => {
   try {
-    const values = [];
-    const filter = addDateFilters(data, values);
-    const count = await pool.query(
-      `SELECT COUNT(*)::bigint AS TotalCount FROM GuestMeet_Daily_Entry_Master m WHERE m.IsDeleted=FALSE${filter};`,
-      values,
+    const page = Number(data.page) || 1;
+    const pageSize = Number(data.PageSize) || 10;
+    const offset = (page - 1) * pageSize;
+
+    // Without both exact filters, return the normal paginated daily-entry list.
+    if (!data.OrganizationID || !data.EntryDate) {
+      const values = [];
+      const filter = addDateFilters(data, values);
+      const countResult = await pool.query(
+        `SELECT COUNT(*)::bigint AS TotalCount
+         FROM GuestMeet_Daily_Entry_Master m
+         WHERE m.IsDeleted = FALSE${filter};`,
+        values,
+      );
+
+      const totalCount = Number(countResult.rows[0].totalcount);
+      values.push(pageSize, offset);
+      const masterResult = await pool.query(
+        `SELECT *
+         FROM GuestMeet_Daily_Entry_Master m
+         WHERE m.IsDeleted = FALSE${filter}
+         ORDER BY m.EntryDate DESC, m.GMMasterID DESC
+         LIMIT $${values.length - 1} OFFSET $${values.length};`,
+        values,
+      );
+
+      const records = await attachDetails(masterResult.rows);
+      return ok("Guest Meet daily entries fetched successfully.", records, {
+        TotalCount: totalCount,
+        PageCount: records.length,
+        CurrentPage: page,
+        PageSize: pageSize,
+        TotalPages: Math.ceil(totalCount / pageSize),
+      });
+    }
+
+    const masterResult = await pool.query(
+      `SELECT *
+       FROM GuestMeet_Daily_Entry_Master
+       WHERE OrganizationID = $1
+         AND EntryDate = $2
+         AND IsDeleted = FALSE
+       ORDER BY GMMasterID
+       LIMIT 1;`,
+      [data.OrganizationID, data.EntryDate],
     );
-    const totalCount = Number(count.rows[0].totalcount);
-    values.push(data.PageSize, (data.page - 1) * data.PageSize);
-    const rows = await pool.query(
-      `SELECT * FROM GuestMeet_Daily_Entry_Master m
-       WHERE m.IsDeleted=FALSE${filter}
-       ORDER BY m.EntryDate DESC, m.GMMasterID DESC
-       LIMIT $${values.length - 1} OFFSET $${values.length};`,
-      values,
-    );
-    const records = await attachDetails(rows.rows);
-    return ok("Guest Meet daily entries fetched successfully.", records, {
+
+    if (!masterResult.rows.length) {
+      return ok("Guest Meet daily entry fetched successfully.", [], {
+        TotalCount: 0,
+        PageCount: 0,
+        CurrentPage: page,
+        PageSize: pageSize,
+        TotalPages: 0,
+      });
+    }
+
+    const master = mapMaster(masterResult.rows[0]);
+
+    const [countResult, detailsResult] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::bigint AS TotalCount
+         FROM GuestMeet_Daily_Entry_Details
+         WHERE GMMasterID = $1 AND IsDeleted = FALSE;`,
+        [master.GMMasterID],
+      ),
+      pool.query(
+        `SELECT *
+         FROM GuestMeet_Daily_Entry_Details
+         WHERE GMMasterID = $1 AND IsDeleted = FALSE
+         ORDER BY GMDetailID ASC
+         LIMIT $2 OFFSET $3;`,
+        [master.GMMasterID, pageSize, offset],
+      ),
+    ]);
+
+    const totalCount = Number(countResult.rows[0].totalcount);
+    master.GuestDetails = detailsResult.rows.map(mapDetail);
+
+    return ok("Guest Meet daily entry fetched successfully.", [master], {
       TotalCount: totalCount,
-      PageCount: records.length,
-      CurrentPage: data.page,
-      PageSize: data.PageSize,
-      TotalPages: Math.ceil(totalCount / data.PageSize),
+      PageCount: master.GuestDetails.length,
+      CurrentPage: page,
+      PageSize: pageSize,
+      TotalPages: Math.ceil(totalCount / pageSize),
     });
   } catch (error) {
-    return databaseFailure(error, "Fetch Guest Meet daily entries");
+    return databaseFailure(error, "Fetch Guest Meet daily entry");
   }
 };
 // ============================================================ Delete Daily Entry
@@ -260,6 +322,21 @@ const deleteDailyEntry = async (data) => {
   }
 };
 
+// ===========================================================Helper for update
+// Whitelist database columns that the guest partial-update API may change.
+const detailFields = {
+  GuestName: "GuestName",
+  RoomNo: "RoomNo",
+  BookingSource: "BookingSource",
+  Arrival: "Arrival",
+  Departure: "Departure",
+  Feedback: "Feedback",
+  ActionTaken: "ActionTaken",
+  MetBy: "MetBy",
+  MetOn: "MetOn",
+  FeedbackType: "FeedbackType",
+  GuestStatus: "GuestStatus",
+};
 // ============================================================ Create Guest Detail
 // The parent must be active and belong to the OrganizationID supplied in the request.
 const createGuestDetail = async (data) => {
@@ -299,7 +376,7 @@ const createGuestDetail = async (data) => {
       ],
     );
     await client.query("COMMIT");
-    return ok("Guest detail created successfully.", mapDetail(result.rows[0]));
+    return ok("Guest detail created successfully.", );
   } catch (error) {
     await client.query("ROLLBACK");
     return databaseFailure(error, "Create Guest Meet detail");
@@ -307,22 +384,6 @@ const createGuestDetail = async (data) => {
     client.release();
   }
 };
-
-// Whitelist database columns that the guest partial-update API may change.
-const detailFields = {
-  GuestName: "GuestName",
-  RoomNo: "RoomNo",
-  BookingSource: "BookingSource",
-  Arrival: "Arrival",
-  Departure: "Departure",
-  Feedback: "Feedback",
-  ActionTaken: "ActionTaken",
-  MetBy: "MetBy",
-  MetOn: "MetOn",
-  FeedbackType: "FeedbackType",
-  GuestStatus: "GuestStatus",
-};
-
 // ============================================================ Update Guest Detail
 const updateGuestDetail = async (data) => {
   try {
@@ -344,12 +405,11 @@ const updateGuestDetail = async (data) => {
       values,
     );
     if (!result.rows.length) return fail("Guest detail not found.", 404);
-    return ok("Guest detail updated successfully.", mapDetail(result.rows[0]));
+    return ok("Guest detail updated successfully.");
   } catch (error) {
     return databaseFailure(error, "Update Guest Meet detail");
   }
 };
-
 // ============================================================ Delete Guest Detail
 // Guest records are retained and marked deleted for audit/history purposes.
 const deleteGuestDetail = async (data) => {
@@ -360,14 +420,11 @@ const deleteGuestDetail = async (data) => {
       [data.UserID, data.GMDetailID],
     );
     if (!result.rows.length) return fail("Guest detail not found.", 404);
-    return ok("Guest detail deleted successfully.", {
-      GMDetailID: data.GMDetailID,
-    });
+    return ok("Guest detail deleted successfully.");
   } catch (error) {
     return databaseFailure(error, "Delete Guest Meet detail");
   }
 };
-
 // ============================================================ Get Guest Detail By ID
 const getGuestDetailById = async (data) => {
   try {
@@ -382,15 +439,105 @@ const getGuestDetailById = async (data) => {
   }
 };
 
-// ============================================================ Date Range Report
-// Reuse the paginated nested-list query after the controller requires both dates.
+// =============================================================================Date Range Report
+// Keep date-range reporting independent from the single-day guest-pagination API.
 const getDateRangeReport = async (data) => {
-  const response = await getAllDailyEntries(data);
-  if (response.success)
-    response.message = "Guest Meet date range report fetched successfully.";
-  return response;
-};
+  try {
+    if (!data.OrganizationID || !data.FromDate || !data.ToDate) {
+      return fail("OrganizationID, FromDate and ToDate are required.", 400);
+    }
 
+    if (data.FromDate > data.ToDate) {
+      return fail("FromDate cannot be greater than ToDate.", 400);
+    }
+
+    const parameters = [data.OrganizationID, data.FromDate, data.ToDate];
+    const page = Number(data.page) || 1;
+    const pageSize = Number(data.PageSize) || 10;
+    const offset = (page - 1) * pageSize;
+
+    const masterResult = await pool.query(
+      `SELECT
+         ARRAY_AGG(m.GMMasterID ORDER BY m.EntryDate DESC, m.GMMasterID DESC) AS GMMasterIDs,
+         COALESCE(SUM(m.Roomsinhouse), 0)::bigint AS Roomsinhouse,
+         COALESCE(SUM(m.Guestsinhouse), 0)::bigint AS Guestsinhouse,
+         COALESCE(SUM(m.Arrivals), 0)::bigint AS Arrivals,
+         COALESCE(SUM(m.Departures), 0)::bigint AS Departures,
+         COALESCE(AVG(m.Occupancy), 0)::numeric(10,2) AS Occupancy,
+         (ARRAY_AGG(m.CreatedDate ORDER BY m.EntryDate DESC, m.GMMasterID DESC))[1] AS CreatedDate
+       FROM GuestMeet_Daily_Entry_Master m
+       WHERE m.OrganizationID = $1
+         AND m.EntryDate BETWEEN $2 AND $3
+         AND m.IsDeleted = FALSE;`,
+      parameters,
+    );
+
+    const master = masterResult.rows[0];
+    if (!master.gmmasterids) {
+      return ok("Guest Meet date range report fetched successfully.", [], {
+        TotalCount: 0,
+        PageCount: 0,
+        CurrentPage: page,
+        PageSize: pageSize,
+        TotalPages: 0,
+      });
+    }
+
+    const [countResult, detailsResult] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::bigint AS TotalCount
+         FROM GuestMeet_Daily_Entry_Details d
+         INNER JOIN GuestMeet_Daily_Entry_Master m
+           ON m.GMMasterID = d.GMMasterID
+          AND m.IsDeleted = FALSE
+         WHERE m.OrganizationID = $1
+           AND m.EntryDate BETWEEN $2 AND $3
+           AND d.IsDeleted = FALSE;`,
+        parameters,
+      ),
+      pool.query(
+        `SELECT d.*
+         FROM GuestMeet_Daily_Entry_Details d
+         INNER JOIN GuestMeet_Daily_Entry_Master m
+           ON m.GMMasterID = d.GMMasterID
+          AND m.IsDeleted = FALSE
+         WHERE m.OrganizationID = $1
+           AND m.EntryDate BETWEEN $2 AND $3
+           AND d.IsDeleted = FALSE
+         ORDER BY m.EntryDate DESC, m.GMMasterID DESC, d.GMDetailID ASC
+         LIMIT $4 OFFSET $5;`,
+        [...parameters, pageSize, offset],
+      ),
+    ]);
+
+    const masterIDs = master.gmmasterids.map(Number);
+    const totalCount = Number(countResult.rows[0].totalcount);
+
+    const report = {
+      GMMasterID: masterIDs[masterIDs.length - 1],
+      OrganizationID: Number(data.OrganizationID),
+      EntryDateFrom: formatDate(data.FromDate),
+      EntryDateTo: formatDate(data.ToDate),
+      Roomsinhouse: Number(master.roomsinhouse),
+      Guestsinhouse: Number(master.guestsinhouse),
+      Arrivals: Number(master.arrivals),
+      Departures: Number(master.departures),
+      Occupancy: Number(master.occupancy),
+      CreatedDate: formatDate(master.createddate),
+      GuestDetails: detailsResult.rows.map(mapDetail),
+    };
+
+    return ok("Guest Meet date range report fetched successfully.", [report], {
+      TotalCount: totalCount,
+      PageCount: report.GuestDetails.length,
+      CurrentPage: page,
+      PageSize: pageSize,
+      TotalPages: Math.ceil(totalCount / pageSize),
+    });
+  } catch (error) {
+    return databaseFailure(error, "Generate Guest Meet date range report");
+  }
+};
 // ============================================================ Feedback Report
 // Group active guest details by their normalized feedback type in PostgreSQL.
 const getFeedbackReport = async (data) => {
@@ -398,59 +545,52 @@ const getFeedbackReport = async (data) => {
     const values = [];
     const filter = addDateFilters(data, values);
     const result = await pool.query(
-      `SELECT COALESCE(NULLIF(TRIM(d.FeedbackType),''),'Unspecified') AS FeedbackType,
-       COUNT(*)::bigint AS TotalGuests
-       FROM GuestMeet_Daily_Entry_Master m
-       JOIN GuestMeet_Daily_Entry_Details d ON d.GMMasterID=m.GMMasterID AND d.IsDeleted=FALSE
-       WHERE m.IsDeleted=FALSE${filter}
-       GROUP BY COALESCE(NULLIF(TRIM(d.FeedbackType),''),'Unspecified') ORDER BY TotalGuests DESC, FeedbackType;`,
+      `WITH FeedbackCounts AS
+       (
+         SELECT
+           m.OrganizationID,
+           om.ShortName,
+           COALESCE(NULLIF(TRIM(d.FeedbackType), ''), 'Unspecified') AS FeedbackType,
+           COUNT(*)::bigint AS TotalGuests
+         FROM GuestMeet_Daily_Entry_Master m
+         INNER JOIN GuestMeet_Daily_Entry_Details d
+           ON d.GMMasterID = m.GMMasterID
+          AND d.IsDeleted = FALSE
+         INNER JOIN Organization_Master om
+           ON om.OrganizationID = m.OrganizationID
+         WHERE m.IsDeleted = FALSE${filter}
+         GROUP BY
+           m.OrganizationID,
+           om.ShortName,
+           COALESCE(NULLIF(TRIM(d.FeedbackType), ''), 'Unspecified')
+       )
+       SELECT
+         OrganizationID,
+         ShortName,
+         JSON_AGG(
+           JSON_BUILD_OBJECT(
+             'FeedbackType', FeedbackType,
+             'TotalGuests', TotalGuests
+           )
+           ORDER BY TotalGuests DESC, FeedbackType
+         ) AS FeedbackData
+       FROM FeedbackCounts
+       GROUP BY OrganizationID, ShortName
+       ORDER BY ShortName, OrganizationID;`,
       values,
     );
     return ok(
       "Guest Meet feedback report fetched successfully.",
       result.rows.map((row) => ({
-        FeedbackType: row.feedbacktype,
-        TotalGuests: Number(row.totalguests),
+        OrganizationID: Number(row.organizationid),
+        ShortName: row.shortname,
+        FeedbackData: row.feedbackdata,
       })),
     );
   } catch (error) {
     return databaseFailure(error, "Generate Guest Meet feedback report");
   }
 };
-
-// ============================================================ Summary Report
-// Aggregate daily totals once per master and count active details separately.
-const getSummaryReport = async (data) => {
-  try {
-    const values = [];
-    const filter = addDateFilters(data, values);
-    const result = await pool.query(
-      `SELECT COUNT(*)::bigint AS TotalDailyEntries,
-       COALESCE(SUM(m.Roomsinhouse),0)::bigint AS TotalRoomsInHouse,
-       COALESCE(SUM(m.Guestsinhouse),0)::bigint AS TotalGuestsInHouse,
-       COALESCE(SUM(m.Arrivals),0)::bigint AS TotalArrivals,
-       COALESCE(SUM(m.Departures),0)::bigint AS TotalDepartures,
-       COALESCE(AVG(m.Occupancy),0)::numeric(10,2) AS AverageOccupancy,
-       COALESCE(SUM((SELECT COUNT(*) FROM GuestMeet_Daily_Entry_Details d
-         WHERE d.GMMasterID=m.GMMasterID AND d.IsDeleted=FALSE)),0)::bigint AS TotalGuestsMet
-       FROM GuestMeet_Daily_Entry_Master m WHERE m.IsDeleted=FALSE${filter};`,
-      values,
-    );
-    const row = result.rows[0];
-    return ok("Guest Meet summary report fetched successfully.", {
-      TotalDailyEntries: Number(row.totaldailyentries),
-      TotalGuestsMet: Number(row.totalguestsmet),
-      TotalRoomsInHouse: Number(row.totalroomsinhouse),
-      TotalGuestsInHouse: Number(row.totalguestsinhouse),
-      TotalArrivals: Number(row.totalarrivals),
-      TotalDepartures: Number(row.totaldepartures),
-      AverageOccupancy: Number(row.averageoccupancy),
-    });
-  } catch (error) {
-    return databaseFailure(error, "Generate Guest Meet summary report");
-  }
-};
-
 // ============================================================ Met By Report
 // Join user_master only for the employee display name; MetBy remains the group key.
 const getMetByReport = async (data) => {
@@ -478,7 +618,6 @@ const getMetByReport = async (data) => {
     return databaseFailure(error, "Generate Guest Meet Met By report");
   }
 };
-
 // ============================================================ Public Service API
 module.exports = {
   createDailyEntry,
@@ -490,6 +629,5 @@ module.exports = {
   getGuestDetailById,
   getDateRangeReport,
   getFeedbackReport,
-  getSummaryReport,
   getMetByReport,
 };
