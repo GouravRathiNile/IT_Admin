@@ -4,6 +4,7 @@ const { formatDate } = require("../../utils/dateFormatter");
 const bcrypt = require("bcrypt");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
 
+
 // ============================================================
 // CREATE USER
 // ============================================================

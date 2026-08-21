@@ -1,3 +1,5 @@
+const { formatDate } = require("../utils/dateFormatter");
+
 const EDITABLE_FIELDS = Object.freeze([
   "EntryDate",
   "Status",
@@ -45,6 +47,7 @@ const PROTECTED_FIELDS = Object.freeze([
   "UserID",
   "Username",
   "IP",
+  "CurrentWorkflowStage",
 ]);
 
 const pick = (source, fields) =>
@@ -63,6 +66,7 @@ const createDTO = (body = {}) => ({
 const updateDTO = (body = {}) => ({
   ID: body.ID ?? body.id,
   ...pick(body, EDITABLE_FIELDS),
+  WorkflowAction: body.WorkflowAction,
   UpdatedBy: body.UpdatedBy ?? null,
 });
 
@@ -75,6 +79,15 @@ const parseCommaSeparatedIDs = (value) => {
     .map((item) => String(item).trim())
     .filter(Boolean);
 };
+
+const formatGuestGlitchDates = (data = {}) => ({
+  ...data,
+  EntryDate: formatDate(data.EntryDate),
+  CheckInDate: formatDate(data.CheckInDate),
+  CheckOutDate: formatDate(data.CheckOutDate),
+  CreatedDate: formatDate(data.CreatedDate, "DD MMM YYYY HH:mm"),
+  ModifyDate: formatDate(data.ModifyDate, "DD MMM YYYY HH:mm"),
+});
 
 /*
  * LIST REQUEST / FILTER DTO
@@ -144,7 +157,7 @@ const listResponseDTO = (row, resolved = {}) => ({
 
   OrganizationName: row.organizationname ?? null,
 
-  EntryDate: row.entrydate,
+  EntryDate: formatDate(row.entrydate),
   Time: row.time,
 
   RoomNumber: row.roomnumber,
@@ -155,6 +168,7 @@ const listResponseDTO = (row, resolved = {}) => ({
 
   Complaint: row.complaint,
   Status: row.status,
+  CurrentWorkflowStage: row.currentworkflowstage ?? null,
 
   ComplaintSource: row.complaintsource,
   RaiseSource: row.raisesource,
@@ -170,8 +184,8 @@ const listResponseDTO = (row, resolved = {}) => ({
 
   CompanyName: row.companyname,
 
-  CheckInDate: row.checkindate,
-  CheckOutDate: row.checkoutdate,
+  CheckInDate: formatDate(row.checkindate),
+  CheckOutDate: formatDate(row.checkoutdate),
 
   CreatedBy: row.createdby,
   UpdatedBy: row.updatedby,
@@ -194,11 +208,13 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
   OrganizationName:
     row.organizationname ?? row.OrganizationName ?? null,
 
-  EntryDate:
-    row.entrydate ?? row.EntryDate ?? null,
+  EntryDate: formatDate(row.entrydate ?? row.EntryDate),
 
   Status:
     row.status ?? row.Status ?? null,
+
+  CurrentWorkflowStage:
+    row.currentworkflowstage ?? row.CurrentWorkflowStage ?? null,
 
   ResolvedBy:
     row.resolvedby ?? row.ResolvedBy ?? null,
@@ -230,11 +246,9 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
   Rate:
     row.rate ?? row.Rate ?? null,
 
-  CheckInDate:
-    row.checkindate ?? row.CheckInDate ?? null,
+  CheckInDate: formatDate(row.checkindate ?? row.CheckInDate),
 
-  CheckOutDate:
-    row.checkoutdate ?? row.CheckOutDate ?? null,
+  CheckOutDate: formatDate(row.checkoutdate ?? row.CheckOutDate),
 
   UpdatedBy:
     row.updatedby ?? row.UpdatedBy ?? null,
@@ -299,14 +313,12 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
   CreatedBy:
     row.createdby ?? row.CreatedBy ?? null,
 
-  CreatedDate:
-    row.createddate ?? row.CreatedDate ?? null,
+  CreatedDate: formatDate(row.createddate ?? row.CreatedDate, "DD MMM YYYY HH:mm"),
 
   ModifyBy:
     row.modifyby ?? row.ModifyBy ?? null,
 
-  ModifyDate:
-    row.modifydate ?? row.ModifyDate ?? null,
+  ModifyDate: formatDate(row.modifydate ?? row.ModifyDate, "DD MMM YYYY HH:mm"),
 
   Departments:
     resolved.departments || [],
@@ -331,7 +343,7 @@ const compactReportDTO = (row = {}) => ({
     row.hotel ??
     null,
 
-  EntryDate: row.entrydate ?? null,
+  EntryDate: formatDate(row.entrydate),
   Time: row.time ?? null,
 
   RoomNumber: row.roomnumber ?? null,
@@ -377,11 +389,9 @@ const compactReportDTO = (row = {}) => ({
   Rate:
     row.rate == null ? null : Number(row.rate),
 
-  CheckInDate:
-    row.checkindate ?? null,
+  CheckInDate: formatDate(row.checkindate),
 
-  CheckOutDate:
-    row.checkoutdate ?? null,
+  CheckOutDate: formatDate(row.checkoutdate),
 
   ResolvedBy:
     row.resolvedby ?? null,
@@ -404,4 +414,5 @@ module.exports = {
   listResponseDTO,
   completeReportDTO,
   compactReportDTO,
+  formatGuestGlitchDates,
 };

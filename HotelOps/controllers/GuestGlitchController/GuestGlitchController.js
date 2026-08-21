@@ -8,7 +8,6 @@ const validator = require("../../validators/GuestGlitchValidator");
 const uploadAttachment = require("../../AzurConfigration/GuestGlitch/AzureUpload");
 
 const requestContext = (req) => ({
-  OrganizationID: req.organizationID,
   UserID: Number(req.user.UserID),
   Username: String(req.user.Username || req.user.UserID),
   IP: req.ip,
@@ -137,6 +136,21 @@ exports.masterReport = reportListController("MASTER_REPORT_GUEST_GLITCH");
 exports.reportDetail = idController("REPORT_GUEST_GLITCH_DETAIL");
 exports.gmView = idController("GET_GUEST_GLITCH_GM");
 
+const exportController = (format) => (req, res) => execute(res, async () => {
+  const data = reportListDTO(req.query || {});
+  assertValid(validator.validateReportList(data));
+  const response = await callQueue("EXPORT_GUEST_GLITCH_REPORT", { ...data, format, ...requestContext(req) });
+  if (!response.success) return sendResponse(res, response);
+  const file = Buffer.from(response.fileBase64, "base64");
+  res.setHeader("Content-Type", response.contentType);
+  res.setHeader("Content-Disposition", `attachment; filename="${response.filename}"`);
+  res.setHeader("Content-Length", file.length);
+  return res.status(STATUS_CODES.SUCCESS).send(file);
+});
+
+exports.exportCSV = exportController("csv");
+exports.exportExcel = exportController("excel");
+
 exports.masterReportPdf = (req, res) => execute(res, async () => {
   assertValidID(validator.validateID(req.params.id));
   const response = await callQueue("MASTER_REPORT_GUEST_GLITCH_PDF", { ID: Number(req.params.id), ...requestContext(req) });
@@ -154,10 +168,28 @@ exports.gmAction = (req, res) => execute(res, async () => {
   assertValid(errors);
   const response = await callQueue("GUEST_GLITCH_GM_ACTION", {
     ID: Number(req.body.ID ?? req.body.id), GMComment: String(req.body.GMComment).trim(),
-    Status: req.body.Status, ResolvedBy: req.body.ResolvedBy, ...requestContext(req),
+    Status: req.body.Status, ResolvedBy: req.body.ResolvedBy, WorkflowAction: req.body.WorkflowAction, ...requestContext(req),
   });
   return sendResponse(res, response);
 });
+
+exports.saveWorkflowConfig = (req, res) => execute(res, async () => {
+  assertValid(validator.validateWorkflowConfig(req.body || {}));
+  const Stages = req.body.Stages.map((stage) => ({
+    StageKey: String(stage.StageKey).trim().toUpperCase(), StageName: String(stage.StageName).trim(),
+    StageOrder: Number(stage.StageOrder), IsFinalStage: stage.IsFinalStage === true, IsActive: stage.IsActive !== false,
+    Actors: stage.Actors.map((actor) => ({ ActorType: String(actor.ActorType).trim().toUpperCase(), ActorValue: actor.ActorValue,
+      CanView: actor.CanView !== false, CanEdit: actor.CanEdit === true, CanProceed: actor.CanProceed === true,
+      EditableFields: actor.EditableFields || [], RequiredActionFields: actor.RequiredActionFields || [], IsActive: actor.IsActive !== false })),
+  }));
+  return sendResponse(res, await callQueue("SAVE_GUEST_GLITCH_WORKFLOW", { Stages, ...requestContext(req) }));
+});
+
+exports.getWorkflowConfig = (req, res) => execute(res, async () =>
+  sendResponse(res, await callQueue("GET_GUEST_GLITCH_WORKFLOW", requestContext(req))));
+
+exports.deleteWorkflowConfig = (req, res) => execute(res, async () =>
+  sendResponse(res, await callQueue("DELETE_GUEST_GLITCH_WORKFLOW", requestContext(req))));
 
 exports.attachment = (req, res) => execute(res, async () => {
   assertValidID(validator.validateID(req.params.id));

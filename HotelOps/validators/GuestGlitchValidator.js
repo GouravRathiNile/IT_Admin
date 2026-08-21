@@ -1,5 +1,6 @@
-const { OPTION_TYPES, SORT_COLUMNS, REPORT_SORT_COLUMNS } = require("../config/guestGlitchConstants");
+const { OPTION_TYPES, SORT_COLUMNS, REPORT_SORT_COLUMNS, WORKFLOW_ACTOR_TYPES } = require("../config/guestGlitchConstants");
 const { EDITABLE_FIELDS, PROTECTED_FIELDS } = require("../dto/GuestGlitchDTO");
+const WORKFLOW_EDITABLE_FIELDS = Object.freeze([...EDITABLE_FIELDS, "Attachment"]);
 
 const isPositiveInteger = (value) => /^\d+$/.test(String(value)) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
 const isISODate = (value) => {
@@ -29,7 +30,7 @@ const normalizeIDArray = (body, field, errors, required = false) => {
 
 const validateCommon = (data, isCreate) => {
   const errors = [];
-  const allowedFields = new Set([...EDITABLE_FIELDS, ...(isCreate ? [] : ["ID", "id"])]);
+  const allowedFields = new Set([...EDITABLE_FIELDS, ...(isCreate ? [] : ["ID", "id", "WorkflowAction"])]);
   for (const field of Object.keys(data)) {
     if (!allowedFields.has(field) && !PROTECTED_FIELDS.includes(field)) {
       errors.push(error(field, `${field} is not an allowed field.`));
@@ -91,12 +92,13 @@ const validateCommon = (data, isCreate) => {
       data.DepartmentHODComments = [];
     } else {
       const seen = new Set();
+      const shouldValidateSelection = isCreate || Object.prototype.hasOwnProperty.call(data, "DepartmentIDs");
       const selectedDepartments = new Set((data.DepartmentIDs || []).map(Number));
       data.DepartmentHODComments = [];
       comments.forEach((item) => {
         if (!item || !isPositiveInteger(item.departmentId)) errors.push(error("DepartmentHODComments", "Each HOD comment requires a valid departmentId."));
         else if (seen.has(Number(item.departmentId))) errors.push(error("DepartmentHODComments", "Duplicate department HOD comments are not allowed."));
-        else if (!selectedDepartments.has(Number(item.departmentId))) errors.push(error("DepartmentHODComments", "Department HOD comment can only be added for a selected department"));
+        else if (shouldValidateSelection && !selectedDepartments.has(Number(item.departmentId))) errors.push(error("DepartmentHODComments", "Department HOD comment can only be added for a selected department"));
         else if (String(item.comment ?? "").trim().length > 500) errors.push(error("DepartmentHODComments", "HOD comments must not exceed 500 characters."));
         else {
           seen.add(Number(item.departmentId));
@@ -129,8 +131,47 @@ const validateUpdate = (body = {}) => {
   if (data.ID === undefined || data.ID === null || data.ID === "") errors.push(error("ID", "Guest Glitch ID is required"));
   else if (!isPositiveInteger(data.ID)) errors.push(error("ID", "Guest Glitch ID must be a valid number"));
   errors.push(...validateCommon(data, false));
-  if (!EDITABLE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(body, field))) errors.push(error("body", "At least one editable field is required."));
+  if (!EDITABLE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(body, field)) && body.WorkflowAction === undefined) errors.push(error("body", "At least one editable field or WorkflowAction is required."));
+  if (body.WorkflowAction !== undefined && String(body.WorkflowAction).trim().toUpperCase() !== "PROCEED") errors.push(error("WorkflowAction", "WorkflowAction must be PROCEED."));
   return { data, errors };
+};
+
+const validateWorkflowConfig = (body = {}) => {
+  const errors = [];
+  const stages = Array.isArray(body.Stages) ? body.Stages : [];
+  if (!stages.length) return [error("Stages", "At least one workflow stage is required.")];
+  const keys = new Set(), orders = new Set();
+  let finalCount = 0;
+  stages.forEach((stage, stageIndex) => {
+    const prefix = `Stages[${stageIndex}]`;
+    const key = String(stage.StageKey || "").trim().toUpperCase();
+    const order = Number(stage.StageOrder);
+    if (!/^[A-Z0-9_]{1,80}$/.test(key)) errors.push(error(`${prefix}.StageKey`, "StageKey must contain only letters, numbers, and underscores."));
+    else if (keys.has(key)) errors.push(error(`${prefix}.StageKey`, `Workflow stage ${key} is duplicated.`));
+    keys.add(key);
+    if (!String(stage.StageName || "").trim() || String(stage.StageName).trim().length > 120) errors.push(error(`${prefix}.StageName`, "StageName must be between 1 and 120 characters."));
+    if (!Number.isInteger(order) || order < 1) errors.push(error(`${prefix}.StageOrder`, "StageOrder must be a positive integer."));
+    else if (orders.has(order)) errors.push(error(`${prefix}.StageOrder`, `Workflow stage order ${order} is duplicated.`));
+    orders.add(order);
+    if (stage.IsFinalStage === true) finalCount += 1;
+    const actors = Array.isArray(stage.Actors) ? stage.Actors : [];
+    if (!actors.length) errors.push(error(`${prefix}.Actors`, "Each workflow stage requires at least one actor."));
+    actors.forEach((actor, actorIndex) => {
+      const actorPrefix = `${prefix}.Actors[${actorIndex}]`;
+      const actorType = String(actor.ActorType || "").trim().toUpperCase();
+      if (!WORKFLOW_ACTOR_TYPES.includes(actorType)) errors.push(error(`${actorPrefix}.ActorType`, "Invalid workflow actor type."));
+      if (actorType !== "CREATOR" && !String(actor.ActorValue ?? "").trim()) errors.push(error(`${actorPrefix}.ActorValue`, "ActorValue is required for this actor type."));
+      for (const fieldName of ["EditableFields", "RequiredActionFields"]) {
+        const fields = actor[fieldName] ?? [];
+        if (!Array.isArray(fields) || fields.some((field) => !WORKFLOW_EDITABLE_FIELDS.includes(field)) || new Set(fields).size !== fields.length) {
+          errors.push(error(`${actorPrefix}.${fieldName}`, `${fieldName} must contain unique supported Guest Glitch fields.`));
+        }
+      }
+      if (actor.CanEdit === true && !(actor.EditableFields || []).length) errors.push(error(`${actorPrefix}.EditableFields`, "EditableFields are required when CanEdit is true."));
+    });
+  });
+  if (finalCount !== 1) errors.push(error("Stages", "Exactly one final workflow stage is required."));
+  return errors;
 };
 
 const validateID = (input = {}) => {
@@ -195,4 +236,4 @@ const validateGMAction = (body = {}) => {
 const validateDisposition = (value) => ["inline", "attachment"].includes(String(value || "inline").toLowerCase())
   ? [] : [error("disposition", "Disposition must be inline or attachment.")];
 
-module.exports = { validateCreate, validateUpdate, validateID, validateList, validateReportList, validateStatus, validateOption, validateGMAction, validateDisposition, isPositiveInteger };
+module.exports = { validateCreate, validateUpdate, validateID, validateList, validateReportList, validateStatus, validateOption, validateGMAction, validateWorkflowConfig, validateDisposition, isPositiveInteger };

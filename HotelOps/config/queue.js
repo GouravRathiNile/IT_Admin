@@ -42,6 +42,11 @@ module.exports = {
     REQUEST: "guest_meet_request_queue",
     RESPONSE: "guest_meet_response_queue",
   },
+
+  INCIDENT_REPORT: {
+    REQUEST: "incident_report_request_queue",
+    RESPONSE: "incident_report_response_queue",
+  },
   CAPEX: {
     REQUEST: "capex_request_queue",
     RESPONSE: "capex_response_queue",

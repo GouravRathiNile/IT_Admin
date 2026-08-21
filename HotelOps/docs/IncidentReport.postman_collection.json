@@ -1,0 +1,49 @@
+{
+  "info": {
+    "name": "HotelOps Incident Report",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{AuthToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "LocalUrl", "value": "http://localhost:5000/api" },
+    { "key": "AuthToken", "value": "" },
+    { "key": "IncidentReportID", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Create",
+      "event": [{ "listen": "test", "script": { "exec": ["const json = pm.response.json();", "if (pm.response.code === 201 && json.data?.ID) pm.collectionVariables.set('IncidentReportID', json.data.ID);"] } }],
+      "request": {
+        "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"ReportDate\": \"2026-08-20\",\n  \"IncidentDate\": \"2026-08-20\",\n  \"Time\": \"12:30 PM\",\n  \"Location\": \"Transformer to main Breaker cable\",\n  \"AccidentCause\": \"Heavy rainfall resulted in water ingress.\",\n  \"Anycasualty\": \"No\",\n  \"Description\": \"During the incident, the main power cable developed a fault.\",\n  \"Damagedcaused\": \"Main power cable damaged.\",\n  \"Investigation\": \"Engineering team investigated the issue.\",\n  \"InvestigatedBy\": \"Vikram Singh Chauhan\",\n  \"PresentDuringIncident\": \"Monu Kumar, Bhuwan\",\n  \"ReportTo\": \"Monu Kumar\",\n  \"ReportBy\": \"Vikram Singh Chauhan\"\n}" },
+        "url": "{{LocalUrl}}/IncidentReport/create"
+      }
+    },
+    { "name": "List", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/list?page=1&pageSize=10&sortBy=ReportDate&sortDirection=DESC" } },
+    { "name": "List - Year Month", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/list?year=2026&month=8&page=1&pageSize=10" } },
+    { "name": "List - Search", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/list?search=breaker&page=1&pageSize=10" } },
+    { "name": "Get By ID", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/{{IncidentReportID}}" } },
+    {
+      "name": "Update", "request": {
+        "method": "PUT", "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"ID\": \"{{IncidentReportID}}\",\n  \"Time\": \"01:00 PM\",\n  \"Location\": \"Main breaker\",\n  \"AccidentCause\": \"Updated cause\"\n}" },
+        "url": "{{LocalUrl}}/IncidentReport/update"
+      }
+    },
+    { "name": "Report", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/report?page=1&pageSize=10" } },
+    { "name": "Report - Filters", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/report?year=2026&month=8&search=breaker&page=1&pageSize=10" } },
+    { "name": "Report PDF", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/Report/{{IncidentReportID}}" } },
+    { "name": "Export Report CSV", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/Report/export/csv?year=2026&month=8&search=Transformer" } },
+    { "name": "Export Report Excel", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/Report/export/excel?year=2026&month=8" } },
+    {
+      "name": "Delete", "request": {
+        "method": "DELETE", "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"ID\": \"{{IncidentReportID}}\"\n}" },
+        "url": "{{LocalUrl}}/IncidentReport/delete"
+      }
+    }
+  ]
+}

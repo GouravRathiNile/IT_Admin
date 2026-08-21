@@ -7,13 +7,20 @@
     { "key": "GuestGlitchID", "value": "1" }
   ],
   "item": [
+    { "name": "Save Workflow Config", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"Stages\": [\n    { \"StageKey\": \"CREATOR_REVIEW\", \"StageName\": \"Creator Review\", \"StageOrder\": 1, \"IsFinalStage\": false, \"Actors\": [{ \"ActorType\": \"CREATOR\", \"CanView\": true, \"CanEdit\": true, \"CanProceed\": true, \"EditableFields\": [\"Complaint\"], \"RequiredActionFields\": [\"Complaint\"] }] },\n    { \"StageKey\": \"FINAL_REVIEW\", \"StageName\": \"Final Review\", \"StageOrder\": 2, \"IsFinalStage\": true, \"Actors\": [{ \"ActorType\": \"USER_TYPE\", \"ActorValue\": \"CEO\", \"CanView\": true, \"CanEdit\": false, \"CanProceed\": true, \"EditableFields\": [], \"RequiredActionFields\": [] }] }\n  ]\n}" }, "url": "{{LocalUrl}}/GuestGlitch/workflow/config" } },
+    { "name": "Get Workflow Config", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/workflow/config" } },
+    { "name": "Delete Workflow Config", "request": { "method": "DELETE", "url": "{{LocalUrl}}/GuestGlitch/workflow/config" } },
+    { "name": "Workflow-aware Detail", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/{{GuestGlitchID}}" } },
+    { "name": "Workflow Update and Proceed", "request": { "method": "PUT", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"ID\": {{GuestGlitchID}},\n  \"DepartmentHODComments\": [\n    {\n      \"departmentId\": 10,\n      \"comment\": \"Engineering team inspected the room and corrective action has been taken.\"\n    }\n  ],\n  \"WorkflowAction\": \"PROCEED\"\n}" }, "url": "{{LocalUrl}}/GuestGlitch/update" } },
     { "name": "Compact Report", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/report?page=1&pageSize=10&sortBy=EntryDate&sortDirection=DESC" } },
     { "name": "Report Detail", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/report/{{GuestGlitchID}}" } },
     { "name": "Master Report", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/master-report?page=1&pageSize=10" } },
     { "name": "Master Report PDF", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/master-report/{{GuestGlitchID}}/pdf" } },
-    { "name": "GM View", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/gm/{{GuestGlitchID}}" } },
-    { "name": "GM Action", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"ID\": {{GuestGlitchID}},\n  \"GMComment\": \"Reviewed by GM\"\n}" }, "url": "{{LocalUrl}}/GuestGlitch/gm-action" } },
+    { "name": "Deprecated - GM View", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/gm/{{GuestGlitchID}}" } },
+    { "name": "Deprecated - GM Action", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"ID\": {{GuestGlitchID}},\n  \"GMComment\": \"Reviewed by configured actor\"\n}" }, "url": "{{LocalUrl}}/GuestGlitch/gm-action" } },
     { "name": "View Attachment", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/attachment/{{GuestGlitchID}}?disposition=inline" } },
-    { "name": "Download Attachment", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/attachment/{{GuestGlitchID}}?disposition=attachment" } }
+    { "name": "Download Attachment", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/attachment/{{GuestGlitchID}}?disposition=attachment" } },
+    { "name": "Export Report CSV", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/report/export/csv?status=Open&fromDate=2026-08-01&toDate=2026-08-31" } },
+    { "name": "Export Report Excel", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/report/export/excel?status=Open&fromDate=2026-08-01&toDate=2026-08-31" } }
   ]
 }

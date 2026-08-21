@@ -10,9 +10,29 @@ const {
   listResponseDTO,
   completeReportDTO,
   compactReportDTO,
+  formatGuestGlitchDates,
 } = require("../../dto/GuestGlitchDTO");
 const { generateGuestGlitchPdf } = require("./GuestGlitchPdfService");
 const generateAttachmentUrl = require("../../AzurConfigration/GuestGlitch/AzureGetData");
+const { generateCSV, generateExcel } = require("../../utils/exportHelper");
+const { formatDate } = require("../../utils/dateFormatter");
+
+const GUEST_GLITCH_EXPORT_COLUMNS = Object.freeze([
+  { key: "ID", header: "ID", width: 12 }, { key: "OrganizationName", header: "Organization", width: 24 },
+  { key: "EntryDate", header: "Entry Date", width: 16 }, { key: "Time", header: "Time", width: 12 },
+  { key: "RoomNumber", header: "Room Number", width: 14 }, { key: "GuestName", header: "Guest Name", width: 22 },
+  { key: "GuestStatus", header: "Guest Status", width: 16 }, { key: "Departments", header: "Departments", width: 28 },
+  { key: "ReceivedByUsers", header: "Received By", width: 25 }, { key: "InformedToUsers", header: "Informed To", width: 25 },
+  { key: "Complaint", header: "Complaint", width: 40 }, { key: "Status", header: "Status", width: 16 },
+  { key: "ComplaintSource", header: "Complaint Source", width: 18 }, { key: "RaiseSource", header: "Raise Source", width: 18 },
+  { key: "ProcessLapse", header: "Process Lapse", width: 35 }, { key: "ProcessLapseCategory", header: "Process Lapse Category", width: 24 },
+  { key: "ServiceRecovery", header: "Service Recovery", width: 40 }, { key: "InternalActionTaken", header: "Internal Action Taken", width: 40 },
+  { key: "InternalActionTakenCategory", header: "Internal Action Category", width: 26 },
+  { key: "CompanyName", header: "Company Name", width: 22 }, { key: "Rate", header: "Rate", width: 14 },
+  { key: "CheckInDate", header: "Check In Date", width: 16 }, { key: "CheckOutDate", header: "Check Out Date", width: 16 },
+  { key: "ResolvedBy", header: "Resolved By", width: 22 }, { key: "UpdatedBy", header: "Updated By", width: 22 },
+  { key: "GMComment", header: "GM Comment", width: 35 },
+]);
 
 const fail = (message, statusCode = 400, errors) => ({ success: false, statusCode, message, ...(errors ? { errors } : {}) });
 const cleanText = (value) => value == null ? null : String(value).trim();
@@ -27,8 +47,39 @@ const canonical = (value) => {
   return String(value);
 };
 
+const mergeDepartmentComments = (existing = [], supplied = []) => {
+  const comments = new Map(existing.map((item) => [Number(item.departmentId), {
+    departmentId: Number(item.departmentId), comment: String(item.comment || "").trim(),
+  }]));
+  for (const item of supplied) {
+    comments.set(Number(item.departmentId), {
+      departmentId: Number(item.departmentId), comment: String(item.comment || "").trim(),
+    });
+  }
+  return [...comments.values()].filter((item) => item.comment);
+};
+
+const resolveOrganization = async (userID) => {
+  const rows = await repository.resolveOrganizations(userID);
+  if (rows.length === 0) return { error: fail("No active organization is assigned to the authenticated user.", 403) };
+  if (rows.length > 1) return { error: fail("Multiple organizations are assigned to this user. An organization must be selected before accessing Guest Glitch.", 409) };
+  return { OrganizationID: Number(rows[0].organizationid), UserType: String(rows[0].usertype || "").trim(), DepartmentID: rows[0].departmentid == null ? null : Number(rows[0].departmentid) };
+};
+
+const withOrganization = (operation) => async (data) => {
+  try {
+    const organization = await resolveOrganization(data.UserID);
+    if (organization.error) return organization.error;
+    return operation({ ...data, ...organization });
+  } catch (error) {
+    console.error("Guest Glitch Organization Resolution Error:", error.message);
+    return fail("Unable to resolve organization for Guest Glitch at this time.", 503);
+  }
+};
+
 const mapRow = (row) => ({
   ID: Number(row.id), OrganizationID: Number(row.organizationid), EntryDate: row.entrydate,
+  CurrentWorkflowStage: row.currentworkflowstage,
   Status: row.status, ResolvedBy: row.resolvedby, GuestName: row.guestname,
   RoomNumber: row.roomnumber, Time: row.time, Complaint: row.complaint,
   ServiceRecovery: row.servicerecovery, DetailedInvestigation: row.detailedinvestigation,
@@ -120,6 +171,9 @@ const create = async (data) => {
   const client = await repository.getClient();
   try {
     await client.query("BEGIN");
+    const firstStage = await repository.getFirstWorkflowStage(client, data.OrganizationID);
+    if (!firstStage) { await client.query("ROLLBACK"); return fail("Guest Glitch workflow configuration is not available for this organization.", 409); }
+    data.CurrentWorkflowStage = firstStage.stagekey;
     data.Status = cleanText(data.Status) || "Open";
     const selections = await validateSelections(client, data, data.OrganizationID);
     if (selections.error) { await client.query("ROLLBACK"); return selections.error; }
@@ -215,6 +269,8 @@ const get = async (data) => {
     const found = await ensureOwnedRecord(client, data.ID, data.OrganizationID);
     if (found.error) return found.error;
     const row = found.record;
+    const workflow = await resolveWorkflowAccess(client, row, data, "VIEW");
+    if (workflow.error) return workflow.error;
     const [departments, receivedUsers, informedUsers] = await Promise.all([
       repository.validateDepartments(client, data.OrganizationID, row.departmentids || []),
       repository.validateUsers(client, data.OrganizationID, row.receivedbyids || []),
@@ -222,7 +278,8 @@ const get = async (data) => {
     ]);
     return {
       success: true, message: "Guest glitch retrieved successfully.", data: {
-        ...mapRow(row),
+      ...formatGuestGlitchDates(mapRow(row)),
+        workflow: workflowDTO(workflow.access),
         departments: departments.map((item) => ({ id: Number(item.departmentid), name: item.departmentname })),
         receivedByUsers: receivedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
         informedToUsers: informedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
@@ -240,7 +297,12 @@ const update = async (data) => {
     await client.query("BEGIN");
     const found = await ensureOwnedRecord(client, data.ID, data.OrganizationID, true);
     if (found.error) { await client.query("ROLLBACK"); return found.error; }
+    const workflow = await resolveWorkflowAccess(client, found.record, data, "UPDATE");
+    if (workflow.error) { await client.query("ROLLBACK"); return workflow.error; }
     const current = mapRow(found.record);
+    if (Object.prototype.hasOwnProperty.call(data, "DepartmentHODComments")) {
+      data.DepartmentHODComments = mergeDepartmentComments(current.DepartmentHODComments, data.DepartmentHODComments);
+    }
     const merged = { ...current, ...data };
     if (Object.prototype.hasOwnProperty.call(data, "DepartmentIDs") && !Object.prototype.hasOwnProperty.call(data, "DepartmentHODComments")) {
       const selected = new Set(data.DepartmentIDs.map(Number));
@@ -256,10 +318,36 @@ const update = async (data) => {
     for (const [field, value] of Object.entries(prepared)) {
       if (repository.COLUMN_MAP[field] && canonical(value) !== canonical(current[field])) changed[field] = value;
     }
-    if (!Object.keys(changed).length) { await client.query("ROLLBACK"); return { success: true, message: "No changes were detected.", data: { ID: Number(data.ID) } }; }
+    const actuallyChangedRequestFields = Object.keys(data).filter((field) =>
+      repository.COLUMN_MAP[field] && field !== "CurrentWorkflowStage" &&
+      canonical(data[field]) !== canonical(current[field]));
+    const allowedFields = new Set(workflow.access.editablefields || []);
+    if (actuallyChangedRequestFields.length && workflow.access.canedit !== true) {
+      await client.query("ROLLBACK"); return fail("You are not authorized to edit this Guest Glitch at its current workflow stage.", 403);
+    }
+    const deniedField = actuallyChangedRequestFields.find((field) => !allowedFields.has(field));
+    if (deniedField) { await client.query("ROLLBACK"); return fail(`You are not authorized to update field: ${deniedField}`, 403); }
+    if (String(data.WorkflowAction || "").toUpperCase() === "PROCEED") {
+      if (workflow.access.canproceed !== true) { await client.query("ROLLBACK"); return fail("You are not authorized to proceed this Guest Glitch workflow.", 403); }
+      const resulting = { ...current, ...changed };
+      const missing = (workflow.access.requiredactionfields || []).find((field) => {
+        const value = resulting[field];
+        return value == null || value === "" || (Array.isArray(value) && value.length === 0);
+      });
+      if (missing) { await client.query("ROLLBACK"); return fail(`${missing} is required before proceeding to the next workflow stage.`); }
+      if (!workflow.access.isfinalstage && !workflow.access.nextstage) { await client.query("ROLLBACK"); return fail("The next Guest Glitch workflow stage is not configured.", 409); }
+      if (!workflow.access.isfinalstage) changed.CurrentWorkflowStage = workflow.access.nextstage;
+    }
+    if (!Object.keys(changed).length) {
+      await client.query("ROLLBACK");
+      if (String(data.WorkflowAction || "").toUpperCase() === "PROCEED" && workflow.access.isfinalstage) {
+        return { success: true, message: "Guest Glitch workflow is complete.", data: { ID: Number(data.ID), CurrentWorkflowStage: current.CurrentWorkflowStage } };
+      }
+      return { success: true, message: "No changes were detected.", data: { ID: Number(data.ID) } };
+    }
     await repository.updateChangedFields(client, data.ID, data.OrganizationID, changed, data.UserID, data.Username, data.IP);
     await client.query("COMMIT");
-    return { success: true, message: "Guest glitch updated successfully.", data: { ID: Number(data.ID) } };
+    return { success: true, message: "Guest glitch updated successfully.", data: { ID: Number(data.ID), CurrentWorkflowStage: changed.CurrentWorkflowStage || current.CurrentWorkflowStage } };
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Update Guest Glitch Error:", error.message);
@@ -269,37 +357,7 @@ const update = async (data) => {
 };
 
 const updateStatus = async (data) => {
-  const client = await repository.getClient();
-  try {
-    await client.query("BEGIN");
-    const found = await ensureOwnedRecord(client, data.ID, data.OrganizationID, true);
-    if (found.error) { await client.query("ROLLBACK"); return found.error; }
-    const target = cleanText(data.Status);
-    const [option, currentOption] = await Promise.all([
-      repository.findOption(client, data.OrganizationID, "Status", target),
-      repository.findOption(client, data.OrganizationID, "Status", found.record.status),
-    ]);
-    if (!option) { await client.query("ROLLBACK"); return fail("The selected status is invalid or inactive."); }
-    if (!currentOption) { await client.query("ROLLBACK"); return fail("The current status is not configured for this organization."); }
-    const allowed = Array.isArray(currentOption.metadata?.allowedNext)
-      ? currentOption.metadata.allowedNext
-      : [];
-    if (!allowed.includes(target)) { await client.query("ROLLBACK"); return fail(`Invalid status transition from ${found.record.status} to ${target}`); }
-    if (option.metadata?.requiresResolvedBy === true && !cleanText(data.ResolvedBy)) {
-      await client.query("ROLLBACK");
-      return fail(`ResolvedBy is required when changing status to ${target}`);
-    }
-    const changed = { Status: target };
-    if (data.ResolvedBy != null) changed.ResolvedBy = cleanText(data.ResolvedBy);
-    await repository.updateChangedFields(client, data.ID, data.OrganizationID, changed, data.UserID, data.Username, data.IP);
-    await client.query("COMMIT");
-    return { success: true, message: "Guest glitch status updated successfully.", data: { ID: Number(data.ID), Status: target } };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("Status Guest Glitch Error:", error.message);
-    const retry = retryableDatabaseResponse(error);
-    return retry || fail("Unable to update guest glitch status at this time.", 503);
-  } finally { client.release(); }
+  return update(data);
 };
 
 const remove = async (data) => {
@@ -351,26 +409,42 @@ const resolveReportRows = async (client, rows) => {
   return rows.map((row, index) => ({ row, resolved: selections[index] }));
 };
 
+const workflowDTO = (access) => ({ currentStage: access.stagekey, currentStageName: access.stagename,
+  canView: access.canview === true, canEdit: access.canedit === true,
+  editableFields: access.editablefields || [], canProceed: access.canproceed === true,
+  nextStage: access.nextstage || null, isFinalStage: access.isfinalstage === true });
+
+const resolveWorkflowAccess = async (client, row, data, action = "VIEW") => {
+  if (!row.currentworkflowstage) return { error: fail("Guest Glitch workflow stage is not configured for this record.", 409) };
+  const access = await repository.getWorkflowAccess(client, row, data);
+  if (!access || access.canview !== true) {
+    console.warn("Guest Glitch workflow access denied", { GuestGlitchID: Number(row.id), UserID: data.UserID,
+      OrganizationID: data.OrganizationID, currentWorkflowStage: row.currentworkflowstage,
+      configuredStage: access?.stagekey || null, action });
+    return { error: fail("You are not authorized to access this Guest Glitch at its current workflow stage.", 403) };
+  }
+  return { access };
+};
+
+const selectionNames = (items = []) => items.map((item) => item.Name ?? item.name).filter(Boolean).join(", ");
+const mapCompactReportRows = (resolvedRows) => resolvedRows.map(({ row, resolved }) => compactReportDTO({
+  ...row,
+  departments: selectionNames(resolved.departments),
+  receivedByUsers: selectionNames(resolved.receivedByUsers),
+  informedToUsers: selectionNames(resolved.informedToUsers),
+}));
+
 const report = async (data, complete = false) => {
   const client = await repository.getClient();
   try {
-    // const result = await repository.reportList(data, data.OrganizationID);
-    console.log("========== REPORT DEBUG ==========");
-    console.log("Report Data:", JSON.stringify(data, null, 2));
-    console.log("OrganizationID:", data.OrganizationID);
-
     const result = await repository.reportList(
       data,
       data.OrganizationID
     );
-
-    console.log("Report Result Rows:", result.rows.length);
-    console.log("Report Total:", result.total);
-    console.log("==================================");
     const resolvedRows = await resolveReportRows(client, result.rows);
-    const mapped = resolvedRows.map(({ row, resolved }) => complete
-      ? completeReportDTO(row, resolved)
-      : compactReportDTO({ ...row, departments: resolved.departments.map((item) => item.name).filter(Boolean).join(", "), receivedByUsers: resolved.receivedByUsers.map((item) => item.name).filter(Boolean).join(", ") }));
+    const mapped = complete
+      ? resolvedRows.map(({ row, resolved }) => completeReportDTO(row, resolved))
+      : mapCompactReportRows(resolvedRows);
     return {
       success: true,
       message: complete ? "Guest Glitch master report fetched successfully" : "Guest Glitch report fetched successfully",
@@ -383,13 +457,37 @@ const report = async (data, complete = false) => {
   } finally { client.release(); }
 };
 
+const exportReport = async (data) => {
+  const client = await repository.getClient();
+  try {
+    if (!["csv", "excel"].includes(data.format)) return fail("Invalid Guest Glitch export format.");
+    const result = await repository.reportList(data, data.OrganizationID, false);
+    const rows = mapCompactReportRows(await resolveReportRows(client, result.rows));
+    const buffer = data.format === "csv"
+      ? generateCSV(rows, GUEST_GLITCH_EXPORT_COLUMNS)
+      : await generateExcel(rows, GUEST_GLITCH_EXPORT_COLUMNS, "Guest Glitch Report");
+    const extension = data.format === "csv" ? "csv" : "xlsx";
+    return {
+      success: true, message: "Guest Glitch report exported successfully.",
+      fileBase64: buffer.toString("base64"),
+      contentType: data.format === "csv" ? "text/csv; charset=utf-8" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      filename: `GuestGlitch_Report_${formatDate(new Date(), "YYYY-MM-DD")}.${extension}`,
+    };
+  } catch (error) {
+    console.error("Guest Glitch Export Error:", error.message);
+    return fail("Unable to export Guest Glitch report at this time.", 503);
+  } finally { client.release(); }
+};
+
 const reportDetail = async (data) => {
   const client = await repository.getClient();
   try {
     const row = await repository.findReportByID(client, data.ID, data.OrganizationID);
     if (!row) return fail("Guest Glitch not found", 404);
+    const workflow = await resolveWorkflowAccess(client, row, data, "REPORT_VIEW");
+    if (workflow.error) return workflow.error;
     const [resolved] = await repository.resolveSelections(client, data.OrganizationID, [row]);
-    return { success: true, message: "Guest Glitch report detail fetched successfully", data: completeReportDTO(row, resolved) };
+    return { success: true, message: "Guest Glitch report detail fetched successfully", data: { ...completeReportDTO(row, resolved), workflow: workflowDTO(workflow.access) } };
   } catch (error) {
     console.error("Guest Glitch Report Detail Error:", error.message);
     return fail("Unable to retrieve Guest Glitch report detail at this time.", 503);
@@ -409,36 +507,7 @@ const masterReportPdf = async (data) => {
 };
 
 const gmAction = async (data) => {
-  const client = await repository.getClient();
-  try {
-    await client.query("BEGIN");
-    const row = await repository.findReportByID(client, data.ID, data.OrganizationID, true);
-    if (!row) { await client.query("ROLLBACK"); return fail("Guest Glitch not found", 404); }
-    const changed = { GMComment: cleanText(data.GMComment) };
-    if (data.Status != null) {
-      const targetValue = cleanText(data.Status);
-      const [current, target] = await Promise.all([
-        repository.findOption(client, data.OrganizationID, "Status", row.status),
-        repository.findOption(client, data.OrganizationID, "Status", targetValue),
-      ]);
-      if (!current || !target) { await client.query("ROLLBACK"); return fail("The selected status is invalid or inactive."); }
-      const allowed = Array.isArray(current.metadata?.allowedNext) ? current.metadata.allowedNext : [];
-      if (!allowed.includes(targetValue)) { await client.query("ROLLBACK"); return fail(`Invalid status transition from ${row.status} to ${targetValue}`); }
-      if (target.metadata?.requiresResolvedBy === true && !cleanText(data.ResolvedBy)) {
-        await client.query("ROLLBACK"); return fail(`ResolvedBy is required when changing status to ${targetValue}`);
-      }
-      changed.Status = targetValue;
-      if (data.ResolvedBy != null) changed.ResolvedBy = cleanText(data.ResolvedBy);
-    }
-    await repository.updateChangedFields(client, data.ID, data.OrganizationID, changed, data.UserID, data.Username, data.IP);
-    await client.query("COMMIT");
-    return { success: true, message: "Guest Glitch GM action saved successfully", data: { ID: Number(data.ID), Status: changed.Status || row.status } };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("Guest Glitch GM Action Error:", error.message);
-    const retry = retryableDatabaseResponse(error);
-    return retry || fail("Unable to save Guest Glitch GM action at this time.", 503);
-  } finally { client.release(); }
+  return update(data);
 };
 
 const attachment = async (data) => {
@@ -446,6 +515,8 @@ const attachment = async (data) => {
   try {
     const row = await repository.findByID(client, data.ID, data.OrganizationID);
     if (!row) return fail("Guest Glitch not found", 404);
+    const workflow = await resolveWorkflowAccess(client, row, data, "ATTACHMENT_VIEW");
+    if (workflow.error) return workflow.error;
     if (!row.attachment) return fail("Attachment not found", 404);
     const title = row.attachmenttitle || `guest-glitch-${data.ID}-attachment`;
     return {
@@ -461,8 +532,88 @@ const attachment = async (data) => {
   } finally { client.release(); }
 };
 
+const getWorkflowConfig = async (data) => {
+  const client = await repository.getClient();
+  try {
+    const rows = await repository.getWorkflowConfig(client, data.OrganizationID);
+    const stages = [];
+    for (const row of rows) {
+      let stage = stages.find((item) => item.FlowConfigID === Number(row.flowconfigid));
+      if (!stage) {
+        stage = { FlowConfigID: Number(row.flowconfigid), StageKey: row.stagekey, StageName: row.stagename,
+          StageOrder: Number(row.stageorder), IsFinalStage: row.isfinalstage, IsActive: row.isactive, Actors: [] };
+        stages.push(stage);
+      }
+      if (row.flowconfigdetailid) stage.Actors.push({ FlowConfigDetailID: Number(row.flowconfigdetailid), ActorType: row.actortype,
+        ActorValue: row.actorvalue, CanView: row.canview, CanEdit: row.canedit, CanProceed: row.canproceed,
+        EditableFields: row.editablefields || [], RequiredActionFields: row.requiredactionfields || [] });
+    }
+    return { success: true, message: "Guest Glitch workflow configuration fetched successfully.", data: stages };
+  } catch (error) { console.error("Get Guest Glitch Workflow Error:", error.message); return fail("Unable to fetch Guest Glitch workflow configuration at this time.", 503); }
+  finally { client.release(); }
+};
+
+const saveWorkflowConfig = async (data) => {
+  const client = await repository.getClient();
+  try { await client.query("BEGIN");
+    const actors = data.Stages.flatMap((stage) => stage.Actors);
+    const userIDs = [...new Set(actors.filter((actor) => actor.ActorType === "USER_ID").map((actor) => Number(actor.ActorValue)))];
+    const departmentIDs = [...new Set(actors.filter((actor) => actor.ActorType === "DEPARTMENT_ID").map((actor) => Number(actor.ActorValue)))];
+    const userTypes = [...new Set(actors.filter((actor) => actor.ActorType === "USER_TYPE").map((actor) => String(actor.ActorValue).trim().toUpperCase()))];
+    if (userIDs.some((id) => !Number.isSafeInteger(id) || id <= 0)) { await client.query("ROLLBACK"); return fail("USER_ID actor values must be positive integers."); }
+    if (departmentIDs.some((id) => !Number.isSafeInteger(id) || id <= 0)) { await client.query("ROLLBACK"); return fail("DEPARTMENT_ID actor values must be positive integers."); }
+    const [users, departments, availableTypes] = await Promise.all([
+      repository.validateUsers(client, data.OrganizationID, userIDs), repository.validateDepartments(client, data.OrganizationID, departmentIDs),
+      repository.validateWorkflowUserTypes(client, data.OrganizationID, userTypes),
+    ]);
+    const validUsers = new Set(users.map((row) => Number(row.userid))), validDepartments = new Set(departments.map((row) => Number(row.departmentid)));
+    const invalidUser = userIDs.find((id) => !validUsers.has(id));
+    if (invalidUser) { await client.query("ROLLBACK"); return fail(`Invalid workflow user ID: ${invalidUser}`); }
+    const invalidDepartment = departmentIDs.find((id) => !validDepartments.has(id));
+    if (invalidDepartment) { await client.query("ROLLBACK"); return fail(`Invalid workflow department ID: ${invalidDepartment}`); }
+    const validTypes = new Set(availableTypes), invalidType = userTypes.find((type) => !validTypes.has(type));
+    if (invalidType) { await client.query("ROLLBACK"); return fail(`Invalid workflow user type: ${invalidType}`); }
+    const stagesInUse = await repository.findWorkflowStagesInUseOutside(client, data.OrganizationID, data.Stages.map((stage) => stage.StageKey));
+    if (stagesInUse.length) { await client.query("ROLLBACK"); return fail(`Workflow stages currently in use cannot be removed: ${stagesInUse.join(", ")}`, 409); }
+    await repository.replaceWorkflowConfig(client, data); await client.query("COMMIT");
+    return { success: true, message: "Guest Glitch workflow configuration saved successfully." };
+  } catch (error) { await client.query("ROLLBACK"); console.error("Save Guest Glitch Workflow Error:", error.message);
+    return retryableDatabaseResponse(error) || fail("Unable to save Guest Glitch workflow configuration at this time.", 503); }
+  finally { client.release(); }
+};
+
+const deleteWorkflowConfig = async (data) => {
+  const client = await repository.getClient();
+  try { await client.query("BEGIN");
+    const stagesInUse = await repository.findWorkflowStagesInUseOutside(client, data.OrganizationID, []);
+    if (stagesInUse.length) { await client.query("ROLLBACK"); return fail("Guest Glitch workflow configuration cannot be deleted while active records use it.", 409); }
+    const count = await repository.deleteWorkflowConfig(client, data.OrganizationID, data.UserID);
+    if (!count) { await client.query("ROLLBACK"); return fail("Guest Glitch workflow configuration not found.", 404); }
+    await client.query("COMMIT"); return { success: true, message: "Guest Glitch workflow configuration deleted successfully." };
+  } catch (error) { await client.query("ROLLBACK"); console.error("Delete Guest Glitch Workflow Error:", error.message);
+    return retryableDatabaseResponse(error) || fail("Unable to delete Guest Glitch workflow configuration at this time.", 503); }
+  finally { client.release(); }
+};
+
 module.exports = {
-  create, list, get, update, updateStatus, remove, listOptions, upsertOption,
-  report: (data) => report(data, false), masterReport: (data) => report(data, true),
-  reportDetail, masterReportPdf, gmView: reportDetail, gmAction, attachment,
+  create: withOrganization(create),
+  list: withOrganization(list),
+  get: withOrganization(get),
+  update: withOrganization(update),
+  updateStatus: withOrganization(updateStatus),
+  remove: withOrganization(remove),
+  listOptions: withOrganization(listOptions),
+  upsertOption: withOrganization(upsertOption),
+  report: withOrganization((data) => report(data, false)),
+  masterReport: withOrganization((data) => report(data, true)),
+  reportDetail: withOrganization(reportDetail),
+  masterReportPdf: withOrganization(masterReportPdf),
+  gmView: withOrganization(reportDetail),
+  gmAction: withOrganization(gmAction),
+  attachment: withOrganization(attachment),
+  exportReport: withOrganization(exportReport),
+  getWorkflowConfig: withOrganization(getWorkflowConfig),
+  saveWorkflowConfig: withOrganization(saveWorkflowConfig),
+  deleteWorkflowConfig: withOrganization(deleteWorkflowConfig),
+  resolveOrganization,
 };
