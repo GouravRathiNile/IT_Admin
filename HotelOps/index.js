@@ -24,6 +24,7 @@ const UserRoutes = require("./routes/ITAdminRoutes/UserRoutes");
 const HotelOpsLoginRoutes = require("./routes/ITAdminRoutes/HotelOpsLoginRoutes");
 const GuestGlitchRoutes = require("./routes/GuestGlitchRoutes/GuestGlitchRoutes");
 const GuestMeetRoutes = require("./routes/GuestMeetRoute/GuestMeetRoute");
+const IncidentReportRoutes = require("./routes/IncidentReportRoutes/IncidentReportRoutes");
 const CapexRoutes = require("./routes/CapexRoute/CapexRoute");
 const OpexRoutes = require("./routes/OpexRoute/OpexRoute");
 // ==========================================Consumers
@@ -37,6 +38,7 @@ const UserHandler = require("./consumer/ITAdminConsumer/UserHandler");
 const HotelOpsLoginHandler = require("./consumer/ITAdminConsumer/HotelOpsLoginHandler");
 const GuestGlitchHandler = require("./consumer/GuestGlitchConsumer/GuestGlitchHandler");
 const GuestMeetHandler = require("./consumer/GuestMeetConsumer/GuestMeetHandler");
+const IncidentReportHandler = require("./consumer/IncidentReportConsumer/IncidentReportHandler");
 const CapexHandler = require("./consumer/CapexConsumer/CapexHandler");
 const OpexHandler = require("./consumer/OpexConsumer/OpexHandler");
 // ==========================================Packages Start
@@ -57,6 +59,7 @@ app.use("/api/UserMaster", UserRoutes);
 app.use("/api/HotelOpsLogin", HotelOpsLoginRoutes);
 app.use("/api/GuestGlitch", GuestGlitchRoutes);
 app.use("/api/guestmeet", GuestMeetRoutes);
+app.use("/api/IncidentReport", IncidentReportRoutes);
 app.use("/api/Capex", CapexRoutes);
 app.use("/api/Opex", OpexRoutes);
 // =========================================Default Route
@@ -133,12 +136,19 @@ const startServer = async () => {
       QUEUE.GUEST_MEET.RESPONSE,
       GuestMeetHandler
     );
+
+    await startConsumer(
+      QUEUE.INCIDENT_REPORT.REQUEST,
+      QUEUE.INCIDENT_REPORT.RESPONSE,
+      IncidentReportHandler
+    );
+
     await startConsumer(
       QUEUE.CAPEX.REQUEST,
       QUEUE.CAPEX.RESPONSE,
       CapexHandler
     );
-     await startConsumer(
+    await startConsumer(
       QUEUE.OPEX.REQUEST,
       QUEUE.OPEX.RESPONSE,
       OpexHandler

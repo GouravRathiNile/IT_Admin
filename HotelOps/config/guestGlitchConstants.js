@@ -20,6 +20,10 @@ const OPTION_TYPES = Object.freeze([
   "InternalActionTakenCategory",
 ]);
 
+const WORKFLOW_ACTOR_TYPES = Object.freeze([
+  "USER_ID", "USER_TYPE", "DEPARTMENT_ID", "CREATOR",
+]);
+
 const STATUS_TRANSITIONS = Object.freeze({
   Open: ["In Progress"],
   "In Progress": ["Resolved"],
@@ -83,4 +87,5 @@ module.exports = {
   SORT_COLUMNS,
   FIELD_AUDIT_COLUMNS,
   REPORT_SORT_COLUMNS,
+  WORKFLOW_ACTOR_TYPES,
 };

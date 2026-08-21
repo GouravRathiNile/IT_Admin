@@ -44,7 +44,8 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /get/{id}:
     get:
-      summary: Get one organization-scoped guest glitch
+      summary: Deprecated alias for workflow-aware Guest Glitch detail
+      deprecated: true
       x-permission: GuestGlitch.View
       parameters:
         - name: id
@@ -67,6 +68,8 @@ paths:
               allOf:
                 - $ref: '#/components/schemas/ID'
                 - $ref: '#/components/schemas/GuestGlitchCreate'
+              properties:
+                WorkflowAction: { type: string, enum: [PROCEED] }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/ValidationError' }
@@ -118,6 +121,26 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /workflow/config:
+    get:
+      summary: Get the authenticated organization's ordered Guest Glitch workflow
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      summary: Transactionally replace the authenticated organization's Guest Glitch workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowConfig' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      summary: Soft-delete the authenticated organization's Guest Glitch workflow
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /report:
     get:
       summary: Compact Guest Glitch report
@@ -148,6 +171,14 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /report/{id}/pdf:
+    get:
+      summary: Generate an inline workflow-visible Guest Glitch PDF
+      parameters: *idPath
+      responses:
+        '200':
+          description: PDF document
+          content: { application/pdf: { schema: { type: string, format: binary } } }
   /master-report:
     get:
       summary: Complete Guest Glitch master report
@@ -168,14 +199,16 @@ paths:
           content: { application/pdf: { schema: { type: string, format: binary } } }
   /gm/{id}:
     get:
-      summary: Guest Glitch detail for GM action
+      summary: Deprecated alias for workflow-aware detail
+      deprecated: true
       x-permission: GuestGlitch.GMAction
       parameters: *idPath
       responses:
         '200': { $ref: '#/components/responses/Success' }
   /gm-action:
     patch:
-      summary: Save GM comment and optionally perform a configured status transition
+      summary: Deprecated alias for workflow-aware generic update
+      deprecated: true
       x-permission: GuestGlitch.GMAction
       requestBody:
         required: true
@@ -202,6 +235,14 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /{id}:
+    get:
+      summary: Get workflow-aware Guest Glitch detail
+      parameters: *idPath
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -212,6 +253,35 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ID' }
   schemas:
+    WorkflowConfig:
+      type: object
+      required: [Stages]
+      properties:
+        Stages:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [StageKey, StageName, StageOrder, Actors]
+            properties:
+              StageKey: { type: string, pattern: '^[A-Za-z0-9_]+$' }
+              StageName: { type: string, maxLength: 120 }
+              StageOrder: { type: integer, minimum: 1 }
+              IsFinalStage: { type: boolean }
+              Actors:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required: [ActorType]
+                  properties:
+                    ActorType: { type: string, enum: [USER_ID, USER_TYPE, DEPARTMENT_ID, CREATOR] }
+                    ActorValue: { type: string, nullable: true }
+                    CanView: { type: boolean }
+                    CanEdit: { type: boolean }
+                    CanProceed: { type: boolean }
+                    EditableFields: { type: array, items: { type: string } }
+                    RequiredActionFields: { type: array, items: { type: string } }
     ID:
       type: object
       required: [ID]
