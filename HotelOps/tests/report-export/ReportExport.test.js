@@ -63,7 +63,7 @@ test("export repository mode reuses filters without LIMIT or OFFSET", async () =
     for (const query of sql) {
       assert.equal(/\bLIMIT\b/i.test(query), false);
       assert.equal(/\bOFFSET\b/i.test(query), false);
-      assert.match(query, /organizationid = \$1/i);
+      assert.match(query, /organizationid = (?:\$1|ANY\(\$1::bigint\[\]\))/i);
       assert.match(query, /isdeleted = FALSE/i);
     }
   } finally { pool.query = original; }

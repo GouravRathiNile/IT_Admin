@@ -49,21 +49,23 @@ test("HOD can update an assigned department comment and proceed without resendin
     assert.equal(response.success, true);
     assert.equal(response.data.CurrentWorkflowStage, "GM_REVIEW");
     assert.deepEqual(updates[0].DepartmentIDs, undefined);
-    assert.deepEqual(updates[0].DepartmentHODComments, [comment(10)]);
+    assert.deepEqual(updates[0].DepartmentHODComments, [
+      { ...comment(10), commentedBy: "hod", commentedByUserID: 7 },
+    ]);
   });
 });
 
-test("unchanged non-editable DepartmentIDs are ignored but changed DepartmentIDs are forbidden", async () => {
+test("non-editable DepartmentIDs are preserved whether unchanged or different in a full-form payload", async () => {
   await withUpdateMocks(async () => {
     const unchanged = await service.update({ UserID: 7, Username: "hod", ID: 1010,
       DepartmentIDs: [10], DepartmentHODComments: [comment(10)], WorkflowAction: "PROCEED", IP: "127.0.0.1" });
     assert.equal(unchanged.success, true);
   });
-  await withUpdateMocks(async () => {
+  await withUpdateMocks(async ({ updates }) => {
     const changed = await service.update({ UserID: 7, Username: "hod", ID: 1010,
-      DepartmentIDs: [20], IP: "127.0.0.1" });
-    assert.equal(changed.statusCode, 403);
-    assert.equal(changed.message, "You are not authorized to update field: DepartmentIDs");
+      DepartmentIDs: [20], DepartmentHODComments: [comment(10)], WorkflowAction: "PROCEED", IP: "127.0.0.1" });
+    assert.equal(changed.success, true);
+    assert.equal(updates[0].DepartmentIDs, undefined);
   });
 });
 
@@ -76,17 +78,17 @@ test("HOD comment must belong to a department already assigned to the glitch", a
   });
 });
 
-test("unchanged displayed fields are ignored while actual unauthorized changes are rejected", async () => {
+test("displayed non-editable fields are ignored while configured comment changes are saved", async () => {
   await withUpdateMocks(async () => {
     const unchanged = await service.update({ UserID: 7, Username: "hod", ID: 1010,
       GuestName: "Existing Guest", DepartmentHODComments: [comment(10)], WorkflowAction: "PROCEED", IP: "127.0.0.1" });
     assert.equal(unchanged.success, true);
   });
-  await withUpdateMocks(async () => {
+  await withUpdateMocks(async ({ updates }) => {
     const changed = await service.update({ UserID: 7, Username: "hod", ID: 1010,
-      GuestName: "Changed Guest", IP: "127.0.0.1" });
-    assert.equal(changed.statusCode, 403);
-    assert.equal(changed.message, "You are not authorized to update field: GuestName");
+      GuestName: "Changed Guest", DepartmentHODComments: [comment(10)], IP: "127.0.0.1" });
+    assert.equal(changed.success, true);
+    assert.equal(updates[0].GuestName, undefined);
   });
 });
 
@@ -97,6 +99,24 @@ test("new HOD comment replaces the same department comment without duplicating o
     const response = await service.update({ UserID: 7, Username: "hod", ID: 1010,
       DepartmentHODComments: [comment(10, "Replacement")], IP: "127.0.0.1" });
     assert.equal(response.success, true);
-    assert.deepEqual(updates[0].DepartmentHODComments, [comment(10, "Replacement"), comment(11, "Keep")]);
+    assert.deepEqual(updates[0].DepartmentHODComments, [
+      { ...comment(10, "Replacement"), commentedBy: "hod", commentedByUserID: 7 },
+      comment(11, "Keep"),
+    ]);
+  });
+});
+
+test("a reached-stage participant can correct a comment without moving workflow backwards", async () => {
+  await withUpdateMocks(async ({ updates }) => {
+    repository.findByID = async () => ({ ...baseRecord(), currentworkflowstage: "GM_REVIEW",
+      departmenthodcomments: [comment(10, "Original")] });
+    repository.getWorkflowAccess = async () => ({ stagekey: "GM_REVIEW", stagename: "GM Review", canview: true,
+      canedit: true, canproceed: false, editablefields: ["DepartmentHODComments"],
+      requiredactionfields: [], nextstage: "CEO_REVIEW", isfinalstage: false });
+    const response = await service.update({ UserID: 7, Username: "hod", ID: 1010,
+      DepartmentHODComments: [comment(10, "Corrected")], IP: "127.0.0.1" });
+    assert.equal(response.success, true);
+    assert.equal(response.data.CurrentWorkflowStage, "GM_REVIEW");
+    assert.equal(updates[0].CurrentWorkflowStage, undefined);
   });
 });

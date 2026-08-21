@@ -27,6 +27,7 @@ const GuestMeetRoutes = require("./routes/GuestMeetRoute/GuestMeetRoute");
 const IncidentReportRoutes = require("./routes/IncidentReportRoutes/IncidentReportRoutes");
 const CapexRoutes = require("./routes/CapexRoute/CapexRoute");
 const OpexRoutes = require("./routes/OpexRoute/OpexRoute");
+const HLPReportRoutes = require("./routes/HLPReportRoutes/HLPReportRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
 const OrganizationHandler = require("./consumer/ITAdminConsumer/OrganizationHandler");
@@ -41,6 +42,7 @@ const GuestMeetHandler = require("./consumer/GuestMeetConsumer/GuestMeetHandler"
 const IncidentReportHandler = require("./consumer/IncidentReportConsumer/IncidentReportHandler");
 const CapexHandler = require("./consumer/CapexConsumer/CapexHandler");
 const OpexHandler = require("./consumer/OpexConsumer/OpexHandler");
+const HLPReportHandler = require("./consumer/HLPReportConsumer/HLPReportHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -62,6 +64,7 @@ app.use("/api/GuestMeet", GuestMeetRoutes);
 app.use("/api/IncidentReport", IncidentReportRoutes);
 app.use("/api/Capex", CapexRoutes);
 app.use("/api/Opex", OpexRoutes);
+app.use("/api/HLPReport", HLPReportRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -155,6 +158,11 @@ const startServer = async () => {
       QUEUE.OPEX.REQUEST,
       QUEUE.OPEX.RESPONSE,
       OpexHandler
+    );
+    await startConsumer(
+      QUEUE.HLP_REPORT.REQUEST,
+      QUEUE.HLP_REPORT.RESPONSE,
+      HLPReportHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;

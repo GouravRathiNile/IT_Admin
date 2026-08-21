@@ -47,28 +47,31 @@ const canonical = (value) => {
   return String(value);
 };
 
-const mergeDepartmentComments = (existing = [], supplied = []) => {
+const mergeDepartmentComments = (existing = [], supplied = [], user = {}) => {
   const comments = new Map(existing.map((item) => [Number(item.departmentId), {
-    departmentId: Number(item.departmentId), comment: String(item.comment || "").trim(),
+    ...item, departmentId: Number(item.departmentId), comment: String(item.comment || "").trim(),
   }]));
   for (const item of supplied) {
     comments.set(Number(item.departmentId), {
       departmentId: Number(item.departmentId), comment: String(item.comment || "").trim(),
+      commentedBy: user.Username || null, commentedByUserID: user.UserID || null,
     });
   }
   return [...comments.values()].filter((item) => item.comment);
 };
 
-const resolveOrganization = async (userID) => {
+const resolveOrganization = async (userID, allowMultiple = false) => {
   const rows = await repository.resolveOrganizations(userID);
   if (rows.length === 0) return { error: fail("No active organization is assigned to the authenticated user.", 403) };
-  if (rows.length > 1) return { error: fail("Multiple organizations are assigned to this user. An organization must be selected before accessing Guest Glitch.", 409) };
-  return { OrganizationID: Number(rows[0].organizationid), UserType: String(rows[0].usertype || "").trim(), DepartmentID: rows[0].departmentid == null ? null : Number(rows[0].departmentid) };
+  if (rows.length > 1 && !allowMultiple) return { error: fail("Multiple organizations are assigned to this user. An organization must be selected before accessing Guest Glitch.", 409) };
+  const organizationIDs = rows.map((row) => Number(row.organizationid));
+  return { OrganizationID: organizationIDs.length === 1 ? organizationIDs[0] : null, OrganizationIDs: organizationIDs,
+    UserType: String(rows[0].usertype || "").trim(), DepartmentID: rows[0].departmentid == null ? null : Number(rows[0].departmentid) };
 };
 
-const withOrganization = (operation) => async (data) => {
+const withOrganization = (operation, allowMultiple = false) => async (data) => {
   try {
-    const organization = await resolveOrganization(data.UserID);
+    const organization = await resolveOrganization(data.UserID, allowMultiple);
     if (organization.error) return organization.error;
     return operation({ ...data, ...organization });
   } catch (error) {
@@ -211,17 +214,13 @@ const list = async (data) => {
   try {
     const result = await repository.list(
       data,
-      data.OrganizationID
+      data.OrganizationIDs || data.OrganizationID
     );
 
     let resolvedSelections = [];
 
     if (result.rows.length > 0) {
-      resolvedSelections = await repository.resolveSelections(
-        client,
-        data.OrganizationID,
-        result.rows
-      );
+      resolvedSelections = (await resolveReportRows(client, result.rows)).map((item) => item.resolved);
     }
 
     const mapped = result.rows.map((row, index) =>
@@ -266,20 +265,25 @@ const list = async (data) => {
 const get = async (data) => {
   const client = await repository.getClient();
   try {
-    const found = await ensureOwnedRecord(client, data.ID, data.OrganizationID);
+    const found = await ensureOwnedRecord(client, data.ID, data.OrganizationIDs || data.OrganizationID);
     if (found.error) return found.error;
     const row = found.record;
+    const recordOrganizationID = Number(row.organizationid);
     const workflow = await resolveWorkflowAccess(client, row, data, "VIEW");
     if (workflow.error) return workflow.error;
     const [departments, receivedUsers, informedUsers] = await Promise.all([
-      repository.validateDepartments(client, data.OrganizationID, row.departmentids || []),
-      repository.validateUsers(client, data.OrganizationID, row.receivedbyids || []),
-      repository.validateUsers(client, data.OrganizationID, row.informedtoids || []),
+      repository.validateDepartments(client, recordOrganizationID, row.departmentids || []),
+      repository.validateUsers(client, recordOrganizationID, row.receivedbyids || []),
+      repository.validateUsers(client, recordOrganizationID, row.informedtoids || []),
     ]);
     return {
       success: true, message: "Guest glitch retrieved successfully.", data: {
       ...formatGuestGlitchDates(mapRow(row)),
         workflow: workflowDTO(workflow.access),
+        DepartmentHODComments: (row.departmenthodcomments || []).map((item) => ({ ...item,
+          departmentId: Number(item.departmentId),
+          departmentName: departments.find((department) => Number(department.departmentid) === Number(item.departmentId))?.departmentname || null,
+        })),
         departments: departments.map((item) => ({ id: Number(item.departmentid), name: item.departmentname })),
         receivedByUsers: receivedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
         informedToUsers: informedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
@@ -300,8 +304,16 @@ const update = async (data) => {
     const workflow = await resolveWorkflowAccess(client, found.record, data, "UPDATE");
     if (workflow.error) { await client.query("ROLLBACK"); return workflow.error; }
     const current = mapRow(found.record);
+    const allowedFields = new Set(workflow.access.editablefields || []);
+    for (const field of Object.keys(data)) {
+      if (repository.COLUMN_MAP[field] && field !== "CurrentWorkflowStage" &&
+          canonical(data[field]) !== canonical(current[field]) &&
+          (workflow.access.canedit !== true || !allowedFields.has(field))) {
+        delete data[field];
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(data, "DepartmentHODComments")) {
-      data.DepartmentHODComments = mergeDepartmentComments(current.DepartmentHODComments, data.DepartmentHODComments);
+      data.DepartmentHODComments = mergeDepartmentComments(current.DepartmentHODComments, data.DepartmentHODComments, data);
     }
     const merged = { ...current, ...data };
     if (Object.prototype.hasOwnProperty.call(data, "DepartmentIDs") && !Object.prototype.hasOwnProperty.call(data, "DepartmentHODComments")) {
@@ -318,15 +330,6 @@ const update = async (data) => {
     for (const [field, value] of Object.entries(prepared)) {
       if (repository.COLUMN_MAP[field] && canonical(value) !== canonical(current[field])) changed[field] = value;
     }
-    const actuallyChangedRequestFields = Object.keys(data).filter((field) =>
-      repository.COLUMN_MAP[field] && field !== "CurrentWorkflowStage" &&
-      canonical(data[field]) !== canonical(current[field]));
-    const allowedFields = new Set(workflow.access.editablefields || []);
-    if (actuallyChangedRequestFields.length && workflow.access.canedit !== true) {
-      await client.query("ROLLBACK"); return fail("You are not authorized to edit this Guest Glitch at its current workflow stage.", 403);
-    }
-    const deniedField = actuallyChangedRequestFields.find((field) => !allowedFields.has(field));
-    if (deniedField) { await client.query("ROLLBACK"); return fail(`You are not authorized to update field: ${deniedField}`, 403); }
     if (String(data.WorkflowAction || "").toUpperCase() === "PROCEED") {
       if (workflow.access.canproceed !== true) { await client.query("ROLLBACK"); return fail("You are not authorized to proceed this Guest Glitch workflow.", 403); }
       const resulting = { ...current, ...changed };
@@ -405,8 +408,14 @@ const upsertOption = async (data) => {
 };
 
 const resolveReportRows = async (client, rows) => {
-  const selections = await repository.resolveSelections(client, rows[0]?.organizationid, rows);
-  return rows.map((row, index) => ({ row, resolved: selections[index] }));
+  const resolvedByRow = new Map();
+  const organizations = [...new Set(rows.map((row) => Number(row.organizationid)))];
+  for (const organizationID of organizations) {
+    const scopedRows = rows.filter((row) => Number(row.organizationid) === organizationID);
+    const selections = await repository.resolveSelections(client, organizationID, scopedRows);
+    scopedRows.forEach((row, index) => resolvedByRow.set(row, selections[index]));
+  }
+  return rows.map((row) => ({ row, resolved: resolvedByRow.get(row) }));
 };
 
 const workflowDTO = (access) => ({ currentStage: access.stagekey, currentStageName: access.stagename,
@@ -417,6 +426,11 @@ const workflowDTO = (access) => ({ currentStage: access.stagekey, currentStageNa
 const resolveWorkflowAccess = async (client, row, data, action = "VIEW") => {
   if (!row.currentworkflowstage) return { error: fail("Guest Glitch workflow stage is not configured for this record.", 409) };
   const access = await repository.getWorkflowAccess(client, row, data);
+  if (!access && String(row.createdby) === String(data.UserID)) {
+    const stage = await repository.getWorkflowStageState(client, row.organizationid, row.currentworkflowstage);
+    if (stage) return { access: { ...stage, canview: true, canedit: false, canproceed: false,
+      editablefields: [], requiredactionfields: [] } };
+  }
   if (!access || access.canview !== true) {
     console.warn("Guest Glitch workflow access denied", { GuestGlitchID: Number(row.id), UserID: data.UserID,
       OrganizationID: data.OrganizationID, currentWorkflowStage: row.currentworkflowstage,
@@ -439,7 +453,7 @@ const report = async (data, complete = false) => {
   try {
     const result = await repository.reportList(
       data,
-      data.OrganizationID
+      data.OrganizationIDs || data.OrganizationID
     );
     const resolvedRows = await resolveReportRows(client, result.rows);
     const mapped = complete
@@ -461,7 +475,7 @@ const exportReport = async (data) => {
   const client = await repository.getClient();
   try {
     if (!["csv", "excel"].includes(data.format)) return fail("Invalid Guest Glitch export format.");
-    const result = await repository.reportList(data, data.OrganizationID, false);
+    const result = await repository.reportList(data, data.OrganizationIDs || data.OrganizationID, false);
     const rows = mapCompactReportRows(await resolveReportRows(client, result.rows));
     const buffer = data.format === "csv"
       ? generateCSV(rows, GUEST_GLITCH_EXPORT_COLUMNS)
@@ -482,11 +496,11 @@ const exportReport = async (data) => {
 const reportDetail = async (data) => {
   const client = await repository.getClient();
   try {
-    const row = await repository.findReportByID(client, data.ID, data.OrganizationID);
+    const row = await repository.findReportByID(client, data.ID, data.OrganizationIDs || data.OrganizationID);
     if (!row) return fail("Guest Glitch not found", 404);
     const workflow = await resolveWorkflowAccess(client, row, data, "REPORT_VIEW");
     if (workflow.error) return workflow.error;
-    const [resolved] = await repository.resolveSelections(client, data.OrganizationID, [row]);
+    const [resolved] = await repository.resolveSelections(client, Number(row.organizationid), [row]);
     return { success: true, message: "Guest Glitch report detail fetched successfully", data: { ...completeReportDTO(row, resolved), workflow: workflowDTO(workflow.access) } };
   } catch (error) {
     console.error("Guest Glitch Report Detail Error:", error.message);
@@ -513,7 +527,7 @@ const gmAction = async (data) => {
 const attachment = async (data) => {
   const client = await repository.getClient();
   try {
-    const row = await repository.findByID(client, data.ID, data.OrganizationID);
+    const row = await repository.findByID(client, data.ID, data.OrganizationIDs || data.OrganizationID);
     if (!row) return fail("Guest Glitch not found", 404);
     const workflow = await resolveWorkflowAccess(client, row, data, "ATTACHMENT_VIEW");
     if (workflow.error) return workflow.error;
@@ -597,21 +611,21 @@ const deleteWorkflowConfig = async (data) => {
 
 module.exports = {
   create: withOrganization(create),
-  list: withOrganization(list),
-  get: withOrganization(get),
+  list: withOrganization(list, true),
+  get: withOrganization(get, true),
   update: withOrganization(update),
   updateStatus: withOrganization(updateStatus),
   remove: withOrganization(remove),
   listOptions: withOrganization(listOptions),
   upsertOption: withOrganization(upsertOption),
-  report: withOrganization((data) => report(data, false)),
-  masterReport: withOrganization((data) => report(data, true)),
-  reportDetail: withOrganization(reportDetail),
-  masterReportPdf: withOrganization(masterReportPdf),
-  gmView: withOrganization(reportDetail),
+  report: withOrganization((data) => report(data, false), true),
+  masterReport: withOrganization((data) => report(data, true), true),
+  reportDetail: withOrganization(reportDetail, true),
+  masterReportPdf: withOrganization(masterReportPdf, true),
+  gmView: withOrganization(reportDetail, true),
   gmAction: withOrganization(gmAction),
-  attachment: withOrganization(attachment),
-  exportReport: withOrganization(exportReport),
+  attachment: withOrganization(attachment, true),
+  exportReport: withOrganization(exportReport, true),
   getWorkflowConfig: withOrganization(getWorkflowConfig),
   saveWorkflowConfig: withOrganization(saveWorkflowConfig),
   deleteWorkflowConfig: withOrganization(deleteWorkflowConfig),

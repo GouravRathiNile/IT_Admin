@@ -33,8 +33,7 @@ const resolveOrganizations = async (userID) => {
        AND uom.isactive = TRUE AND uom.isdeleted = FALSE
        AND om.isactive = TRUE AND om.activationstatus = TRUE AND om.isdeleted = FALSE
        AND um.isactive = TRUE AND um.isdeleted = FALSE AND um.islocked = FALSE
-     ORDER BY uom.organizationid
-     LIMIT 2;`,
+     ORDER BY uom.organizationid;`,
     [userID]
   );
   return result.rows;
@@ -43,18 +42,22 @@ const resolveOrganizations = async (userID) => {
 const workflowVisibilitySQL = (values, data) => {
   values.push(String(data.UserID), String(data.UserType || "").trim().toUpperCase(), data.DepartmentID || null);
   const user = `$${values.length - 2}`, type = `$${values.length - 1}`, department = `$${values.length}`;
-  return `EXISTS (
-    SELECT 1 FROM guest_glitch_flow_config fc
-    INNER JOIN guest_glitch_flow_config_detail fd ON fd.flowconfigid = fc.flowconfigid
-    WHERE fc.organizationid = gg.organizationid
-      AND fc.stagekey = gg.currentworkflowstage
-      AND fc.isactive = TRUE AND fc.isdeleted = FALSE
+  return `(gg.createdby = ${user} OR EXISTS (
+    SELECT 1 FROM guest_glitch_flow_config current_stage
+    JOIN guest_glitch_flow_config reached_stage
+      ON reached_stage.organizationid = current_stage.organizationid
+     AND reached_stage.stageorder <= current_stage.stageorder
+     AND reached_stage.isactive = TRUE AND reached_stage.isdeleted = FALSE
+    JOIN guest_glitch_flow_config_detail fd ON fd.flowconfigid = reached_stage.flowconfigid
+    WHERE current_stage.organizationid = gg.organizationid
+      AND current_stage.stagekey = gg.currentworkflowstage
+      AND current_stage.isactive = TRUE AND current_stage.isdeleted = FALSE
       AND fd.isactive = TRUE AND fd.isdeleted = FALSE AND fd.canview = TRUE
       AND ((fd.actortype = 'CREATOR' AND gg.createdby = ${user})
         OR (fd.actortype = 'USER_ID' AND fd.actorvalue = ${user})
         OR (fd.actortype = 'USER_TYPE' AND UPPER(fd.actorvalue) = ${type})
         OR (fd.actortype = 'DEPARTMENT_ID' AND fd.actorvalue = (${department})::text))
-  )`;
+  ))`;
 };
 
 const getFirstWorkflowStage = async (client, organizationID) => {
@@ -67,32 +70,49 @@ const getFirstWorkflowStage = async (client, organizationID) => {
   return result.rows[0] || null;
 };
 
-const getWorkflowAccess = async (client, record, data) => {
+const getWorkflowStageState = async (client, organizationID, stageKey) => {
   const result = await client.query(
     `SELECT fc.stagekey, fc.stagename, fc.stageorder, fc.isfinalstage,
-       next_stage.stagekey AS nextstage,
-       BOOL_OR(fd.canview) AS canview, BOOL_OR(fd.canedit) AS canedit,
-       BOOL_OR(fd.canproceed) AS canproceed,
-       COALESCE(jsonb_agg(DISTINCT field.value) FILTER (WHERE field.value IS NOT NULL), '[]'::jsonb) AS editablefields,
-       COALESCE(jsonb_agg(DISTINCT required.value) FILTER (WHERE required.value IS NOT NULL), '[]'::jsonb) AS requiredactionfields
+       (SELECT n.stagekey FROM guest_glitch_flow_config n
+        WHERE n.organizationid = fc.organizationid AND n.isactive = TRUE AND n.isdeleted = FALSE
+          AND n.stageorder > fc.stageorder ORDER BY n.stageorder LIMIT 1) AS nextstage
      FROM guest_glitch_flow_config fc
-     JOIN guest_glitch_flow_config_detail fd ON fd.flowconfigid = fc.flowconfigid
+     WHERE fc.organizationid = $1 AND fc.stagekey = $2
+       AND fc.isactive = TRUE AND fc.isdeleted = FALSE LIMIT 1;`, [organizationID, stageKey]
+  );
+  return result.rows[0] || null;
+};
+
+const getWorkflowAccess = async (client, record, data) => {
+  const result = await client.query(
+    `SELECT current_stage.stagekey, current_stage.stagename, current_stage.stageorder, current_stage.isfinalstage,
+       next_stage.stagekey AS nextstage,
+       ($3::text = $6::text OR BOOL_OR(fd.canview)) AS canview,
+       BOOL_OR(fd.canedit) AS canedit,
+       BOOL_OR(fd.canproceed AND reached_stage.stagekey = current_stage.stagekey) AS canproceed,
+       COALESCE(jsonb_agg(DISTINCT field.value) FILTER (WHERE field.value IS NOT NULL), '[]'::jsonb) AS editablefields,
+       COALESCE(jsonb_agg(DISTINCT required.value) FILTER (WHERE required.value IS NOT NULL AND reached_stage.stagekey = current_stage.stagekey), '[]'::jsonb) AS requiredactionfields
+     FROM guest_glitch_flow_config current_stage
+     JOIN guest_glitch_flow_config reached_stage ON reached_stage.organizationid = current_stage.organizationid
+       AND reached_stage.stageorder <= current_stage.stageorder
+       AND reached_stage.isactive = TRUE AND reached_stage.isdeleted = FALSE
+     JOIN guest_glitch_flow_config_detail fd ON fd.flowconfigid = reached_stage.flowconfigid
      LEFT JOIN LATERAL jsonb_array_elements_text(fd.editablefields) field(value) ON fd.canedit = TRUE
-     LEFT JOIN LATERAL jsonb_array_elements_text(fd.requiredactionfields) required(value) ON fd.canproceed = TRUE
+     LEFT JOIN LATERAL jsonb_array_elements_text(fd.requiredactionfields) required(value) ON fd.canproceed = TRUE AND reached_stage.stagekey = current_stage.stagekey
      LEFT JOIN LATERAL (
        SELECT n.stagekey FROM guest_glitch_flow_config n
-       WHERE n.organizationid = fc.organizationid AND n.isactive = TRUE AND n.isdeleted = FALSE
-         AND n.stageorder > fc.stageorder ORDER BY n.stageorder LIMIT 1
+       WHERE n.organizationid = current_stage.organizationid AND n.isactive = TRUE AND n.isdeleted = FALSE
+         AND n.stageorder > current_stage.stageorder ORDER BY n.stageorder LIMIT 1
      ) next_stage ON TRUE
-     WHERE fc.organizationid = $1 AND fc.stagekey = $2
-       AND fc.isactive = TRUE AND fc.isdeleted = FALSE
+     WHERE current_stage.organizationid = $1 AND current_stage.stagekey = $2
+       AND current_stage.isactive = TRUE AND current_stage.isdeleted = FALSE
        AND fd.isactive = TRUE AND fd.isdeleted = FALSE
        AND ((fd.actortype = 'CREATOR' AND $3::text = $6::text)
          OR (fd.actortype = 'USER_ID' AND fd.actorvalue = $3::text)
          OR (fd.actortype = 'USER_TYPE' AND UPPER(fd.actorvalue) = UPPER($4))
          OR (fd.actortype = 'DEPARTMENT_ID' AND fd.actorvalue = $5::text))
-     GROUP BY fc.flowconfigid, next_stage.stagekey;`,
-    [data.OrganizationID, record.currentworkflowstage, data.UserID, data.UserType || "", data.DepartmentID || null, record.createdby]
+     GROUP BY current_stage.flowconfigid, next_stage.stagekey;`,
+    [record.organizationid, record.currentworkflowstage, data.UserID, data.UserType || "", data.DepartmentID || null, record.createdby]
   );
   return result.rows[0] || null;
 };
@@ -153,11 +173,12 @@ const insert = async (client, data) => {
 };
 
 const findByID = async (client, id, organizationID, includeDeleted = false, lock = false) => {
+  const organizationIDs = Array.isArray(organizationID) ? organizationID : [organizationID];
   const result = await client.query(
     `SELECT * FROM guest_glitch_entry_master
-     WHERE id = $1 AND organizationid = $2 ${includeDeleted ? "" : "AND isdeleted = FALSE"}
+     WHERE id = $1 AND organizationid = ANY($2::bigint[]) ${includeDeleted ? "" : "AND isdeleted = FALSE"}
      LIMIT 1 ${lock ? "FOR UPDATE" : ""};`,
-    [id, organizationID]
+    [id, organizationIDs]
   );
   return result.rows[0] || null;
 };
@@ -314,12 +335,13 @@ const softDelete = async (client, id, organizationID, userID, ip) => {
 //   return { rows: rows.rows, total: Number(count.rows[0].total) };
 // };
 const list = async (data, organizationID) => {
+  const organizationIDs = Array.isArray(organizationID) ? organizationID : [organizationID];
   const filters = [
-    "gg.organizationid = $1",
+    "gg.organizationid = ANY($1::bigint[])",
     "gg.isdeleted = FALSE",
   ];
 
-  const values = [organizationID];
+  const values = [organizationIDs];
   filters.push(workflowVisibilitySQL(values, data));
 
   const add = (condition, value) => {
@@ -533,8 +555,9 @@ const listOptions = async (organizationID, optionType = null) => {
 };
 
 const buildReportFilters = (data, organizationID) => {
-  const filters = ["gg.organizationid = $1", "gg.isdeleted = FALSE"];
-  const values = [organizationID];
+  const organizationIDs = Array.isArray(organizationID) ? organizationID : [organizationID];
+  const filters = ["gg.organizationid = ANY($1::bigint[])", "gg.isdeleted = FALSE"];
+  const values = [organizationIDs];
   filters.push(workflowVisibilitySQL(values, data));
   const add = (sql, value) => { values.push(value); filters.push(sql.replace("?", `$${values.length}`)); };
   if (data.search) {
@@ -647,12 +670,13 @@ const reportList = async (data, organizationID, paginate = true) => {
 };
 
 const findReportByID = async (client, id, organizationID, lock = false) => {
+  const organizationIDs = Array.isArray(organizationID) ? organizationID : [organizationID];
   const result = await client.query(
     `SELECT gg.*, om.organizationname AS hotel
      FROM guest_glitch_entry_master gg
      INNER JOIN organization_master om ON om.organizationid = gg.organizationid
-     WHERE gg.id = $1 AND gg.organizationid = $2 AND gg.isdeleted = FALSE
-     LIMIT 1 ${lock ? "FOR UPDATE OF gg" : ""};`, [id, organizationID]
+     WHERE gg.id = $1 AND gg.organizationid = ANY($2::bigint[]) AND gg.isdeleted = FALSE
+     LIMIT 1 ${lock ? "FOR UPDATE OF gg" : ""};`, [id, organizationIDs]
   );
   return result.rows[0] || null;
 };
@@ -839,7 +863,7 @@ module.exports = {
   COLUMN_MAP, getClient, resolveOrganizations, validateDepartments, validateUsers, findOption, insert,
   findByID, updateChangedFields, softDelete, list, listOptions, upsertOption,
   reportList, findReportByID, resolveSelections,
-  getFirstWorkflowStage, getWorkflowAccess, getWorkflowConfig, replaceWorkflowConfig, deleteWorkflowConfig,
+  getFirstWorkflowStage, getWorkflowStageState, getWorkflowAccess, getWorkflowConfig, replaceWorkflowConfig, deleteWorkflowConfig,
   validateWorkflowUserTypes,
   findWorkflowStagesInUseOutside,
 };

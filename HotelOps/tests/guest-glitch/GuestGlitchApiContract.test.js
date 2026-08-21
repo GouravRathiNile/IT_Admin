@@ -6,7 +6,7 @@ const authenticateToken = require("../../middleware/authMiddleware");
 const router = require("../../routes/GuestGlitchRoutes/GuestGlitchRoutes");
 const service = require("../../services/GuestGlitchService/GuestGlitchService");
 const repository = require("../../repositories/GuestGlitchRepository/GuestGlitchRepository");
-const { listDTO, reportListDTO } = require("../../dto/GuestGlitchDTO");
+const { listDTO, reportListDTO, completeReportDTO } = require("../../dto/GuestGlitchDTO");
 const validator = require("../../validators/GuestGlitchValidator");
 
 const mockResponse = () => ({
@@ -93,6 +93,7 @@ test("Guest Glitch resolves exactly one active organization mapping", async () =
       (await service.resolveOrganization(1)).error.message,
       "Multiple organizations are assigned to this user. An organization must be selected before accessing Guest Glitch."
     );
+    assert.deepEqual((await service.resolveOrganization(1, true)).OrganizationIDs, [10, 11]);
   } finally {
     repository.resolveOrganizations = original;
   }
@@ -140,10 +141,38 @@ test("Guest Glitch service overwrites an untrusted organization value", async ()
       sortBy: "EntryDate", sortDirection: "DESC", departmentIds: [],
     });
     assert.equal(response.success, true);
-    assert.equal(scopedOrganizationID, 10);
+    assert.deepEqual(scopedOrganizationID, [10]);
   } finally {
     Object.assign(repository, originals);
   }
+});
+
+test("multi-organization list uses only authenticated active mappings", async () => {
+  const originals = { resolveOrganizations: repository.resolveOrganizations, getClient: repository.getClient, list: repository.list };
+  let scope;
+  try {
+    repository.resolveOrganizations = async () => [
+      { organizationid: "10", usertype: "CEO" }, { organizationid: "11", usertype: "CEO" },
+    ];
+    repository.getClient = async () => ({ release() {} });
+    repository.list = async (_data, organizationIDs) => { scope = organizationIDs; return { rows: [], total: 0 }; };
+    const response = await service.list({ UserID: 1, page: 1, pageSize: 10, sortBy: "EntryDate", sortDirection: "DESC" });
+    assert.equal(response.success, true);
+    assert.deepEqual(scope, [10, 11]);
+  } finally { Object.assign(repository, originals); }
+});
+
+test("repository visibility retains creators and actors from reached workflow stages", () => {
+  const source = require("node:fs").readFileSync(require.resolve("../../repositories/GuestGlitchRepository/GuestGlitchRepository"), "utf8");
+  assert.match(source, /gg\.createdby\s*=\s*\$\{/);
+  assert.match(source, /reached_stage\.stageorder\s*<=\s*current_stage\.stageorder/);
+  assert.match(source, /gg\.organizationid\s*=\s*ANY\(\$1::bigint\[\]\)/);
+});
+
+test("complete detail preserves review attribution and resolves department names", () => {
+  const result = completeReportDTO({ id: 1, departmenthodcomments: [{ departmentId: 10, comment: "Corrected", commentedBy: "hod" }] },
+    { departments: [{ ID: 10, Name: "Engineering" }] });
+  assert.deepEqual(result.DepartmentHODComments, [{ departmentId: 10, departmentName: "Engineering", comment: "Corrected", commentedBy: "hod" }]);
 });
 
 test("report query accepts dedicated filters and safe sorting", () => {

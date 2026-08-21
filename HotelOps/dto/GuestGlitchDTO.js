@@ -305,10 +305,13 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
   InformedToIDs:
     row.informedtoids ?? row.InformedToIDs ?? [],
 
-  DepartmentHODComments:
-    row.departmenthodcomments ??
-    row.DepartmentHODComments ??
-    [],
+  DepartmentHODComments: (row.departmenthodcomments ?? row.DepartmentHODComments ?? []).map((item) => ({
+    ...item,
+    departmentId: Number(item.departmentId),
+    departmentName: item.departmentName ?? (resolved.departments || []).find((department) =>
+      Number(department.ID ?? department.id) === Number(item.departmentId))?.Name ??
+      (resolved.departments || []).find((department) => Number(department.ID ?? department.id) === Number(item.departmentId))?.name ?? null,
+  })),
 
   CreatedBy:
     row.createdby ?? row.CreatedBy ?? null,
