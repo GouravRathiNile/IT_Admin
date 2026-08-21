@@ -1,10 +1,14 @@
+//==================================================RabbitMq
 const producer = require("../../producer/producer");
 const QUEUE = require("../../config/queue");
+//==================================================Error Handling
+const STATUS_CODES = require("../../utils/statusCodes");
 const AppError = require("../../utils/AppError");
 const handleError = require("../../utils/errorHandler");
-const STATUS_CODES = require("../../utils/statusCodes");
+// =========================================================Get Data From service
+const GuestMeetService = require("../../services/GuestMeetService/GuestMeetService");
 
-// Send every Guest Meet request through RabbitMQ and return its response.
+//=============================================================Queue integrate helper for all apis
 const sendQueueResponse = async (req, res, action, data, successCode = STATUS_CODES.SUCCESS) => {
   try {
     const response = await producer.sendMessage(
@@ -67,7 +71,6 @@ exports.createDailyEntry = async (req, res) => {
     STATUS_CODES.CREATED,
   );
 };
-
 exports.getAllDailyEntries = async (req, res) => sendQueueResponse(
   req,
   res,
@@ -81,7 +84,6 @@ exports.getAllDailyEntries = async (req, res) => sendQueueResponse(
     PageSize: Number(req.query.PageSize) || 10,
   },
 );
-
 exports.deleteDailyEntry = async (req, res) => sendQueueResponse(
   req,
   res,

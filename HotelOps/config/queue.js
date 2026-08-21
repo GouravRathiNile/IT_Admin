@@ -11,12 +11,10 @@ module.exports = {
     REQUEST: "division_request_queue",
     RESPONSE: "division_response_queue",
   },
-
   DEPARTMENT: {
     REQUEST: "department_request_queue",
     RESPONSE: "department_response_queue",
   },
-
   PRODUCT_CATEGORY: {
     REQUEST: "product_category_request_queue",
     RESPONSE: "product_category_response_queue",
@@ -29,7 +27,6 @@ module.exports = {
     REQUEST: "user_request_queue",
     RESPONSE: "user_response_queue",
   },
-  
   AUTH: {
     REQUEST: "Login_request_queue",
     RESPONSE: "Login_response_queue",
@@ -42,7 +39,6 @@ module.exports = {
     REQUEST: "guest_meet_request_queue",
     RESPONSE: "guest_meet_response_queue",
   },
-
   INCIDENT_REPORT: {
     REQUEST: "incident_report_request_queue",
     RESPONSE: "incident_report_response_queue",

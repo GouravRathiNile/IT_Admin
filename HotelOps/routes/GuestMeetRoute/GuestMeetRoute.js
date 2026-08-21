@@ -6,16 +6,16 @@ const router = express.Router();
 
 // ============================================================ Daily Entry APIs
 // A daily entry is unique in application logic by OrganizationID + EntryDate.
-router.post("/create", authenticateToken, controller.createDailyEntry);
-router.get("/getall", authenticateToken, controller.getAllDailyEntries);
-router.delete("/delete/:id", authenticateToken, controller.deleteDailyEntry);
+router.post("/DailyEntry/create", authenticateToken, controller.createDailyEntry);
+router.get("/DailyEntry/EntryList", authenticateToken, controller.getAllDailyEntries);
+router.delete("/DailyEntry/delete/:id", authenticateToken, controller.deleteDailyEntry);
 
 // ============================================================ Guest Detail APIs
 // Guest details belong to one active daily-entry master record.
-router.post("/guest/create", authenticateToken, controller.createGuestDetail);
-router.put("/guest/update/:id", authenticateToken, controller.updateGuestDetail);
-router.delete("/guest/delete/:id", authenticateToken, controller.deleteGuestDetail);
-router.get("/guest/getbyid/:id", authenticateToken, controller.getGuestDetailById);
+router.post("/GuestEntry/create", authenticateToken, controller.createGuestDetail);
+router.put("/GuestEntry/update/:id", authenticateToken, controller.updateGuestDetail);
+router.delete("/GuestEntry/delete/:id", authenticateToken, controller.deleteGuestDetail);
+router.get("/GuestEntry/getbyid/:id", authenticateToken, controller.getGuestDetailById);
 
 // ============================================================ Report APIs
 // Reports use query-string organization/date filters and exclude deleted rows.

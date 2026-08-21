@@ -1,16 +1,28 @@
 const { pool } = require("../../db");
-const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
+const {retryableDatabaseResponse} = require("../../utils/retryableDatabaseError");
+const { formatDate } = require("../../utils/dateFormatter");
 
-// ============================================================ Shared Responses
-const fail = (message, statusCode = 400) => ({ success: false, statusCode, message });
-const ok = (message, data, extra = {}) => ({ success: true, message, ...extra, data });
-
+// ============================================================ Shared Responses(Success,Fail Massege Helper)
+const fail = (message, statusCode = 400) => ({
+  success: false,
+  statusCode,
+  message,
+});
+const ok = (message, data, extra = {}) => ({
+  success: true,
+  message,
+  ...extra,
+  data,
+});
 const databaseFailure = (error, operation) => {
   console.error(`${operation} Error:`, error.message);
-  return retryableDatabaseResponse(error) || fail(`Unable to ${operation.toLowerCase()} at this time.`, 500);
+  return (
+    retryableDatabaseResponse(error) ||
+    fail(`Unable to ${operation.toLowerCase()} at this time.`, 500)
+  );
 };
 
-// ============================================================ Database Row Mapping
+// ============================================================ Database Row Mapping(Get Apis Helpers)
 // PostgreSQL returns unquoted column keys in lowercase; map them to API casing here.
 const mapDetail = (row) => ({
   GMDetailID: Number(row.gmdetailid),
@@ -30,23 +42,18 @@ const mapDetail = (row) => ({
   CreatedDate: row.createddate,
   ModifiedDate: row.modifieddate,
 });
-
 const mapMaster = (row) => ({
   GMMasterID: Number(row.gmmasterid),
   OrganizationID: Number(row.organizationid),
-  EntryDate: row.entrydate,
+  EntryDate: formatDate(row.entrydate),
   Roomsinhouse: row.roomsinhouse,
   Guestsinhouse: row.guestsinhouse,
   Arrivals: row.arrivals,
   Departures: row.departures,
   Occupancy: row.occupancy == null ? null : Number(row.occupancy),
-  CreatedBy: row.createdby == null ? null : Number(row.createdby),
-  CreatedDate: row.createddate,
-  ModifiedBy: row.modifiedby == null ? null : Number(row.modifiedby),
-  ModifiedDate: row.modifieddate,
+  CreatedDate: formatDate(row.createddate),
   GuestDetails: [],
 });
-
 // Fetch all details for a page of masters in one query to avoid N+1 queries.
 const attachDetails = async (rows) => {
   if (!rows.length) return [];
@@ -57,14 +64,16 @@ const attachDetails = async (rows) => {
      ORDER BY GMMasterID, GMDetailID;`,
     [ids],
   );
-  const mapped = new Map(rows.map((row) => {
-    const master = mapMaster(row);
-    return [master.GMMasterID, master];
-  }));
-  for (const row of details.rows) mapped.get(Number(row.gmmasterid))?.GuestDetails.push(mapDetail(row));
+  const mapped = new Map(
+    rows.map((row) => {
+      const master = mapMaster(row);
+      return [master.GMMasterID, master];
+    }),
+  );
+  for (const row of details.rows)
+    mapped.get(Number(row.gmmasterid))?.GuestDetails.push(mapDetail(row));
   return rows.map((row) => mapped.get(Number(row.gmmasterid)));
 };
-
 // Add only supplied organization/date filters while keeping every value parameterized.
 const addDateFilters = (data, values, alias = "m") => {
   const conditions = [];
@@ -85,38 +94,102 @@ const addDateFilters = (data, values, alias = "m") => {
 // An advisory transaction lock prevents concurrent duplicate active rows for org/date.
 const createDailyEntry = async (data) => {
   const client = await pool.connect();
+
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext($1));", [`GuestMeet:${data.OrganizationID}:${data.EntryDate}`]);
-    const existing = await client.query(
-      `SELECT GMMasterID FROM GuestMeet_Daily_Entry_Master
-       WHERE OrganizationID = $1 AND EntryDate = $2 AND IsDeleted = FALSE
-       ORDER BY GMMasterID LIMIT 1 FOR UPDATE;`,
-      [data.OrganizationID, data.EntryDate],
+
+   // EntryDate frontend body se aa rahi hai
+    const entryDate = data.EntryDate; 
+
+    // Lock based on Organization + Current Date
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1));",
+      [`GuestMeet:${data.OrganizationID}:${entryDate}`]
     );
+
+    const existing = await client.query(
+      `SELECT GMMasterID
+       FROM GuestMeet_Daily_Entry_Master
+       WHERE OrganizationID = $1
+         AND EntryDate = $2
+         AND IsDeleted = FALSE
+       ORDER BY GMMasterID
+       LIMIT 1
+       FOR UPDATE;`,
+      [data.OrganizationID, entryDate]
+    );
+
     let result;
     let created;
-    const values = [data.Roomsinhouse, data.Guestsinhouse, data.Arrivals, data.Departures, data.Occupancy];
+
+    const values = [
+      data.Roomsinhouse,
+      data.Guestsinhouse,
+      data.Arrivals,
+      data.Departures,
+      data.Occupancy,
+    ];
+
     if (existing.rows.length) {
       created = false;
+
       result = await client.query(
-        `UPDATE GuestMeet_Daily_Entry_Master SET
-           Roomsinhouse=$1, Guestsinhouse=$2, Arrivals=$3, Departures=$4, Occupancy=$5,
-           ModifiedBy=$6, ModifiedDate=CURRENT_TIMESTAMP
-         WHERE GMMasterID=$7 AND IsDeleted=FALSE RETURNING *;`,
-        [...values, data.UserID, existing.rows[0].gmmasterid],
+        `UPDATE GuestMeet_Daily_Entry_Master
+         SET
+           Roomsinhouse = $1,
+           Guestsinhouse = $2,
+           Arrivals = $3,
+           Departures = $4,
+           Occupancy = $5,
+           ModifiedBy = $6,
+           ModifiedDate = CURRENT_TIMESTAMP
+         WHERE GMMasterID = $7
+           AND IsDeleted = FALSE
+         RETURNING *;`,
+        [
+          ...values,
+          data.UserID,
+          existing.rows[0].gmmasterid
+        ]
       );
     } else {
       created = true;
+
       result = await client.query(
         `INSERT INTO GuestMeet_Daily_Entry_Master
-         (OrganizationID, EntryDate, Roomsinhouse, Guestsinhouse, Arrivals, Departures, Occupancy, IsDeleted, CreatedBy, CreatedDate)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,CURRENT_TIMESTAMP) RETURNING *;`,
-        [data.OrganizationID, data.EntryDate, ...values, data.UserID],
+         (
+           OrganizationID,
+           EntryDate,
+           Roomsinhouse,
+           Guestsinhouse,
+           Arrivals,
+           Departures,
+           Occupancy,
+           IsDeleted,
+           CreatedBy,
+           CreatedDate
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,CURRENT_TIMESTAMP)
+         RETURNING *;`,
+        [
+          data.OrganizationID,
+          entryDate,
+          ...values,
+          data.UserID
+        ]
       );
     }
+
     await client.query("COMMIT");
-    return ok(created ? "Guest Meet daily entry created successfully." : "Guest Meet daily entry updated successfully.", mapMaster(result.rows[0]), { created });
+
+    return ok(
+      created
+        ? "Guest Meet daily entry created successfully."
+        : "Guest Meet daily entry updated successfully.",
+      // mapMaster(result.rows[0]),
+      // { created }
+    );
+
   } catch (error) {
     await client.query("ROLLBACK");
     return databaseFailure(error, "Save Guest Meet daily entry");
@@ -124,7 +197,6 @@ const createDailyEntry = async (data) => {
     client.release();
   }
 };
-
 // ============================================================ List Daily Entries
 // Return paginated masters and attach their active guest details in a batch.
 const getAllDailyEntries = async (data) => {
@@ -156,7 +228,6 @@ const getAllDailyEntries = async (data) => {
     return databaseFailure(error, "Fetch Guest Meet daily entries");
   }
 };
-
 // ============================================================ Delete Daily Entry
 // Soft-delete the master and all active child details in the same transaction.
 const deleteDailyEntry = async (data) => {
@@ -178,11 +249,15 @@ const deleteDailyEntry = async (data) => {
       [data.UserID, data.GMMasterID],
     );
     await client.query("COMMIT");
-    return ok("Guest Meet daily entry deleted successfully.", { GMMasterID: data.GMMasterID });
+    return ok("Guest Meet daily entry deleted successfully.", {
+      GMMasterID: data.GMMasterID,
+    });
   } catch (error) {
     await client.query("ROLLBACK");
     return databaseFailure(error, "Delete Guest Meet daily entry");
-  } finally { client.release(); }
+  } finally {
+    client.release();
+  }
 };
 
 // ============================================================ Create Guest Detail
@@ -197,28 +272,55 @@ const createGuestDetail = async (data) => {
     );
     if (!master.rows.length) {
       await client.query("ROLLBACK");
-      return fail("Active Guest Meet daily entry not found for this organization.", 404);
+      return fail(
+        "Active Guest Meet daily entry not found for this organization.",
+        404,
+      );
     }
     const result = await client.query(
       `INSERT INTO GuestMeet_Daily_Entry_Details
        (OrganizationID,GMMasterID,GuestName,RoomNo,BookingSource,Arrival,Departure,Feedback,ActionTaken,MetBy,MetOn,FeedbackType,GuestStatus,IsDeleted,CreatedBy,CreatedDate)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,FALSE,$14,CURRENT_TIMESTAMP) RETURNING *;`,
-      [data.OrganizationID,data.GMMasterID,data.GuestName,data.RoomNo,data.BookingSource,data.Arrival,data.Departure,data.Feedback,data.ActionTaken,data.MetBy,data.MetOn,data.FeedbackType,data.GuestStatus,data.UserID],
+      [
+        data.OrganizationID,
+        data.GMMasterID,
+        data.GuestName,
+        data.RoomNo,
+        data.BookingSource,
+        data.Arrival,
+        data.Departure,
+        data.Feedback,
+        data.ActionTaken,
+        data.MetBy,
+        data.MetOn,
+        data.FeedbackType,
+        data.GuestStatus,
+        data.UserID,
+      ],
     );
     await client.query("COMMIT");
     return ok("Guest detail created successfully.", mapDetail(result.rows[0]));
   } catch (error) {
     await client.query("ROLLBACK");
     return databaseFailure(error, "Create Guest Meet detail");
-  } finally { client.release(); }
+  } finally {
+    client.release();
+  }
 };
 
 // Whitelist database columns that the guest partial-update API may change.
 const detailFields = {
-  GuestName: "GuestName", RoomNo: "RoomNo", BookingSource: "BookingSource",
-  Arrival: "Arrival", Departure: "Departure", Feedback: "Feedback",
-  ActionTaken: "ActionTaken", MetBy: "MetBy", MetOn: "MetOn",
-  FeedbackType: "FeedbackType", GuestStatus: "GuestStatus",
+  GuestName: "GuestName",
+  RoomNo: "RoomNo",
+  BookingSource: "BookingSource",
+  Arrival: "Arrival",
+  Departure: "Departure",
+  Feedback: "Feedback",
+  ActionTaken: "ActionTaken",
+  MetBy: "MetBy",
+  MetOn: "MetOn",
+  FeedbackType: "FeedbackType",
+  GuestStatus: "GuestStatus",
 };
 
 // ============================================================ Update Guest Detail
@@ -232,7 +334,8 @@ const updateGuestDetail = async (data) => {
         assignments.push(`${column}=$${values.length}`);
       }
     }
-    if (!assignments.length) return fail("No guest detail changes were provided.", 400);
+    if (!assignments.length)
+      return fail("No guest detail changes were provided.", 400);
     values.push(data.UserID, data.GMDetailID);
     const result = await pool.query(
       `UPDATE GuestMeet_Daily_Entry_Details SET ${assignments.join(",")},
@@ -242,7 +345,9 @@ const updateGuestDetail = async (data) => {
     );
     if (!result.rows.length) return fail("Guest detail not found.", 404);
     return ok("Guest detail updated successfully.", mapDetail(result.rows[0]));
-  } catch (error) { return databaseFailure(error, "Update Guest Meet detail"); }
+  } catch (error) {
+    return databaseFailure(error, "Update Guest Meet detail");
+  }
 };
 
 // ============================================================ Delete Guest Detail
@@ -255,8 +360,12 @@ const deleteGuestDetail = async (data) => {
       [data.UserID, data.GMDetailID],
     );
     if (!result.rows.length) return fail("Guest detail not found.", 404);
-    return ok("Guest detail deleted successfully.", { GMDetailID: data.GMDetailID });
-  } catch (error) { return databaseFailure(error, "Delete Guest Meet detail"); }
+    return ok("Guest detail deleted successfully.", {
+      GMDetailID: data.GMDetailID,
+    });
+  } catch (error) {
+    return databaseFailure(error, "Delete Guest Meet detail");
+  }
 };
 
 // ============================================================ Get Guest Detail By ID
@@ -268,14 +377,17 @@ const getGuestDetailById = async (data) => {
     );
     if (!result.rows.length) return fail("Guest detail not found.", 404);
     return ok("Guest detail fetched successfully.", mapDetail(result.rows[0]));
-  } catch (error) { return databaseFailure(error, "Fetch Guest Meet detail"); }
+  } catch (error) {
+    return databaseFailure(error, "Fetch Guest Meet detail");
+  }
 };
 
 // ============================================================ Date Range Report
 // Reuse the paginated nested-list query after the controller requires both dates.
 const getDateRangeReport = async (data) => {
   const response = await getAllDailyEntries(data);
-  if (response.success) response.message = "Guest Meet date range report fetched successfully.";
+  if (response.success)
+    response.message = "Guest Meet date range report fetched successfully.";
   return response;
 };
 
@@ -294,8 +406,16 @@ const getFeedbackReport = async (data) => {
        GROUP BY COALESCE(NULLIF(TRIM(d.FeedbackType),''),'Unspecified') ORDER BY TotalGuests DESC, FeedbackType;`,
       values,
     );
-    return ok("Guest Meet feedback report fetched successfully.", result.rows.map((row) => ({ FeedbackType: row.feedbacktype, TotalGuests: Number(row.totalguests) })));
-  } catch (error) { return databaseFailure(error, "Generate Guest Meet feedback report"); }
+    return ok(
+      "Guest Meet feedback report fetched successfully.",
+      result.rows.map((row) => ({
+        FeedbackType: row.feedbacktype,
+        TotalGuests: Number(row.totalguests),
+      })),
+    );
+  } catch (error) {
+    return databaseFailure(error, "Generate Guest Meet feedback report");
+  }
 };
 
 // ============================================================ Summary Report
@@ -318,12 +438,17 @@ const getSummaryReport = async (data) => {
     );
     const row = result.rows[0];
     return ok("Guest Meet summary report fetched successfully.", {
-      TotalDailyEntries: Number(row.totaldailyentries), TotalGuestsMet: Number(row.totalguestsmet),
-      TotalRoomsInHouse: Number(row.totalroomsinhouse), TotalGuestsInHouse: Number(row.totalguestsinhouse),
-      TotalArrivals: Number(row.totalarrivals), TotalDepartures: Number(row.totaldepartures),
+      TotalDailyEntries: Number(row.totaldailyentries),
+      TotalGuestsMet: Number(row.totalguestsmet),
+      TotalRoomsInHouse: Number(row.totalroomsinhouse),
+      TotalGuestsInHouse: Number(row.totalguestsinhouse),
+      TotalArrivals: Number(row.totalarrivals),
+      TotalDepartures: Number(row.totaldepartures),
       AverageOccupancy: Number(row.averageoccupancy),
     });
-  } catch (error) { return databaseFailure(error, "Generate Guest Meet summary report"); }
+  } catch (error) {
+    return databaseFailure(error, "Generate Guest Meet summary report");
+  }
 };
 
 // ============================================================ Met By Report
@@ -341,15 +466,30 @@ const getMetByReport = async (data) => {
        GROUP BY d.MetBy, um.FullName ORDER BY TotalGuestsMet DESC, um.FullName;`,
       values,
     );
-    return ok("Guest Meet Met By report fetched successfully.", result.rows.map((row) => ({
-      MetBy: Number(row.metby), FullName: row.fullname, TotalGuestsMet: Number(row.totalguestsmet),
-    })));
-  } catch (error) { return databaseFailure(error, "Generate Guest Meet Met By report"); }
+    return ok(
+      "Guest Meet Met By report fetched successfully.",
+      result.rows.map((row) => ({
+        MetBy: Number(row.metby),
+        FullName: row.fullname,
+        TotalGuestsMet: Number(row.totalguestsmet),
+      })),
+    );
+  } catch (error) {
+    return databaseFailure(error, "Generate Guest Meet Met By report");
+  }
 };
 
 // ============================================================ Public Service API
 module.exports = {
-  createDailyEntry, getAllDailyEntries, deleteDailyEntry,
-  createGuestDetail, updateGuestDetail, deleteGuestDetail, getGuestDetailById,
-  getDateRangeReport, getFeedbackReport, getSummaryReport, getMetByReport,
+  createDailyEntry,
+  getAllDailyEntries,
+  deleteDailyEntry,
+  createGuestDetail,
+  updateGuestDetail,
+  deleteGuestDetail,
+  getGuestDetailById,
+  getDateRangeReport,
+  getFeedbackReport,
+  getSummaryReport,
+  getMetByReport,
 };

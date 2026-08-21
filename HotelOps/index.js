@@ -58,7 +58,7 @@ app.use("/api/ProductMaster", ProductRoutes);
 app.use("/api/UserMaster", UserRoutes);
 app.use("/api/HotelOpsLogin", HotelOpsLoginRoutes);
 app.use("/api/GuestGlitch", GuestGlitchRoutes);
-app.use("/api/guestmeet", GuestMeetRoutes);
+app.use("/api/GuestMeet", GuestMeetRoutes);
 app.use("/api/IncidentReport", IncidentReportRoutes);
 app.use("/api/Capex", CapexRoutes);
 app.use("/api/Opex", OpexRoutes);
@@ -126,28 +126,31 @@ const startServer = async () => {
       QUEUE.AUTH.RESPONSE,
       HotelOpsLoginHandler
     );
+     // ===================================== Guest Glitch Consumer
     await startConsumer(
       QUEUE.GUEST_GLITCH.REQUEST,
       QUEUE.GUEST_GLITCH.RESPONSE,
       GuestGlitchHandler
     );
+    // ===================================== Guest Meet Consumer
     await startConsumer(
       QUEUE.GUEST_MEET.REQUEST,
       QUEUE.GUEST_MEET.RESPONSE,
       GuestMeetHandler
     );
-
+    // ===================================== Incident Report Consumer
     await startConsumer(
       QUEUE.INCIDENT_REPORT.REQUEST,
       QUEUE.INCIDENT_REPORT.RESPONSE,
       IncidentReportHandler
     );
-
+    // ===================================== Capex Consumer
     await startConsumer(
       QUEUE.CAPEX.REQUEST,
       QUEUE.CAPEX.RESPONSE,
       CapexHandler
     );
+    // ===================================== Opex Consumer
     await startConsumer(
       QUEUE.OPEX.REQUEST,
       QUEUE.OPEX.RESPONSE,
