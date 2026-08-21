@@ -47,8 +47,12 @@ module.exports = {
     REQUEST: "capex_request_queue",
     RESPONSE: "capex_response_queue",
   },
-    OPEX: {
+  OPEX: {
     REQUEST: "opex_request_queue",
     RESPONSE: "opex_response_queue",
+  },
+  HLP_REPORT: {
+    REQUEST: "hlp_report_request_queue",
+    RESPONSE: "hlp_report_response_queue",
   },
 };

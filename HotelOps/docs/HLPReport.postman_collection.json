@@ -1,0 +1,80 @@
+{
+  "info": {
+    "name": "HotelOps - HLP Report",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "LocalUrl", "value": "http://localhost:5000/api" },
+    { "key": "AuthToken", "value": "" },
+    { "key": "OrganizationID", "value": "10" },
+    { "key": "HLPReportID", "value": "1" }
+  ],
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{AuthToken}}", "type": "string" }] },
+  "item": [
+    {
+      "name": "Master List",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/master-list" }
+    },
+    {
+      "name": "Add Master Field",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"Title\": \"Rooms Occupied (Comp+House)\",\n  \"OrderBy\": 1,\n  \"IsActive\": true\n}" },
+        "url": "{{LocalUrl}}/HLPReport/master-list"
+      }
+    },
+    {
+      "name": "Update Master Field",
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"ID\": 1,\n  \"Title\": \"Rooms Occupied (Comp+House)\",\n  \"OrderBy\": 2,\n  \"IsActive\": true\n}" },
+        "url": "{{LocalUrl}}/HLPReport/master-list"
+      }
+    },
+    {
+      "name": "Deactivate Master Field",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"ID\": 1\n}" },
+        "url": "{{LocalUrl}}/HLPReport/master-list"
+      }
+    },
+    {
+      "name": "Create HLP Report",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"OrganizationID\": {{OrganizationID}},\n  \"EntryDate\": \"2026-08-21\",\n  \"Details\": [\n    { \"MasterID\": 1, \"YOD\": \"120\", \"LYOD\": \"110\" }\n  ]\n}" },
+        "url": "{{LocalUrl}}/HLPReport/create"
+      }
+    },
+    {
+      "name": "Update HLP Report",
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"ID\": {{HLPReportID}},\n  \"Details\": [\n    { \"MasterID\": 1, \"YOD\": \"125\", \"LYOD\": \"112\" }\n  ]\n}" },
+        "url": "{{LocalUrl}}/HLPReport/update"
+      }
+    },
+    {
+      "name": "Monthly Report - With Organization",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/monthly-report?organizationId={{OrganizationID}}&year=2026&month=8" }
+    },
+    {
+      "name": "Monthly Report - All Organizations",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/monthly-report?year=2026&month=8" }
+    },
+    {
+      "name": "Last Year Report - With Organization",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report?organizationId={{OrganizationID}}&entryDate=2026-08-21" }
+    },
+    {
+      "name": "Last Year Report - All Organizations",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report?entryDate=2026-08-21" }
+    }
+  ]
+}
