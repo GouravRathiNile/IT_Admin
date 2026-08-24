@@ -1,6 +1,19 @@
 const { pool } = require("../../db");
 const { formatDate } = require("../../utils/dateFormatter");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
+const { generatePdf } = require("../../utils/pdfHelper");
+const generateOrganizationLogoUrl = require("../../AzurConfigration/ITAdmin/OrganizationMaster/AzureGetData");
+const safeOrganizationLogoUrl = (blobName) => {
+  if (!blobName) return null;
+  try { return generateOrganizationLogoUrl(blobName); } catch (_error) { return null; }
+};
+
+const hlpColumns = (withSerial = false) => [
+  ...(withSerial ? [{ key: "Serial", header: "Sr. No.", width: 42, align: "center" }] : []),
+  { key: "Title", header: "Title", width: "*", align: "left", noWrap: false },
+  { key: "YOD", header: "Yesterday (YOD)", width: 105, align: "center" },
+  { key: "LYOD", header: "Last Year Same Day (LYOD)", width: 140, align: "center" },
+];
 
 const fail = (message, statusCode = 400) => ({ success: false, statusCode, message });
 const positiveInteger = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0;
@@ -279,6 +292,9 @@ const updateReport = async (data) => {
 };
 
 const numericValue = (value) => /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(String(value).trim()) && Number.isFinite(Number(value));
+const hasMonthlyReportData = (rows) => (rows || []).some((row) => Object.entries(row).some(([key, value]) =>
+  !["ID", "Title", "Total"].includes(key) && value !== null && value !== undefined && String(value).trim() !== ""
+));
 const getMonthlyReport = async ({ OrganizationID, Year, Month }) => {
   const year = Number(Year); const month = Number(Month);
   if (!Number.isInteger(year) || year < 1 || year > 9999) return fail("Year must be between 1 and 9999");
@@ -350,4 +366,132 @@ const getLastYearReport = async ({ OrganizationID, EntryDate }) => {
   } finally { client.release(); }
 };
 
-module.exports = { getMasterList, createMasterField, updateMasterField, deleteMasterField, createReport, updateReport, getMonthlyReport, getLastYearReport, isRealDate, numericValue };
+const generateReportPdf = async ({ UserID, ID }) => {
+  if (!positiveInteger(ID)) return fail("HLP report ID must be a positive integer");
+  const client = await pool.connect();
+  try {
+    const entry = await client.query(
+      `SELECT em.id, em.organizationid, em.entrydate, em.createdby, em.createddatetime,
+              em.modifyby, em.modifydatetime, om.organizationname, logo.logoname,
+              COALESCE(NULLIF(creator.fullname, ''), creator.username, em.createdby::text) AS createdbyname
+         FROM hlpreport_entry_master em
+         LEFT JOIN organization_master om ON om.organizationid = em.organizationid
+         LEFT JOIN user_master creator ON creator.userid = em.createdby
+         LEFT JOIN LATERAL (
+           SELECT logoname FROM organization_master_logo
+            WHERE organizationid = em.organizationid AND isdeleted = FALSE
+            ORDER BY logoid LIMIT 1
+         ) logo ON TRUE
+        WHERE em.id = $1`,
+      [Number(ID)]
+    );
+    if (!entry.rowCount) return fail("HLP report not found", 404);
+    const record = entry.rows[0];
+    const denied = await validateOrganization(client, UserID, record.organizationid);
+    if (denied) return denied;
+    const details = await client.query(
+      `SELECT title AS "Title", yod AS "YOD", lyod AS "LYOD"
+         FROM hlpreport_entry_details
+        WHERE masterid = $1
+        ORDER BY id`,
+      [Number(ID)]
+    );
+    const buffer = await generatePdf({
+      title: "HLP REPORT", reportName: "HLP Report", organizationId: record.organizationid,
+      logoUrl: safeOrganizationLogoUrl(record.logoname),
+      metadata: [
+        { label: "Report ID", value: Number(record.id) }, { label: "Organization", value: record.organizationname },
+        { label: "Entry Date", value: formatDate(record.entrydate) }, { label: "Created By", value: record.createdbyname },
+      ],
+      columns: hlpColumns(true), rows: details.rows.map((row, index) => ({ ...row, Serial: index + 1 })),
+    });
+    return {
+      success: true,
+      message: "HLP report PDF generated successfully",
+      pdfBase64: buffer.toString("base64"),
+      filename: `HLP-Report-${Number(ID)}.pdf`,
+    };
+  } catch (error) {
+    console.error("Generate HLP Report PDF Error:", error.message);
+    return fail("Unable to generate HLP report PDF at this time.", 503);
+  } finally { client.release(); }
+};
+
+const reportOrganizationMetadata = async (organizationID) => {
+  if (organizationID === undefined || organizationID === null || String(organizationID).trim() === "") return { Name: "All Organizations", LogoUrl: null };
+  const result = await pool.query(
+    `SELECT om.organizationname, logo.logoname
+       FROM organization_master om
+       LEFT JOIN LATERAL (
+         SELECT logoname FROM organization_master_logo
+          WHERE organizationid = om.organizationid AND isdeleted = FALSE
+          ORDER BY logoid LIMIT 1
+       ) logo ON TRUE
+      WHERE om.organizationid = $1 LIMIT 1`,
+    [Number(organizationID)]
+  );
+  const row = result.rows[0];
+  return { Name: row?.organizationname || null, LogoUrl: safeOrganizationLogoUrl(row?.logoname) };
+};
+
+const generateMonthlyReportPdf = async (data) => {
+  try {
+    const report = await getMonthlyReport(data);
+    if (!report.success) return report;
+    const rows = report.data || [];
+    if (!hasMonthlyReportData(rows)) return fail("No HLP monthly report data found.", 404);
+    const organization = await reportOrganizationMetadata(data.OrganizationID);
+    const days = new Date(Date.UTC(Number(data.Year), Number(data.Month), 0)).getUTCDate();
+    const dayWidth = Math.min(20, Math.floor((826 - 68 - 34 - ((days + 2) * 2) - 18) / days));
+    const wrapTitle = (row) => {
+      const title = String(row.Title || "-"); if (title.length <= 14 || !title.includes(" ")) return title;
+      const words = title.split(/\s+/); let split = 1; let distance = Infinity;
+      for (let i = 1; i < words.length; i += 1) { const next = Math.abs(words.slice(0, i).join(" ").length - title.length / 2); if (next < distance) { distance = next; split = i; } }
+      return `${words.slice(0, split).join(" ")}\n${words.slice(split).join(" ")}`;
+    };
+    const buffer = await generatePdf({
+      title: "HLP MONTHLY REPORT", reportName: "HLP Monthly Report", orientation: "landscape",
+      logoUrl: organization.LogoUrl, pageMargins: [8, 18, 8, 32],
+      metadata: [{ label: "Organization", value: organization.Name }, { label: "Month", value: formatDate(`${data.Year}-${String(data.Month).padStart(2, "0")}-01`, "MMMM YYYY") }],
+      columns: [
+        { key: "Title", header: "Title", width: 68, align: "left", value: wrapTitle, noWrap: false, style: "monthlyTitle" },
+        ...Array.from({ length: days }, (_, index) => ({ key: String(index + 1), header: String(index + 1), width: dayWidth, align: "center" })),
+        { key: "Total", header: "Total", width: 34, align: "center", bold: true },
+      ], rows,
+      styles: { pdfTableHeader: { fontSize: 7, bold: true, color: "#FFFFFF" }, pdfTableCell: { fontSize: 7 }, monthlyTitle: { fontSize: 7, bold: true, lineHeight: 1 } },
+      tableOptions: { layout: { fillColor: (row) => row === 0 ? "#082B5C" : "#FFFFFF", paddingLeft: () => 1, paddingRight: () => 1, paddingTop: () => 3, paddingBottom: () => 3 }, table: { keepWithHeaderRows: 1 } },
+    });
+    const period = `${String(data.Year).padStart(4, "0")}-${String(data.Month).padStart(2, "0")}`;
+    return {
+      success: true, message: "HLP monthly report PDF generated successfully",
+      pdfBase64: buffer.toString("base64"), filename: `HLP-Monthly-Report-${period}.pdf`,
+    };
+  } catch (error) {
+    console.error("Generate HLP Monthly Report PDF Error:", error.message);
+    return fail("Unable to generate HLP monthly report PDF at this time.", 503);
+  }
+};
+
+const generateLastYearReportPdf = async (data) => {
+  try {
+    const report = await getLastYearReport(data);
+    if (!report.success) return report;
+    const organization = await reportOrganizationMetadata(data.OrganizationID);
+    const buffer = await generatePdf({
+      title: "HLP LAST YEAR SAME DAY REPORT", reportName: "HLP Last Year Report", logoUrl: organization.LogoUrl,
+      metadata: [{ label: "Organization", value: organization.Name }, { label: "Entry Date", value: formatDate(data.EntryDate) }],
+      columns: hlpColumns(false).map((column) => column.key === "Title" ? column : { ...column, width: column.key === "YOD" ? 120 : 150 }),
+      rows: report.data?.Details || [],
+    });
+    const period = String(data.EntryDate).slice(0, 7);
+    return {
+      success: true, message: "HLP last-year report PDF generated successfully",
+      pdfBase64: buffer.toString("base64"), filename: `HLP-Last-Year-Report-${period}.pdf`,
+    };
+  } catch (error) {
+    console.error("Generate HLP Last Year Report PDF Error:", error.message);
+    return fail("Unable to generate HLP last-year report PDF at this time.", 503);
+  }
+};
+
+module.exports = { getMasterList, createMasterField, updateMasterField, deleteMasterField, createReport, updateReport, getMonthlyReport, getLastYearReport, generateReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };

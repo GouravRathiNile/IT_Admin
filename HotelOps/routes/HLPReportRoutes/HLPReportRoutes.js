@@ -12,5 +12,8 @@ router.post("/create", controller.create);
 router.put("/update", controller.update);
 router.get("/monthly-report", controller.monthlyReport);
 router.get("/last-year-report", controller.lastYearReport);
+router.get("/monthly-report/pdf", controller.monthlyReportPdf);
+router.get("/last-year-report/pdf", controller.lastYearReportPdf);
+router.get("/:id/pdf", controller.reportPdf);
 
 module.exports = router;

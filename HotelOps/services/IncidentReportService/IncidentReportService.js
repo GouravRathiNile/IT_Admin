@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const repository = require("../../repositories/IncidentReportRepository/IncidentReportRepository");
 const { compactDTO, detailDTO } = require("../../dto/IncidentReportDTO");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
-const { generateIncidentReportPdf } = require("./IncidentReportPdfService");
+const { generatePdf } = require("../../utils/pdfHelper");
 const { generateCSV, generateExcel } = require("../../utils/exportHelper");
 const { formatDate } = require("../../utils/dateFormatter");
 
@@ -14,6 +14,13 @@ const INCIDENT_EXPORT_COLUMNS = Object.freeze([
   { key: "Damagedcaused", header: "Damage Caused", width: 40 }, { key: "Investigation", header: "Investigation", width: 40 },
   { key: "InvestigatedBy", header: "Investigated By", width: 24 }, { key: "PresentDuringIncident", header: "Present During Incident", width: 30 },
   { key: "ReportTo", header: "Report To", width: 24 }, { key: "ReportBy", header: "Report By", width: 24 },
+]);
+const INCIDENT_PDF_FIELDS = Object.freeze([
+  ["Incident Report ID", "ID"], ["Organization", "OrganizationName"], ["Report Date", "ReportDate"], ["Incident Date", "IncidentDate"],
+  ["Time", "Time"], ["Location", "Location"], ["Accident Cause", "AccidentCause"], ["Any Casualty", "Anycasualty"],
+  ["Description", "Description"], ["Damage Caused", "Damagedcaused"], ["Investigation", "Investigation"], ["Investigated By", "InvestigatedBy"],
+  ["Present During Incident", "PresentDuringIncident"], ["Reported To", "ReportTo"], ["Report Made By", "ReportBy"], ["Created By", "CreatedBy"],
+  ["Created Date", "CreatedDate"], ["Modified By", "ModifyBy"], ["Modified Date", "ModifyDate"],
 ]);
 
 const fail = (message, statusCode = 400) => ({ success: false, statusCode, message });
@@ -129,7 +136,10 @@ const reportPdf = async (data) => {
     const row = await repository.findByID(client, data.ID, organization.OrganizationID);
     if (!row) return fail("Incident report not found.", 404);
     const detail = { ...detailDTO(row), OrganizationName: organization.OrganizationName };
-    const buffer = await generateIncidentReportPdf(detail);
+    const buffer = await generatePdf({
+      title: "INCIDENT REPORT", reportName: "Incident Report", organizationId: organization.OrganizationID,
+      metadata: INCIDENT_PDF_FIELDS.map(([label, key]) => ({ label, value: detail[key] })),
+    });
     return { success: true, message: "Incident report PDF generated successfully.", pdfBase64: buffer.toString("base64"), filename: `incident-report-${data.ID}.pdf` };
   } catch (error) {
     console.error("Incident Report PDF Error:", error.message);
