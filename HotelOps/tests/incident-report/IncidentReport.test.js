@@ -6,7 +6,7 @@ const validator = require("../../validators/IncidentReportValidator");
 const { createDTO, listDTO, compactDTO, detailDTO } = require("../../dto/IncidentReportDTO");
 const service = require("../../services/IncidentReportService/IncidentReportService");
 const repository = require("../../repositories/IncidentReportRepository/IncidentReportRepository");
-const { generateIncidentReportPdf } = require("../../services/IncidentReportService/IncidentReportPdfService");
+const { generatePdf } = require("../../utils/pdfHelper");
 
 const valid = {
   ReportDate: "2026-08-20", IncidentDate: "2026-08-20", Time: "12:30 PM",
@@ -64,6 +64,6 @@ test("response DTOs keep list compact and detail complete", () => {
 });
 
 test("pdfmake generates a PDF buffer", async () => {
-  const pdf = await generateIncidentReportPdf({ ID: "1", ...valid });
+  const pdf = await generatePdf({ title: "INCIDENT REPORT", reportName: "Incident Report", metadata: [{ label: "Incident Report ID", value: "1" }] });
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
 });

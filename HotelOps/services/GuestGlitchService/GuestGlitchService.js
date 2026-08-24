@@ -12,7 +12,7 @@ const {
   compactReportDTO,
   formatGuestGlitchDates,
 } = require("../../dto/GuestGlitchDTO");
-const { generateGuestGlitchPdf } = require("./GuestGlitchPdfService");
+const { generatePdf } = require("../../utils/pdfHelper");
 const generateAttachmentUrl = require("../../AzurConfigration/GuestGlitch/AzureGetData");
 const { generateCSV, generateExcel } = require("../../utils/exportHelper");
 const { formatDate } = require("../../utils/dateFormatter");
@@ -32,6 +32,13 @@ const GUEST_GLITCH_EXPORT_COLUMNS = Object.freeze([
   { key: "CheckInDate", header: "Check In Date", width: 16 }, { key: "CheckOutDate", header: "Check Out Date", width: 16 },
   { key: "ResolvedBy", header: "Resolved By", width: 22 }, { key: "UpdatedBy", header: "Updated By", width: 22 },
   { key: "GMComment", header: "GM Comment", width: 35 },
+]);
+const guestPdfItems = (data, fields) => fields.map(([label, key]) => ({ label, value: data[key] }));
+const GUEST_GLITCH_PDF_SECTIONS = Object.freeze([
+  { title: "Hotel and Guest", fields: [["Hotel", "Hotel"], ["Entry Date", "EntryDate"], ["Room", "RoomNumber"], ["Guest", "GuestName"], ["Guest Status", "GuestStatus"], ["Company", "CompanyName"], ["Rate", "Rate"], ["Check In", "CheckInDate"], ["Check Out", "CheckOutDate"]] },
+  { title: "Complaint and Follow-up", fields: [["Complaint", "Complaint"], ["Complaint Source", "ComplaintSource"], ["Raise Source", "RaiseSource"], ["Departments", "Departments"], ["Received By", "ReceivedByUsers"], ["Informed To", "InformedToUsers"], ["Process Lapse", "ProcessLapse"], ["Service Recovery", "ServiceRecovery"], ["Detailed Investigation", "DetailedInvestigation"], ["Internal Action", "InternalActionTaken"]] },
+  { title: "Workflow", fields: [["Status", "Status"], ["Resolved By", "ResolvedBy"], ["GM Comment", "GMComment"], ["HOD Comments", "DepartmentHODComments"]] },
+  { title: "Audit and Attachment", fields: [["Created By", "CreatedBy"], ["Created Date", "CreatedDate"], ["Modified By", "ModifyBy"], ["Modified Date", "ModifyDate"], ["Attachment", "Attachment"]] },
 ]);
 
 const fail = (message, statusCode = 400, errors) => ({ success: false, statusCode, message, ...(errors ? { errors } : {}) });
@@ -512,7 +519,12 @@ const masterReportPdf = async (data) => {
   const detail = await reportDetail(data);
   if (!detail.success) return detail;
   try {
-    const buffer = await generateGuestGlitchPdf(detail.data);
+    const buffer = await generatePdf({
+      title: "Guest Glitch Master Report", reportName: "Guest Glitch Master Report",
+      organizationId: detail.data.OrganizationID,
+      metadata: [{ label: "Record ID", value: detail.data.ID }, { label: "Organization", value: detail.data.OrganizationName || detail.data.Hotel }],
+      sections: GUEST_GLITCH_PDF_SECTIONS.map((section) => ({ title: section.title, items: guestPdfItems(detail.data, section.fields) })),
+    });
     return { success: true, message: "Guest Glitch PDF generated successfully", pdfBase64: buffer.toString("base64"), filename: `guest-glitch-${data.ID}.pdf` };
   } catch (error) {
     console.error("Guest Glitch PDF Error:", error.message);

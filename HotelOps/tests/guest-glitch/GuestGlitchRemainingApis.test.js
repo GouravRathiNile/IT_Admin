@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const router = require("../../routes/GuestGlitchRoutes/GuestGlitchRoutes");
 const validator = require("../../validators/GuestGlitchValidator");
 const { compactReportDTO, completeReportDTO } = require("../../dto/GuestGlitchReportDTO");
-const { generateGuestGlitchPdf } = require("../../services/GuestGlitchService/GuestGlitchPdfService");
+const { generatePdf } = require("../../utils/pdfHelper");
 
 test("remaining API routes expose approved methods", () => {
   const routes = router.stack.filter((layer) => layer.route).map((layer) => [layer.route.path, layer.route.methods]);
@@ -27,7 +27,7 @@ test("report DTOs omit physical attachment storage paths", () => {
 });
 
 test("PDF service returns a valid PDF buffer", async () => {
-  const pdf = await generateGuestGlitchPdf({ ID: 1, Hotel: "HotelOps", Complaint: "Test", Departments: [], ReceivedByUsers: [], InformedToUsers: [], DepartmentHODComments: [] });
+  const pdf = await generatePdf({ title: "Guest Glitch Master Report", reportName: "Guest Glitch Master Report", metadata: [{ label: "Record ID", value: 1 }] });
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
 });
 

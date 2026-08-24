@@ -75,6 +75,26 @@
     {
       "name": "Last Year Report - All Organizations",
       "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report?entryDate=2026-08-21" }
+    },
+    {
+      "name": "HLP Report PDF",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/{{HLPReportID}}/pdf" }
+    },
+    {
+      "name": "Monthly Report PDF - With Organization",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/monthly-report/pdf?organizationId={{OrganizationID}}&year=2026&month=8" }
+    },
+    {
+      "name": "Monthly Report PDF - All Organizations",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/monthly-report/pdf?year=2026&month=8" }
+    },
+    {
+      "name": "Last Year Report PDF - With Organization",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report/pdf?organizationId={{OrganizationID}}&entryDate=2026-08-21" }
+    },
+    {
+      "name": "Last Year Report PDF - All Organizations",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report/pdf?entryDate=2026-08-21" }
     }
   ]
 }
