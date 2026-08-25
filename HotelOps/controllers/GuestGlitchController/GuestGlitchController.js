@@ -168,28 +168,10 @@ exports.gmAction = (req, res) => execute(res, async () => {
   assertValid(errors);
   const response = await callQueue("GUEST_GLITCH_GM_ACTION", {
     ID: Number(req.body.ID ?? req.body.id), GMComment: String(req.body.GMComment).trim(),
-    Status: req.body.Status, ResolvedBy: req.body.ResolvedBy, WorkflowAction: req.body.WorkflowAction, ...requestContext(req),
+    Status: req.body.Status, ResolvedBy: req.body.ResolvedBy, ...requestContext(req),
   });
   return sendResponse(res, response);
 });
-
-exports.saveWorkflowConfig = (req, res) => execute(res, async () => {
-  assertValid(validator.validateWorkflowConfig(req.body || {}));
-  const Stages = req.body.Stages.map((stage) => ({
-    StageKey: String(stage.StageKey).trim().toUpperCase(), StageName: String(stage.StageName).trim(),
-    StageOrder: Number(stage.StageOrder), IsFinalStage: stage.IsFinalStage === true, IsActive: stage.IsActive !== false,
-    Actors: stage.Actors.map((actor) => ({ ActorType: String(actor.ActorType).trim().toUpperCase(), ActorValue: actor.ActorValue,
-      CanView: actor.CanView !== false, CanEdit: actor.CanEdit === true, CanProceed: actor.CanProceed === true,
-      EditableFields: actor.EditableFields || [], RequiredActionFields: actor.RequiredActionFields || [], IsActive: actor.IsActive !== false })),
-  }));
-  return sendResponse(res, await callQueue("SAVE_GUEST_GLITCH_WORKFLOW", { Stages, ...requestContext(req) }));
-});
-
-exports.getWorkflowConfig = (req, res) => execute(res, async () =>
-  sendResponse(res, await callQueue("GET_GUEST_GLITCH_WORKFLOW", requestContext(req))));
-
-exports.deleteWorkflowConfig = (req, res) => execute(res, async () =>
-  sendResponse(res, await callQueue("DELETE_GUEST_GLITCH_WORKFLOW", requestContext(req))));
 
 exports.attachment = (req, res) => execute(res, async () => {
   assertValidID(validator.validateID(req.params.id));

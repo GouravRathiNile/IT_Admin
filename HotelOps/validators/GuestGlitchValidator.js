@@ -1,6 +1,5 @@
-const { OPTION_TYPES, SORT_COLUMNS, REPORT_SORT_COLUMNS, WORKFLOW_ACTOR_TYPES } = require("../config/guestGlitchConstants");
-const { EDITABLE_FIELDS, PROTECTED_FIELDS } = require("../dto/GuestGlitchDTO");
-const WORKFLOW_EDITABLE_FIELDS = Object.freeze([...EDITABLE_FIELDS, "Attachment"]);
+const { OPTION_TYPES, SORT_COLUMNS, REPORT_SORT_COLUMNS } = require("../config/guestGlitchConstants");
+const { CREATE_FIELDS, EDITABLE_FIELDS, PROTECTED_FIELDS } = require("../dto/GuestGlitchDTO");
 
 const isPositiveInteger = (value) => /^\d+$/.test(String(value)) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
 const isISODate = (value) => {
@@ -30,13 +29,14 @@ const normalizeIDArray = (body, field, errors, required = false) => {
 
 const validateCommon = (data, isCreate) => {
   const errors = [];
-  const allowedFields = new Set([...EDITABLE_FIELDS, ...(isCreate ? [] : ["ID", "id", "WorkflowAction"])]);
+  const allowedFields = new Set(isCreate ? CREATE_FIELDS : [...EDITABLE_FIELDS, "ID", "id"]);
   for (const field of Object.keys(data)) {
     if (!allowedFields.has(field) && !PROTECTED_FIELDS.includes(field)) {
       errors.push(error(field, `${field} is not an allowed field.`));
     }
   }
   for (const field of PROTECTED_FIELDS) {
+    if (isCreate && field === "OrganizationID") continue;
     if (Object.prototype.hasOwnProperty.call(data, field)) errors.push(error(field, `${field} cannot be supplied by the client.`));
   }
 
@@ -47,6 +47,11 @@ const validateCommon = (data, isCreate) => {
     } else if (Object.prototype.hasOwnProperty.call(data, field) && !String(data[field] ?? "").trim()) {
       errors.push(error(field, `${field.replace(/([A-Z])/g, " $1").trim()} cannot be empty.`));
     }
+  }
+  if (isCreate) {
+    if (data.OrganizationID === undefined || data.OrganizationID === null || data.OrganizationID === "") errors.push(error("OrganizationID", "Organization ID is required."));
+    else if (!isPositiveInteger(data.OrganizationID)) errors.push(error("OrganizationID", "Organization ID must be a valid number."));
+    else data.OrganizationID = Number(data.OrganizationID);
   }
 
   const lengths = {
@@ -85,7 +90,7 @@ const validateCommon = (data, isCreate) => {
     if (isCreate || Object.prototype.hasOwnProperty.call(data, field)) data[field] = normalizeIDArray(data, field, errors, isCreate);
   }
 
-  if (isCreate || Object.prototype.hasOwnProperty.call(data, "DepartmentHODComments")) {
+  if (!isCreate && Object.prototype.hasOwnProperty.call(data, "DepartmentHODComments")) {
     const comments = parseJSONField(data.DepartmentHODComments ?? []);
     if (!Array.isArray(comments)) {
       errors.push(error("DepartmentHODComments", "DepartmentHODComments must be an array."));
@@ -131,47 +136,8 @@ const validateUpdate = (body = {}) => {
   if (data.ID === undefined || data.ID === null || data.ID === "") errors.push(error("ID", "Guest Glitch ID is required"));
   else if (!isPositiveInteger(data.ID)) errors.push(error("ID", "Guest Glitch ID must be a valid number"));
   errors.push(...validateCommon(data, false));
-  if (!EDITABLE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(body, field)) && body.WorkflowAction === undefined) errors.push(error("body", "At least one editable field or WorkflowAction is required."));
-  if (body.WorkflowAction !== undefined && String(body.WorkflowAction).trim().toUpperCase() !== "PROCEED") errors.push(error("WorkflowAction", "WorkflowAction must be PROCEED."));
+  if (!EDITABLE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(body, field))) errors.push(error("body", "At least one editable field is required."));
   return { data, errors };
-};
-
-const validateWorkflowConfig = (body = {}) => {
-  const errors = [];
-  const stages = Array.isArray(body.Stages) ? body.Stages : [];
-  if (!stages.length) return [error("Stages", "At least one workflow stage is required.")];
-  const keys = new Set(), orders = new Set();
-  let finalCount = 0;
-  stages.forEach((stage, stageIndex) => {
-    const prefix = `Stages[${stageIndex}]`;
-    const key = String(stage.StageKey || "").trim().toUpperCase();
-    const order = Number(stage.StageOrder);
-    if (!/^[A-Z0-9_]{1,80}$/.test(key)) errors.push(error(`${prefix}.StageKey`, "StageKey must contain only letters, numbers, and underscores."));
-    else if (keys.has(key)) errors.push(error(`${prefix}.StageKey`, `Workflow stage ${key} is duplicated.`));
-    keys.add(key);
-    if (!String(stage.StageName || "").trim() || String(stage.StageName).trim().length > 120) errors.push(error(`${prefix}.StageName`, "StageName must be between 1 and 120 characters."));
-    if (!Number.isInteger(order) || order < 1) errors.push(error(`${prefix}.StageOrder`, "StageOrder must be a positive integer."));
-    else if (orders.has(order)) errors.push(error(`${prefix}.StageOrder`, `Workflow stage order ${order} is duplicated.`));
-    orders.add(order);
-    if (stage.IsFinalStage === true) finalCount += 1;
-    const actors = Array.isArray(stage.Actors) ? stage.Actors : [];
-    if (!actors.length) errors.push(error(`${prefix}.Actors`, "Each workflow stage requires at least one actor."));
-    actors.forEach((actor, actorIndex) => {
-      const actorPrefix = `${prefix}.Actors[${actorIndex}]`;
-      const actorType = String(actor.ActorType || "").trim().toUpperCase();
-      if (!WORKFLOW_ACTOR_TYPES.includes(actorType)) errors.push(error(`${actorPrefix}.ActorType`, "Invalid workflow actor type."));
-      if (actorType !== "CREATOR" && !String(actor.ActorValue ?? "").trim()) errors.push(error(`${actorPrefix}.ActorValue`, "ActorValue is required for this actor type."));
-      for (const fieldName of ["EditableFields", "RequiredActionFields"]) {
-        const fields = actor[fieldName] ?? [];
-        if (!Array.isArray(fields) || fields.some((field) => !WORKFLOW_EDITABLE_FIELDS.includes(field)) || new Set(fields).size !== fields.length) {
-          errors.push(error(`${actorPrefix}.${fieldName}`, `${fieldName} must contain unique supported Guest Glitch fields.`));
-        }
-      }
-      if (actor.CanEdit === true && !(actor.EditableFields || []).length) errors.push(error(`${actorPrefix}.EditableFields`, "EditableFields are required when CanEdit is true."));
-    });
-  });
-  if (finalCount !== 1) errors.push(error("Stages", "Exactly one final workflow stage is required."));
-  return errors;
 };
 
 const validateID = (input = {}) => {
@@ -186,6 +152,8 @@ const validateList = (data) => {
   if (!isPositiveInteger(data.pageSize) || Number(data.pageSize) > 100) errors.push(error("pageSize", "Page size must be between 1 and 100."));
   if (!SORT_COLUMNS[data.sortBy]) errors.push(error("sortBy", "Invalid sort field."));
   if (!['ASC', 'DESC'].includes(String(data.sortDirection).toUpperCase())) errors.push(error("sortDirection", "Sort direction must be ASC or DESC."));
+  if (data.organizationId != null && data.organizationId !== "" && !isPositiveInteger(data.organizationId)) errors.push(error("organizationId", "Organization ID must be a valid number."));
+  else if (data.organizationId != null && data.organizationId !== "") data.organizationId = Number(data.organizationId);
   for (const field of ["fromDate", "toDate"]) if (data[field] && !isISODate(data[field])) errors.push(error(field, `${field} must use YYYY-MM-DD format.`));
   if (data.fromDate && data.toDate && data.toDate < data.fromDate) errors.push(error("toDate", "To date cannot be before from date."));
   data.departmentIds = normalizeIDArray(data, "departmentIds", errors, false);
@@ -236,4 +204,4 @@ const validateGMAction = (body = {}) => {
 const validateDisposition = (value) => ["inline", "attachment"].includes(String(value || "inline").toLowerCase())
   ? [] : [error("disposition", "Disposition must be inline or attachment.")];
 
-module.exports = { validateCreate, validateUpdate, validateID, validateList, validateReportList, validateStatus, validateOption, validateGMAction, validateWorkflowConfig, validateDisposition, isPositiveInteger };
+module.exports = { validateCreate, validateUpdate, validateID, validateList, validateReportList, validateStatus, validateOption, validateGMAction, validateDisposition, isPositiveInteger };
