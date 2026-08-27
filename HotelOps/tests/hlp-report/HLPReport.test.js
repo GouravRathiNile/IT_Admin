@@ -138,6 +138,20 @@ test("master list ordering is backend controlled and active state is not publicl
   assert.match(source, /Only ID and Title can be supplied when updating an HLP master field/);
   assert.match(source, /ORDER BY orderby NULLS LAST, id/);
   assert.match(source, /SELECT id AS "ID", title AS "Title", orderby AS "OrderBy"/);
+  assert.match(source, /result\.rows\.map\(\(row\) => \(\{ \.\.\.row, YOD: "", LYOD: "" \}\)\)/);
+});
+
+test("master list adds blank YOD and LYOD placeholders without changing existing fields", async () => {
+  const pool = require("../../db").pool;
+  const originalConnect = pool.connect;
+  try {
+    pool.connect = async () => ({
+      query: async () => ({ rows: [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1 }] }),
+      release() {},
+    });
+    const response = await service.getMasterList({ UserID: 1 });
+    assert.deepEqual(response.data, [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1, YOD: "", LYOD: "" }]);
+  } finally { pool.connect = originalConnect; }
 });
 
 test("reorder validation rejects malformed, duplicate and discontinuous orders", async () => {
