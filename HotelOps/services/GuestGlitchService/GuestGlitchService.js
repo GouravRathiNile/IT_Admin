@@ -417,12 +417,20 @@ const mapCompactReportRows = (resolvedRows) => resolvedRows.map(({ row, resolved
   informedToUsers: selectionNames(resolved.informedToUsers),
 }));
 
-const report = async (data, complete = false) => {
+const report = async (data, complete = false, options = {}) => {
   const client = await repository.getClient();
   try {
+    const organizationIDs = data.OrganizationIDs || data.OrganizationID;
+    if (options.paginate === false) {
+      const total = await repository.countReport(data, organizationIDs);
+      if (total > options.maxRows) {
+        return fail("Export contains too many records. Please narrow your filters.", 400);
+      }
+    }
     const result = await repository.reportList(
       data,
-      data.OrganizationIDs || data.OrganizationID
+      organizationIDs,
+      options.paginate !== false
     );
     const resolvedRows = await resolveReportRows(client, result.rows);
     const mapped = complete
@@ -533,5 +541,8 @@ module.exports = {
   gmAction: withOrganization(gmAction),
   attachment: withOrganization(attachment, true),
   exportReport: withOrganization(exportReport, true),
+  // Internal provider entry point. Its OrganizationIDs must come from an
+  // authenticated access context; public APIs keep using the wrappers above.
+  reportForProvider: (data, options) => report(data, true, options),
   resolveOrganization,
 };

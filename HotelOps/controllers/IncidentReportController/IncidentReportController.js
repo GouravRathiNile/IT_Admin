@@ -36,7 +36,7 @@ exports.create = (req, res) => execute(res, async () => {
 });
 
 exports.list = (req, res) => execute(res, async () => {
-  const query = listDTO(req.query || {});
+  const query = { ...listDTO(req.query || {}), organizationId: req.query?.organizationId ?? null };
   assertValid(validator.validateList(query));
   const response = await callQueue("LIST_INCIDENT_REPORTS", { Query: query, ...context(req) });
   return sendResponse(res, response);
@@ -64,14 +64,14 @@ exports.remove = (req, res) => execute(res, async () => {
 });
 
 exports.report = (req, res) => execute(res, async () => {
-  const query = listDTO(req.query || {});
+  const query = { ...listDTO(req.query || {}), organizationId: req.query?.organizationId ?? null };
   assertValid(validator.validateList(query));
   const response = await callQueue("REPORT_INCIDENT_REPORTS", { Query: query, ...context(req) });
   return sendResponse(res, response);
 });
 
 const exportController = (format) => (req, res) => execute(res, async () => {
-  const query = listDTO(req.query || {});
+  const query = { ...listDTO(req.query || {}), organizationId: req.query?.organizationId ?? null };
   assertValid(validator.validateList(query));
   const response = await callQueue("EXPORT_INCIDENT_REPORTS", { Query: query, format, ...context(req) });
   if (!response.success) return sendResponse(res, response);

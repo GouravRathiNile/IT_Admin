@@ -459,6 +459,8 @@ const buildReportFilters = (data, organizationID) => {
   }
   if (data.fromDate) add("gg.entrydate >= ?", data.fromDate);
   if (data.toDate) add("gg.entrydate <= ?", data.toDate);
+  if (data.statusExact) add("LOWER(COALESCE(gg.status, '')) = LOWER(?::text)", data.statusExact);
+  if (data.complaintEscaped) add("COALESCE(gg.complaint, '') ILIKE ? ESCAPE '\\'", `%${data.complaintEscaped}%`);
   for (const [field, column] of Object.entries({
     status: "gg.status", guestStatus: "gg.gueststatus", roomNumber: "gg.roomnumber",
     guestName: "gg.guestname", complaint: "gg.complaint",
@@ -559,6 +561,17 @@ const reportList = async (data, organizationID, paginate = true) => {
     rows: result.rows,
     total: paginate ? Number(count.rows[0].total) : result.rows.length,
   };
+};
+
+const countReport = async (data, organizationID) => {
+  const { filters, values } = buildReportFilters(data, organizationID);
+  const result = await pool.query(
+    `SELECT COUNT(*)::bigint AS total
+       FROM guest_glitch_entry_master gg
+      WHERE ${filters.join(" AND ")};`,
+    values
+  );
+  return Number(result.rows[0]?.total || 0);
 };
 
 const findReportByID = async (client, id, organizationID, lock = false) => {
@@ -678,5 +691,5 @@ const upsertOption = async (data) => {
 module.exports = {
   COLUMN_MAP, getClient, resolveOrganizations, validateDepartments, validateUsers, findOption, insert,
   findByID, updateChangedFields, softDelete, list, listOptions, upsertOption,
-  reportList, findReportByID, resolveSelections,
+  reportList, countReport, findReportByID, resolveSelections,
 };

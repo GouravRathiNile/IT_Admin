@@ -6,7 +6,7 @@ const pick = (source, fields) => fields.reduce((result, field) => {
   return result;
 }, {});
 
-const createDTO = (body = {}) => pick(body, EDITABLE_FIELDS);
+const createDTO = (body = {}) => ({ OrganizationID: body.OrganizationID, ...pick(body, EDITABLE_FIELDS) });
 const updateDTO = (body = {}) => ({ ID: body.ID ?? body.id, ...pick(body, EDITABLE_FIELDS) });
 const listDTO = (query = {}) => ({
   page: query.page ?? 1, pageSize: query.pageSize ?? 10, search: query.search ?? "",
@@ -16,7 +16,7 @@ const listDTO = (query = {}) => ({
 });
 
 const compactDTO = (row) => ({
-  ID: row.id, OrganizationID: Number(row.organizationid), ReportDate: formatDate(row.reportdate),
+  ID: row.id, Organization: row.organizationshortname ?? null, ReportDate: formatDate(row.reportdate),
   IncidentDate: formatDate(row.incidentdate), Time: row.time, Location: row.location,
   AccidentCause: row.accidentcause, Anycasualty: row.anycasualty,
   PresentDuringIncident: row.presentduringincident, ReportTo: row.reportto, ReportBy: row.reportby,

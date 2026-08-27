@@ -55,4 +55,8 @@ module.exports = {
     REQUEST: "hlp_report_request_queue",
     RESPONSE: "hlp_report_response_queue",
   },
+  REPORT_BUILDER: {
+    REQUEST: "report_builder_request_queue",
+    RESPONSE: "report_builder_response_queue",
+  },
 };

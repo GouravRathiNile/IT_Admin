@@ -28,6 +28,7 @@ const IncidentReportRoutes = require("./routes/IncidentReportRoutes/IncidentRepo
 const CapexRoutes = require("./routes/CapexRoute/CapexRoute");
 const OpexRoutes = require("./routes/OpexRoute/OpexRoute");
 const HLPReportRoutes = require("./routes/HLPReportRoutes/HLPReportRoutes");
+const ReportRoutes = require("./routes/ReportRoutes/ReportRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
 const OrganizationHandler = require("./consumer/ITAdminConsumer/OrganizationHandler");
@@ -43,6 +44,7 @@ const IncidentReportHandler = require("./consumer/IncidentReportConsumer/Inciden
 const CapexHandler = require("./consumer/CapexConsumer/CapexHandler");
 const OpexHandler = require("./consumer/OpexConsumer/OpexHandler");
 const HLPReportHandler = require("./consumer/HLPReportConsumer/HLPReportHandler");
+const ReportBuilderHandler = require("./consumer/ReportBuilderConsumer/ReportBuilderHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -65,6 +67,7 @@ app.use("/api/IncidentReport", IncidentReportRoutes);
 app.use("/api/Capex", CapexRoutes);
 app.use("/api/Opex", OpexRoutes);
 app.use("/api/HLPReport", HLPReportRoutes);
+app.use("/api/Report", ReportRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -163,6 +166,11 @@ const startServer = async () => {
       QUEUE.HLP_REPORT.REQUEST,
       QUEUE.HLP_REPORT.RESPONSE,
       HLPReportHandler
+    );
+    await startConsumer(
+      QUEUE.REPORT_BUILDER.REQUEST,
+      QUEUE.REPORT_BUILDER.RESPONSE,
+      ReportBuilderHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;
