@@ -15,7 +15,10 @@ const send = async (req, res, action, data, successStatus = STATUS_CODES.SUCCESS
       action, data: { ...data, UserID: userID(req) },
     });
     if (!response.success) throw new AppError(response.message || "Unable to process HLP Report request", response.statusCode || STATUS_CODES.BAD_REQUEST, response.errors);
-    return res.status(response.queued ? 202 : successStatus).json(response);
+    const responseStatus = response._httpStatus || successStatus;
+    const publicResponse = { ...response };
+    delete publicResponse._httpStatus;
+    return res.status(response.queued ? 202 : responseStatus).json(publicResponse);
   } catch (error) {
     if (["Response Timeout", "RabbitMQ Channel Not Initialized"].includes(error.message)) {
       return handleError(new AppError("HLP Report service is temporarily unavailable. Please try again shortly.", STATUS_CODES.SERVICE_UNAVAILABLE), res);
@@ -24,7 +27,10 @@ const send = async (req, res, action, data, successStatus = STATUS_CODES.SUCCESS
   }
 };
 
-exports.masterList = (req, res) => send(req, res, "GET_HLP_MASTER_LIST", { OrganizationID: req.query?.OrganizationID });
+exports.masterList = (req, res) => send(req, res, "GET_HLP_MASTER_LIST", {
+  OrganizationID: req.query?.organizationId ?? req.query?.OrganizationID ?? req.query?.organizationid,
+  EntryDate: req.query?.entryDate ?? req.query?.EntryDate ?? req.query?.entrydate,
+});
 exports.createMasterField = (req, res) => send(req, res, "CREATE_HLP_MASTER_FIELD", req.body || {}, STATUS_CODES.CREATED);
 exports.reorderMasterFields = (req, res) => send(req, res, "REORDER_HLP_MASTER_FIELDS", req.body || {});
 exports.updateMasterField = (req, res) => send(req, res, "UPDATE_HLP_MASTER_FIELD", req.body || {});

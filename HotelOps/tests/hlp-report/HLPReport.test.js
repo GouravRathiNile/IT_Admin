@@ -11,16 +11,16 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 test("HLP routes expose the approved authenticated API contract", () => {
   const source = read("routes/HLPReportRoutes/HLPReportRoutes.js");
   assert.match(source, /router\.use\(authenticateToken\)/);
-  assert.match(source, /router\.get\("\/master-list"/);
-  assert.match(source, /router\.post\("\/master-list"/);
-  assert.match(source, /router\.put\("\/master-list\/reorder", controller\.reorderMasterFields\)/);
-  assert.match(source, /router\.put\("\/master-list"/);
-  assert.match(source, /router\.delete\("\/master-list"/);
-  assert.match(source, /router\.post\("\/create"/);
-  assert.match(source, /router\.put\("\/update"/);
-  assert.match(source, /router\.get\("\/monthly-report"/);
-  assert.match(source, /router\.get\("\/last-year-report"/);
-  assert.match(source, /router\.get\("\/:id\/pdf", controller\.reportPdf\)/);
+  assert.match(source, /router\.get\("\/MasterList"/);
+  assert.match(source, /router\.post\("\/CreateMasterField"/);
+  assert.match(source, /router\.put\("\/MasterField\/Reorder", controller\.reorderMasterFields\)/);
+  assert.match(source, /router\.put\("\/UpdateMasterField"/);
+  assert.match(source, /router\.delete\("\/DeleteMasterField"/);
+  assert.match(source, /router\.post\("\/Create"/);
+  assert.match(source, /router\.put\("\/Update"/);
+  assert.match(source, /router\.get\("\/MonthlyReport"/);
+  assert.match(source, /router\.get\("\/LastYearReport"/);
+  assert.match(source, /router\.get\("\/:id\/PDF", controller\.reportPdf\)/);
 });
 
 test("HLP queue and server registrations are present", () => {
@@ -55,14 +55,15 @@ test("report update changes the existing parent and preserves inactive historica
   const source = read("services/HLPReportService/HLPReportService.js");
   assert.match(source, /SELECT id, organizationid FROM hlpreport_entry_master WHERE id = \$1 FOR UPDATE/);
   assert.match(source, /id = ANY\(\$1::bigint\[\]\) AND isactive = TRUE/);
-  assert.match(source, /UPDATE hlpreport_entry_details[\s\S]*WHERE masterid = \$4 AND title = \$5/);
+  assert.match(source, /UPDATE hlpreport_entry_details[\s\S]*WHERE entryid = \$4 AND masterid = \$5/);
+  assert.match(source, /INSERT INTO hlpreport_entry_details \(id, entryid, masterid, title/);
   assert.doesNotMatch(source, /DELETE FROM hlpreport_entry_details/);
   assert.match(source, /UPDATE hlpreport_entry_master[\s\S]*modifydatetime = CURRENT_TIMESTAMP/);
 });
 
 test("exact-date report exposes the existing report ID and configured MasterID", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
-  assert.match(source, /ml\.id AS "MasterID"/);
+  assert.match(source, /d\.masterid AS "MasterID"/);
   assert.match(source, /data: \{ ID: Number\(entry\.rows\[0\]\.id\), EntryDate/);
 });
 
@@ -79,6 +80,29 @@ test("report controller accepts optional lowercase organization filters", () => 
   assert.match(source, /entryDate \?\? req\.query\?\.EntryDate/);
 });
 
+test("master list accepts organization and entry-date filters together", async () => {
+  assert.match((await service.getMasterList({ UserID: 1, OrganizationID: 10 })).message, /must be provided together/);
+  assert.match((await service.getMasterList({ UserID: 1, EntryDate: "2026-08-21" })).message, /must be provided together/);
+  assert.match((await service.getMasterList({ UserID: 1, OrganizationID: 10, EntryDate: "2026-02-30" })).message, /valid date/);
+
+  const pool = require("../../db").pool;
+  const originalConnect = pool.connect;
+  try {
+    pool.connect = async () => ({
+      query: async (sql, values) => {
+        if (/FROM user_org_mapping/.test(sql)) return { rowCount: 1, rows: [{ "?column?": 1 }] };
+        assert.deepEqual(values, [10, "2026-08-21"]);
+        assert.match(sql, /hlpreport_entry_master/);
+        assert.match(sql, /hlpreport_entry_details/);
+        return { rows: [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1, YOD: "125", LYOD: "110" }] };
+      },
+      release() {},
+    });
+    const response = await service.getMasterList({ UserID: 7, OrganizationID: 10, EntryDate: "2026-08-21" });
+    assert.deepEqual(response.data, [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1, YOD: "125", LYOD: "110" }]);
+  } finally { pool.connect = originalConnect; }
+});
+
 test("HLP PDF uses the existing queue flow and returns inline binary headers", () => {
   const handler = read("consumer/HLPReportConsumer/HLPReportHandler.js");
   const controller = read("controllers/HLPReportController/HLPReportController.js");
@@ -90,9 +114,9 @@ test("HLP PDF uses the existing queue flow and returns inline binary headers", (
 
 test("monthly and last-year PDF routes precede the generic ID PDF route", () => {
   const source = read("routes/HLPReportRoutes/HLPReportRoutes.js");
-  const monthly = source.indexOf('router.get("/monthly-report/pdf"');
-  const lastYear = source.indexOf('router.get("/last-year-report/pdf"');
-  const generic = source.indexOf('router.get("/:id/pdf"');
+  const monthly = source.indexOf('router.get("/MonthlyReport/PDF"');
+  const lastYear = source.indexOf('router.get("/LastYearReport/PDF"');
+  const generic = source.indexOf('router.get("/:id/PDF"');
   assert.ok(monthly >= 0 && lastYear >= 0 && generic > monthly && generic > lastYear);
 });
 
@@ -131,6 +155,49 @@ test("monthly PDF uses the compact single-page landscape table layout", () => {
   assert.match(helper, /Page \$\{page\} of \$\{count\}/);
 });
 
+test("create report is an organization-date locked create-or-update operation", () => {
+  const serviceSource = read("services/HLPReportService/HLPReportService.js");
+  const controllerSource = read("controllers/HLPReportController/HLPReportController.js");
+  assert.match(serviceSource, /pg_advisory_xact_lock\(hashtext\(\$1\)\)/);
+  assert.match(serviceSource, /hlp_report:\$\{Number\(OrganizationID\)\}:\$\{EntryDate\}/);
+  assert.match(serviceSource, /SELECT id FROM hlpreport_entry_master WHERE organizationid = \$1 AND entrydate = \$2 LIMIT 1 FOR UPDATE/);
+  assert.match(serviceSource, /if \(existing\.rowCount\)[\s\S]*HLP report updated successfully[\s\S]*_httpStatus: 200/);
+  assert.doesNotMatch(serviceSource, /if \(duplicate\.rowCount\)/);
+  assert.match(controllerSource, /const responseStatus = response\._httpStatus \|\| successStatus/);
+  assert.match(controllerSource, /delete publicResponse\._httpStatus/);
+});
+
+test("create report updates an existing organization-date report without creating a parent", async () => {
+  const pool = require("../../db").pool;
+  const originalConnect = pool.connect;
+  const queries = [];
+  try {
+    pool.connect = async () => ({
+      query: async (sql) => {
+        queries.push(sql);
+        if (/FROM user_org_mapping/.test(sql)) return { rowCount: 1, rows: [{ "?column?": 1 }] };
+        if (/SELECT id FROM hlpreport_entry_master WHERE organizationid/.test(sql)) return { rowCount: 1, rows: [{ id: 42 }] };
+        if (/SELECT id, title FROM hlpreport_master_list/.test(sql)) return { rowCount: 1, rows: [{ id: 1, title: "Rooms Occupied" }] };
+        if (/MAX\(id\).*hlpreport_entry_details/.test(sql)) return { rowCount: 1, rows: [{ id: 10 }] };
+        if (/UPDATE hlpreport_entry_details/.test(sql)) return { rowCount: 1, rows: [] };
+        return { rowCount: 1, rows: [] };
+      },
+      release() {},
+    });
+    const response = await service.createReport({
+      UserID: 7, OrganizationID: 10, EntryDate: "2026-08-21",
+      Details: [{ MasterID: 1, YOD: "125", LYOD: "110" }],
+    });
+    assert.equal(response.success, true);
+    assert.equal(response.data.ID, 42);
+    assert.equal(response._httpStatus, 200);
+    assert.equal(response.message, "HLP report updated successfully");
+    assert.equal(queries.some((sql) => /INSERT INTO hlpreport_entry_master/.test(sql)), false);
+    assert.equal(queries.some((sql) => /UPDATE hlpreport_entry_master/.test(sql)), true);
+    assert.equal(queries.some((sql) => /DELETE FROM hlpreport_entry_details/.test(sql)), false);
+  } finally { pool.connect = originalConnect; }
+});
+
 test("master list ordering is backend controlled and active state is not publicly selected", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
   assert.match(source, /MAX\(orderby\), 0\) \+ 1 AS orderby/);
@@ -138,7 +205,7 @@ test("master list ordering is backend controlled and active state is not publicl
   assert.match(source, /Only ID and Title can be supplied when updating an HLP master field/);
   assert.match(source, /ORDER BY orderby NULLS LAST, id/);
   assert.match(source, /SELECT id AS "ID", title AS "Title", orderby AS "OrderBy"/);
-  assert.match(source, /result\.rows\.map\(\(row\) => \(\{ \.\.\.row, YOD: "", LYOD: "" \}\)\)/);
+  assert.match(source, /result\.rows\.map\(\(row\) => \(\{ \.\.\.row, YOD: row\.YOD \?\? "", LYOD: row\.LYOD \?\? "" \}\)\)/);
 });
 
 test("master list adds blank YOD and LYOD placeholders without changing existing fields", async () => {

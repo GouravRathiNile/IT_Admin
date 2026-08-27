@@ -53,14 +53,40 @@ const getMasterRows = (client, activeOnly = true) => client.query(
     ORDER BY orderby NULLS LAST, id`
 );
 
-const getMasterList = async () => {
+const getMasterList = async ({ UserID, OrganizationID, EntryDate } = {}) => {
+  const hasOrganization = OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "";
+  const hasEntryDate = EntryDate !== undefined && EntryDate !== null && String(EntryDate).trim() !== "";
+  if (hasOrganization !== hasEntryDate) return fail("OrganizationID and EntryDate must be provided together");
+  if (hasOrganization && !positiveInteger(OrganizationID)) return fail("Organization ID must be a positive integer");
+  if (hasEntryDate && !isRealDate(EntryDate)) return fail("EntryDate must be a valid date in YYYY-MM-DD format");
   const client = await pool.connect();
   try {
-    const result = await getMasterRows(client);
+    if (hasOrganization) {
+      const denied = await validateOrganization(client, UserID, OrganizationID);
+      if (denied) return denied;
+    }
+    const result = hasOrganization
+      ? await client.query(
+        `SELECT ml.id AS "ID", ml.title AS "Title", ml.orderby AS "OrderBy",
+                COALESCE(detail.yod, '') AS "YOD", COALESCE(detail.lyod, '') AS "LYOD"
+           FROM hlpreport_master_list ml
+           LEFT JOIN hlpreport_entry_master em
+             ON em.organizationid = $1 AND em.entrydate = $2
+           LEFT JOIN LATERAL (
+             SELECT d.yod, d.lyod
+               FROM hlpreport_entry_details d
+              WHERE d.entryid = em.id AND d.masterid = ml.id
+              ORDER BY d.id DESC LIMIT 1
+           ) detail ON TRUE
+          WHERE ml.isactive = TRUE
+          ORDER BY ml.orderby NULLS LAST, ml.id`,
+        [Number(OrganizationID), EntryDate]
+      )
+      : await getMasterRows(client);
     return {
       success: true,
       message: "HLP report master list fetched successfully",
-      data: result.rows.map((row) => ({ ...row, YOD: "", LYOD: "" })),
+      data: result.rows.map((row) => ({ ...row, YOD: row.YOD ?? "", LYOD: row.LYOD ?? "" })),
     };
   } catch (error) {
     console.error("Get HLP Master List Error:", error.message);
@@ -177,11 +203,14 @@ const createReport = async (data) => {
     await client.query("BEGIN");
     const denied = await validateOrganization(client, UserID, OrganizationID);
     if (denied) { await client.query("ROLLBACK"); return denied; }
-    const duplicate = await client.query(
-      "SELECT 1 FROM hlpreport_entry_master WHERE organizationid = $1 AND entrydate = $2 LIMIT 1",
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1))",
+      [`hlp_report:${Number(OrganizationID)}:${EntryDate}`]
+    );
+    const existing = await client.query(
+      "SELECT id FROM hlpreport_entry_master WHERE organizationid = $1 AND entrydate = $2 LIMIT 1 FOR UPDATE",
       [Number(OrganizationID), EntryDate]
     );
-    if (duplicate.rowCount) { await client.query("ROLLBACK"); return fail("An HLP report already exists for the selected organization and date.", 409); }
 
     const masterResult = await client.query(
       `SELECT id, title FROM hlpreport_master_list WHERE id = ANY($1::bigint[]) AND isactive = TRUE`,
@@ -190,6 +219,42 @@ const createReport = async (data) => {
     const titleByID = new Map(masterResult.rows.map((row) => [Number(row.id), row.title]));
     const invalidID = [...ids].find((id) => !titleByID.has(id));
     if (invalidID) { await client.query("ROLLBACK"); return fail(`Invalid HLP report MasterID: ${invalidID}`); }
+
+    if (existing.rowCount) {
+      const entryID = Number(existing.rows[0].id);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_entry_details_id'))");
+      let nextDetailID = Number((await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM hlpreport_entry_details")).rows[0].id);
+      for (const detail of prepared) {
+        const title = titleByID.get(detail.MasterID);
+        const updated = await client.query(
+          `UPDATE hlpreport_entry_details
+              SET yod = $1, lyod = $2, modifyby = $3, modifydatetime = CURRENT_TIMESTAMP
+            WHERE entryid = $4 AND masterid = $5`,
+          [detail.YOD, detail.LYOD, UserID, entryID, detail.MasterID]
+        );
+        if (!updated.rowCount) {
+          await client.query(
+            `INSERT INTO hlpreport_entry_details
+               (id, entryid, masterid, title, yod, lyod, createdby, createddatetime, modifyby, modifydatetime)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, $7, CURRENT_TIMESTAMP)`,
+            [nextDetailID++, entryID, detail.MasterID, title, detail.YOD, detail.LYOD, UserID]
+          );
+        }
+      }
+      await client.query(
+        `UPDATE hlpreport_entry_master
+            SET modifyby = $1, modifydatetime = CURRENT_TIMESTAMP
+          WHERE id = $2`,
+        [UserID, entryID]
+      );
+      await client.query("COMMIT");
+      return {
+        success: true,
+        message: "HLP report updated successfully",
+        data: { ID: entryID, EntryDate: formatDate(EntryDate) },
+        _httpStatus: 200,
+      };
+    }
 
     await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_entry_master_id'))");
     const entryID = Number((await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM hlpreport_entry_master")).rows[0].id);
@@ -202,9 +267,9 @@ const createReport = async (data) => {
     let detailID = Number((await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM hlpreport_entry_details")).rows[0].id);
     for (const detail of prepared) {
       await client.query(
-        `INSERT INTO hlpreport_entry_details (id, masterid, title, yod, lyod, createdby, createddatetime)
-         VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
-        [detailID++, entryID, titleByID.get(detail.MasterID), detail.YOD, detail.LYOD, UserID]
+        `INSERT INTO hlpreport_entry_details (id, entryid, masterid, title, yod, lyod, createdby, createddatetime)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+        [detailID++, entryID, detail.MasterID, titleByID.get(detail.MasterID), detail.YOD, detail.LYOD, UserID]
       );
     }
     await client.query("COMMIT");
@@ -212,7 +277,7 @@ const createReport = async (data) => {
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("Create HLP Report Error:", error.message);
-    if (error.code === "23505") return fail("An HLP report already exists for the selected organization and date.", 409);
+    if (error.code === "23505") return fail("Unable to save HLP report because it was changed concurrently. Please try again.", 409);
     return retryableDatabaseResponse(error) || fail("Unable to create HLP report at this time.", 503);
   } finally { client.release(); }
 };
@@ -265,15 +330,15 @@ const updateReport = async (data) => {
       const updated = await client.query(
         `UPDATE hlpreport_entry_details
             SET yod = $1, lyod = $2, modifyby = $3, modifydatetime = CURRENT_TIMESTAMP
-          WHERE masterid = $4 AND title = $5`,
-        [detail.YOD, detail.LYOD, UserID, Number(ID), title]
+          WHERE entryid = $4 AND masterid = $5`,
+        [detail.YOD, detail.LYOD, UserID, Number(ID), detail.MasterID]
       );
       if (!updated.rowCount) {
         await client.query(
           `INSERT INTO hlpreport_entry_details
-             (id, masterid, title, yod, lyod, createdby, createddatetime, modifyby, modifydatetime)
-           VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $6, CURRENT_TIMESTAMP)`,
-          [nextDetailID++, Number(ID), title, detail.YOD, detail.LYOD, UserID]
+             (id, entryid, masterid, title, yod, lyod, createdby, createddatetime, modifyby, modifydatetime)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, $7, CURRENT_TIMESTAMP)`,
+          [nextDetailID++, Number(ID), detail.MasterID, title, detail.YOD, detail.LYOD, UserID]
         );
       }
     }
@@ -314,7 +379,7 @@ const getMonthlyReport = async ({ OrganizationID, OrganizationIDs, Year, Month }
     const values = await client.query(
       `SELECT EXTRACT(DAY FROM em.entrydate)::int AS day, d.title AS "Title", d.yod AS "YOD"
          FROM hlpreport_entry_master em
-         JOIN hlpreport_entry_details d ON d.masterid = em.id
+         JOIN hlpreport_entry_details d ON d.entryid = em.id
         WHERE em.entrydate >= make_date($1, $2, 1)
           AND em.entrydate < make_date($1, $2, 1) + INTERVAL '1 month'
           ${organizationClause}`,
@@ -358,14 +423,11 @@ const getLastYearReport = async ({ OrganizationID, OrganizationIDs, EntryDate })
     );
     if (!entry.rowCount) return fail("HLP report was not found for the selected date.", 404);
     const result = await client.query(
-      `SELECT ml.id AS "MasterID", d.title AS "Title", d.yod AS "YOD", d.lyod AS "LYOD"
+      `SELECT d.masterid AS "MasterID", d.title AS "Title", d.yod AS "YOD", d.lyod AS "LYOD"
          FROM hlpreport_entry_details d
-         LEFT JOIN LATERAL (
-           SELECT id, orderby FROM hlpreport_master_list
-            WHERE title = d.title ORDER BY isactive DESC, id DESC LIMIT 1
-         ) ml ON TRUE
-        WHERE d.masterid = $1
-        ORDER BY ml.orderby NULLS LAST, ml.id NULLS LAST, d.id`,
+         LEFT JOIN hlpreport_master_list ml ON ml.id = d.masterid
+        WHERE d.entryid = $1
+        ORDER BY ml.orderby NULLS LAST, d.masterid, d.id`,
       [entry.rows[0].id]
     );
     return { success: true, message: "HLP last-year report fetched successfully", data: { ID: Number(entry.rows[0].id), EntryDate: formatDate(EntryDate), Details: result.rows } };
@@ -401,7 +463,7 @@ const generateReportPdf = async ({ UserID, ID }) => {
     const details = await client.query(
       `SELECT title AS "Title", yod AS "YOD", lyod AS "LYOD"
          FROM hlpreport_entry_details
-        WHERE masterid = $1
+        WHERE entryid = $1
         ORDER BY id`,
       [Number(ID)]
     );
