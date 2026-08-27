@@ -10,7 +10,7 @@
   "variable": [
     { "key": "LocalUrl", "value": "http://localhost:5000/api" },
     { "key": "AuthToken", "value": "" },
-    { "key": "IncidentReportID", "value": "" }
+    { "key": "IncidentReportID", "value": "1" }
   ],
   "item": [
     {
@@ -30,7 +30,7 @@
     {
       "name": "Update", "request": {
         "method": "PUT", "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"ID\": \"{{IncidentReportID}}\",\n  \"Time\": \"01:00 PM\",\n  \"Location\": \"Main breaker\",\n  \"AccidentCause\": \"Updated cause\"\n}" },
+        "body": { "mode": "raw", "raw": "{\n  \"ID\": {{IncidentReportID}},\n  \"Time\": \"01:00 PM\",\n  \"Location\": \"Main breaker\",\n  \"AccidentCause\": \"Updated cause\"\n}" },
         "url": "{{LocalUrl}}/IncidentReport/update"
       }
     },
@@ -42,7 +42,7 @@
     {
       "name": "Delete", "request": {
         "method": "DELETE", "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"id\": \"{{IncidentReportID}}\"\n}" },
+        "body": { "mode": "raw", "raw": "{\n  \"id\": {{IncidentReportID}}\n}" },
         "url": "{{LocalUrl}}/IncidentReport/delete"
       }
     }

@@ -26,6 +26,7 @@ const send = async (req, res, action, data, successStatus = STATUS_CODES.SUCCESS
 
 exports.masterList = (req, res) => send(req, res, "GET_HLP_MASTER_LIST", { OrganizationID: req.query?.OrganizationID });
 exports.createMasterField = (req, res) => send(req, res, "CREATE_HLP_MASTER_FIELD", req.body || {}, STATUS_CODES.CREATED);
+exports.reorderMasterFields = (req, res) => send(req, res, "REORDER_HLP_MASTER_FIELDS", req.body || {});
 exports.updateMasterField = (req, res) => send(req, res, "UPDATE_HLP_MASTER_FIELD", req.body || {});
 exports.deleteMasterField = (req, res) => send(req, res, "DELETE_HLP_MASTER_FIELD", req.body || {});
 exports.create = (req, res) => {

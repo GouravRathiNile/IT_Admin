@@ -6,6 +6,7 @@ module.exports = async (message) => {
     switch (message.action) {
       case "GET_HLP_MASTER_LIST": return await service.getMasterList(message.data);
       case "CREATE_HLP_MASTER_FIELD": return await service.createMasterField(message.data);
+      case "REORDER_HLP_MASTER_FIELDS": return await service.reorderMasterFields(message.data);
       case "UPDATE_HLP_MASTER_FIELD": return await service.updateMasterField(message.data);
       case "DELETE_HLP_MASTER_FIELD": return await service.deleteMasterField(message.data);
       case "CREATE_HLP_REPORT": return await service.createReport(message.data);

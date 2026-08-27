@@ -13,6 +13,10 @@ const COMPACT_COLUMNS = `ir.id, ir.organizationid, ir.reportdate, ir.incidentdat
   om.shortname AS organizationshortname`;
 
 const getClient = () => pool.connect();
+const nextIncidentID = async (client) => {
+  const result = await client.query("SELECT nextval('incident_report_id_seq') AS id");
+  return Number(result.rows[0].id);
+};
 
 const resolveOrganizations = async (userID) => {
   const result = await pool.query(
@@ -146,4 +150,4 @@ const list = async (data, organizationID, detailed = false, paginate = true) => 
   return { rows: result.rows, total: paginate ? Number(count.rows[0].total) : result.rows.length };
 };
 
-module.exports = { getClient, resolveOrganizations, resolveRequestedOrganization, findOrganizationByID, insert, findByID, update, softDelete, list };
+module.exports = { getClient, nextIncidentID, resolveOrganizations, resolveRequestedOrganization, findOrganizationByID, insert, findByID, update, softDelete, list };

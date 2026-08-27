@@ -1,4 +1,3 @@
-const crypto = require("crypto");
 const repository = require("../../repositories/IncidentReportRepository/IncidentReportRepository");
 const { compactDTO, detailDTO } = require("../../dto/IncidentReportDTO");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
@@ -26,11 +25,6 @@ const INCIDENT_PDF_FIELDS = Object.freeze([
 
 const fail = (message, statusCode = 400) => ({ success: false, statusCode, message });
 const clean = (data) => Object.fromEntries(Object.entries(data).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value]));
-const generateID = () => {
-  const now = new Date();
-  const timestamp = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0"), String(now.getHours()).padStart(2, "0"), String(now.getMinutes()).padStart(2, "0"), String(now.getSeconds()).padStart(2, "0")].join("");
-  return `${timestamp}${String(crypto.randomInt(0, 1000000)).padStart(6, "0")}`;
-};
 
 const resolveOrganization = async (userID, requestedOrganizationID = null) => {
   if (requestedOrganizationID !== null && requestedOrganizationID !== undefined && requestedOrganizationID !== "") {
@@ -58,16 +52,9 @@ const create = async (data) => {
     client = await repository.getClient();
     const { OrganizationID, ...payload } = data.Payload;
     const prepared = clean(payload);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const id = generateID();
-        const result = await repository.insert(client, id, organization.OrganizationID, prepared, data.UserID);
-        return { success: true, message: "Incident report created successfully.", data: { ID: result.id } };
-      } catch (error) {
-        if (error.code !== "23505" || attempt === 2) throw error;
-      }
-    }
-    return fail("Unable to generate a unique Incident Report ID.", 503);
+    const id = await repository.nextIncidentID(client);
+    const result = await repository.insert(client, id, organization.OrganizationID, prepared, data.UserID);
+    return { success: true, message: "Incident report created successfully.", data: { ID: Number(result.id) } };
   } catch (error) {
     console.error("Create Incident Report Error:", error.message);
     return retryableDatabaseResponse(error) || fail("Unable to create incident report at this time.", 503);
@@ -183,4 +170,4 @@ const exportReport = async (data) => {
   }
 };
 
-module.exports = { create, list: (data) => list(data, false), get, update, remove, report: (data) => list(data, true), reportPdf, exportReport, generateID, resolveOrganization, resolveRecordOrganization };
+module.exports = { create, list: (data) => list(data, false), get, update, remove, report: (data) => list(data, true), reportPdf, exportReport, resolveOrganization, resolveRecordOrganization };

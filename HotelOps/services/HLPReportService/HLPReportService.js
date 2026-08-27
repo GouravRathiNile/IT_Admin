@@ -46,7 +46,8 @@ const validateOrganization = async (client, userID, organizationID) => {
 };
 
 const getMasterRows = (client, activeOnly = true) => client.query(
-  `SELECT id AS "ID", title AS "Title", orderby AS "OrderBy", isactive AS "IsActive"
+  `SELECT id AS "ID", title AS "Title", orderby AS "OrderBy"
+          ${activeOnly ? "" : ', isactive AS "IsActive"'}
      FROM hlpreport_master_list
     ${activeOnly ? "WHERE isactive = TRUE" : ""}
     ORDER BY orderby NULLS LAST, id`
@@ -64,34 +65,25 @@ const getMasterList = async () => {
 };
 
 const masterAuditFields = ["CreatedBy", "CreatedDateTime", "ModifyBy", "ModifyDateTime"];
-const parseIsActive = (value, defaultValue) => {
-  if (value === undefined) return defaultValue;
-  if (value === true || value === false) return value;
-  throw Object.assign(new Error("IsActive must be true or false"), { statusCode: 400 });
-};
-const parseOrderBy = (value) => {
-  if (value === undefined || value === null || String(value).trim() === "") return null;
-  const order = Number(value);
-  if (!Number.isInteger(order)) throw Object.assign(new Error("OrderBy must be an integer"), { statusCode: 400 });
-  return order;
-};
+const hasUnexpectedFields = (data, allowed) => Object.keys(data).some((field) => !allowed.includes(field));
 
 const createMasterField = async (data) => {
   const title = typeof data.Title === "string" ? data.Title.trim() : "";
   if (!title) return fail("Title is required");
   if (masterAuditFields.some((field) => Object.prototype.hasOwnProperty.call(data, field))) return fail("Audit fields cannot be supplied by the client");
-  let orderBy; let isActive;
-  try { orderBy = parseOrderBy(data.OrderBy); isActive = parseIsActive(data.IsActive, true); } catch (error) { return fail(error.message); }
+  if (hasUnexpectedFields(data, ["Title", "UserID"])) return fail("Only Title can be supplied when creating an HLP master field");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_master_list_id'))");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_master_list_order'))");
+    await client.query("UPDATE hlpreport_master_list SET orderby = NULL WHERE isactive = FALSE AND orderby IS NOT NULL");
     const id = Number((await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM hlpreport_master_list")).rows[0].id);
+    const orderBy = Number((await client.query("SELECT COALESCE(MAX(orderby), 0) + 1 AS orderby FROM hlpreport_master_list WHERE isactive = TRUE")).rows[0].orderby);
     const result = await client.query(
       `INSERT INTO hlpreport_master_list (id, title, orderby, isactive, createdby, createddatetime)
        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
-       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy", isactive AS "IsActive"`,
-      [id, title, orderBy, isActive, data.UserID]
+       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy"`,
+      [id, title, orderBy, true, data.UserID]
     );
     await client.query("COMMIT");
     return { success: true, message: "HLP master field created successfully", data: result.rows[0] };
@@ -105,24 +97,16 @@ const createMasterField = async (data) => {
 const updateMasterField = async (data) => {
   if (!positiveInteger(data.ID)) return fail("HLP master field ID must be a positive integer");
   if (masterAuditFields.some((field) => Object.prototype.hasOwnProperty.call(data, field))) return fail("Audit fields cannot be supplied by the client");
-  const sets = []; const values = [];
-  if (Object.prototype.hasOwnProperty.call(data, "Title")) {
-    const title = typeof data.Title === "string" ? data.Title.trim() : "";
-    if (!title) return fail("Title is required");
-    values.push(title); sets.push(`title = $${values.length}`);
-  }
-  try {
-    if (Object.prototype.hasOwnProperty.call(data, "OrderBy")) { values.push(parseOrderBy(data.OrderBy)); sets.push(`orderby = $${values.length}`); }
-    if (Object.prototype.hasOwnProperty.call(data, "IsActive")) { values.push(parseIsActive(data.IsActive)); sets.push(`isactive = $${values.length}`); }
-  } catch (error) { return fail(error.message); }
-  if (!sets.length) return fail("At least one master field value is required for update");
+  if (hasUnexpectedFields(data, ["ID", "Title", "UserID"])) return fail("Only ID and Title can be supplied when updating an HLP master field");
+  const title = typeof data.Title === "string" ? data.Title.trim() : "";
+  if (!title) return fail("Title is required");
   const client = await pool.connect();
   try {
-    values.push(data.UserID); sets.push(`modifyby = $${values.length}`, "modifydatetime = CURRENT_TIMESTAMP");
-    values.push(Number(data.ID));
     const result = await client.query(
-      `UPDATE hlpreport_master_list SET ${sets.join(", ")} WHERE id = $${values.length}
-       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy", isactive AS "IsActive"`, values
+      `UPDATE hlpreport_master_list
+       SET title = $1, modifyby = $2, modifydatetime = CURRENT_TIMESTAMP
+       WHERE id = $3 AND isactive = TRUE
+       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy"`, [title, data.UserID, Number(data.ID)]
     );
     if (!result.rowCount) return fail("HLP master field not found", 404);
     return { success: true, message: "HLP master field updated successfully", data: result.rows[0] };
@@ -136,13 +120,26 @@ const deleteMasterField = async (data) => {
   if (!positiveInteger(data.ID)) return fail("HLP master field ID must be a positive integer");
   const client = await pool.connect();
   try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_master_list_order'))");
     const result = await client.query(
-      `UPDATE hlpreport_master_list SET isactive = FALSE, modifyby = $1, modifydatetime = CURRENT_TIMESTAMP
+      `UPDATE hlpreport_master_list SET isactive = FALSE, orderby = NULL, modifyby = $1, modifydatetime = CURRENT_TIMESTAMP
         WHERE id = $2 RETURNING id AS "ID"`, [data.UserID, Number(data.ID)]
     );
-    if (!result.rowCount) return fail("HLP master field not found", 404);
+    if (!result.rowCount) { await client.query("ROLLBACK"); return fail("HLP master field not found", 404); }
+    await client.query("UPDATE hlpreport_master_list SET orderby = -orderby WHERE isactive = TRUE");
+    await client.query(
+      `WITH ordered AS (
+         SELECT id, ROW_NUMBER() OVER (ORDER BY orderby DESC NULLS LAST, id)::integer AS new_order
+         FROM hlpreport_master_list WHERE isactive = TRUE
+       )
+       UPDATE hlpreport_master_list ml SET orderby = ordered.new_order
+       FROM ordered WHERE ml.id = ordered.id`
+    );
+    await client.query("COMMIT");
     return { success: true, message: "HLP master field deactivated successfully", data: result.rows[0] };
   } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
     console.error("Deactivate HLP Master Field Error:", error.message);
     return retryableDatabaseResponse(error) || fail("Unable to deactivate HLP master field at this time.", 503);
   } finally { client.release(); }
@@ -442,6 +439,47 @@ const reportOrganizationMetadata = async (organizationID) => {
   return { Name: row?.organizationname || null, LogoUrl: safeOrganizationLogoUrl(row?.logoname) };
 };
 
+const reorderMasterFields = async (data) => {
+  if (hasUnexpectedFields(data, ["items", "UserID"])) return fail("Only items can be supplied for HLP master field reorder");
+  if (!Array.isArray(data.items) || data.items.length === 0) return fail("items must be a non-empty array");
+  const ids = new Set(); const orders = new Set();
+  for (const item of data.items) {
+    if (!item || hasUnexpectedFields(item, ["ID", "OrderBy"]) || !positiveInteger(item.ID)) return fail("Each reorder item must contain a valid ID");
+    if (!positiveInteger(item.OrderBy)) return fail("Each reorder item must contain a valid OrderBy");
+    if (ids.has(Number(item.ID))) return fail(`Duplicate HLP master field ID is not allowed: ${item.ID}`);
+    if (orders.has(Number(item.OrderBy))) return fail(`Duplicate OrderBy is not allowed: ${item.OrderBy}`);
+    ids.add(Number(item.ID)); orders.add(Number(item.OrderBy));
+  }
+  if ([...orders].sort((a, b) => a - b).some((order, index) => order !== index + 1)) return fail("OrderBy values must be a continuous sequence starting from 1");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_master_list_order'))");
+    await client.query("UPDATE hlpreport_master_list SET orderby = NULL WHERE isactive = FALSE AND orderby IS NOT NULL");
+    const current = await client.query("SELECT id FROM hlpreport_master_list WHERE isactive = TRUE ORDER BY id FOR UPDATE");
+    const currentIDs = current.rows.map((row) => Number(row.id));
+    if (currentIDs.length !== ids.size || currentIDs.some((id) => !ids.has(id))) {
+      await client.query("ROLLBACK");
+      return fail("items must contain the complete active HLP master list with valid IDs");
+    }
+    await client.query("UPDATE hlpreport_master_list SET orderby = -id WHERE isactive = TRUE");
+    const orderedItems = [...data.items].sort((a, b) => Number(a.OrderBy) - Number(b.OrderBy));
+    await client.query(
+      `UPDATE hlpreport_master_list ml SET orderby = ordering.orderby,
+         modifyby = $3, modifydatetime = CURRENT_TIMESTAMP
+       FROM unnest($1::bigint[], $2::integer[]) AS ordering(id, orderby)
+       WHERE ml.id = ordering.id AND ml.isactive = TRUE`,
+      [orderedItems.map((item) => Number(item.ID)), orderedItems.map((item) => Number(item.OrderBy)), data.UserID]
+    );
+    await client.query("COMMIT");
+    return { success: true, message: "HLP master fields reordered successfully" };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("Reorder HLP Master Fields Error:", error.message);
+    return retryableDatabaseResponse(error) || fail("Unable to reorder HLP master fields at this time.", 503);
+  } finally { client.release(); }
+};
+
 const generateMonthlyReportPdf = async (data) => {
   try {
     const report = await getMonthlyReport(data);
@@ -502,4 +540,4 @@ const generateLastYearReportPdf = async (data) => {
   }
 };
 
-module.exports = { getMasterList, createMasterField, updateMasterField, deleteMasterField, createReport, updateReport, getMonthlyReport, getLastYearReport, generateReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };
+module.exports = { getMasterList, createMasterField, updateMasterField, reorderMasterFields, deleteMasterField, createReport, updateReport, getMonthlyReport, getLastYearReport, generateReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };
