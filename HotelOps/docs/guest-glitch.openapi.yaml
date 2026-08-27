@@ -31,7 +31,8 @@ paths:
       parameters:
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
-        - { name: search, in: query, schema: { type: string } }
+        - { name: organizationId, in: query, description: Optional organization filter within the authenticated user's accessible organizations, schema: { type: integer, minimum: 1 } }
+        - { name: search, in: query, description: Case-insensitive partial complaint search, schema: { type: string } }
         - { name: fromDate, in: query, schema: { type: string, format: date } }
         - { name: toDate, in: query, schema: { type: string, format: date } }
         - { name: status, in: query, schema: { type: string } }
@@ -44,7 +45,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /get/{id}:
     get:
-      summary: Deprecated alias for workflow-aware Guest Glitch detail
+      summary: Deprecated alias for Guest Glitch detail
       deprecated: true
       x-permission: GuestGlitch.View
       parameters:
@@ -64,12 +65,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              allOf:
-                - $ref: '#/components/schemas/ID'
-                - $ref: '#/components/schemas/GuestGlitchCreate'
-              properties:
-                WorkflowAction: { type: string, enum: [PROCEED] }
+            schema: { $ref: '#/components/schemas/GuestGlitchUpdate' }
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/ValidationError' }
@@ -86,7 +82,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /status-update:
     patch:
-      summary: Move a guest glitch to its next configured status
+      summary: Update a guest glitch status
       x-permission: GuestGlitch.StatusUpdate
       requestBody:
         required: true
@@ -121,26 +117,6 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '403': { $ref: '#/components/responses/Forbidden' }
-  /workflow/config:
-    get:
-      summary: Get the authenticated organization's ordered Guest Glitch workflow
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-    post:
-      summary: Transactionally replace the authenticated organization's Guest Glitch workflow
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/WorkflowConfig' }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '400': { $ref: '#/components/responses/ValidationError' }
-    delete:
-      summary: Soft-delete the authenticated organization's Guest Glitch workflow
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '404': { $ref: '#/components/responses/NotFound' }
   /report:
     get:
       summary: Compact Guest Glitch report
@@ -173,7 +149,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /report/{id}/pdf:
     get:
-      summary: Generate an inline workflow-visible Guest Glitch PDF
+      summary: Generate an inline Guest Glitch PDF
       parameters: *idPath
       responses:
         '200':
@@ -199,7 +175,7 @@ paths:
           content: { application/pdf: { schema: { type: string, format: binary } } }
   /gm/{id}:
     get:
-      summary: Deprecated alias for workflow-aware detail
+      summary: Deprecated alias for Guest Glitch detail
       deprecated: true
       x-permission: GuestGlitch.GMAction
       parameters: *idPath
@@ -207,7 +183,7 @@ paths:
         '200': { $ref: '#/components/responses/Success' }
   /gm-action:
     patch:
-      summary: Deprecated alias for workflow-aware generic update
+      summary: Deprecated alias for generic update
       deprecated: true
       x-permission: GuestGlitch.GMAction
       requestBody:
@@ -237,7 +213,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /{id}:
     get:
-      summary: Get workflow-aware Guest Glitch detail
+      summary: Get Guest Glitch detail
       parameters: *idPath
       responses:
         '200': { $ref: '#/components/responses/Success' }
@@ -253,35 +229,6 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ID' }
   schemas:
-    WorkflowConfig:
-      type: object
-      required: [Stages]
-      properties:
-        Stages:
-          type: array
-          minItems: 1
-          items:
-            type: object
-            required: [StageKey, StageName, StageOrder, Actors]
-            properties:
-              StageKey: { type: string, pattern: '^[A-Za-z0-9_]+$' }
-              StageName: { type: string, maxLength: 120 }
-              StageOrder: { type: integer, minimum: 1 }
-              IsFinalStage: { type: boolean }
-              Actors:
-                type: array
-                minItems: 1
-                items:
-                  type: object
-                  required: [ActorType]
-                  properties:
-                    ActorType: { type: string, enum: [USER_ID, USER_TYPE, DEPARTMENT_ID, CREATOR] }
-                    ActorValue: { type: string, nullable: true }
-                    CanView: { type: boolean }
-                    CanEdit: { type: boolean }
-                    CanProceed: { type: boolean }
-                    EditableFields: { type: array, items: { type: string } }
-                    RequiredActionFields: { type: array, items: { type: string } }
     ID:
       type: object
       required: [ID]
@@ -295,8 +242,9 @@ components:
         comment: { type: string, maxLength: 500 }
     GuestGlitchCreate:
       type: object
-      required: [GuestStatus, RoomNumber, GuestName, Complaint, DepartmentIDs, ReceivedByIDs, InformedToIDs, Time]
+      required: [OrganizationID, GuestStatus, RoomNumber, GuestName, Complaint, DepartmentIDs, ReceivedByIDs, InformedToIDs, Time]
       properties:
+        OrganizationID: { type: integer, format: int64, minimum: 1 }
         GuestStatus: { type: string }
         RoomNumber: { type: string, maxLength: 60 }
         GuestName: { type: string, maxLength: 60 }
@@ -304,10 +252,32 @@ components:
         DepartmentIDs: { type: array, minItems: 1, uniqueItems: true, items: { type: integer, minimum: 1 } }
         ReceivedByIDs: { type: array, minItems: 1, uniqueItems: true, items: { type: integer, minimum: 1 } }
         InformedToIDs: { type: array, minItems: 1, uniqueItems: true, items: { type: integer, minimum: 1 } }
+        Time: { type: string, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' }
+        CompanyName: { type: string, maxLength: 150 }
+        Attachment: { type: string, format: binary }
+    GuestGlitchUpdate:
+      type: object
+      required: [ID]
+      properties:
+        ID: { type: integer, format: int64, minimum: 1 }
+        EntryDate: { type: string, format: date }
+        Status: { type: string }
+        ResolvedBy: { type: integer, format: int64, minimum: 1 }
+        GuestStatus: { type: string }
+        RoomNumber: { type: string, maxLength: 60 }
+        GuestName: { type: string, maxLength: 60 }
+        Complaint: { type: string }
+        DepartmentIDs: { type: array, uniqueItems: true, items: { type: integer, minimum: 1 } }
+        ReceivedByIDs: { type: array, uniqueItems: true, items: { type: integer, minimum: 1 } }
+        InformedToIDs: { type: array, uniqueItems: true, items: { type: integer, minimum: 1 } }
         DepartmentHODComments: { type: array, items: { $ref: '#/components/schemas/HODComment' } }
         Time: { type: string, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' }
-        EntryDate: { type: string, format: date }
         CompanyName: { type: string, maxLength: 150 }
+        ServiceRecovery: { type: string }
+        DetailedInvestigation: { type: string }
+        InternalActionTaken: { type: string }
+        GMComment: { type: string, maxLength: 500 }
+        ProcessLapse: { type: string, maxLength: 500 }
         Rate: { type: number, minimum: 0 }
         CheckInDate: { type: string, format: date }
         CheckOutDate: { type: string, format: date }

@@ -37,7 +37,7 @@ const guestPdfItems = (data, fields) => fields.map(([label, key]) => ({ label, v
 const GUEST_GLITCH_PDF_SECTIONS = Object.freeze([
   { title: "Hotel and Guest", fields: [["Hotel", "Hotel"], ["Entry Date", "EntryDate"], ["Room", "RoomNumber"], ["Guest", "GuestName"], ["Guest Status", "GuestStatus"], ["Company", "CompanyName"], ["Rate", "Rate"], ["Check In", "CheckInDate"], ["Check Out", "CheckOutDate"]] },
   { title: "Complaint and Follow-up", fields: [["Complaint", "Complaint"], ["Complaint Source", "ComplaintSource"], ["Raise Source", "RaiseSource"], ["Departments", "Departments"], ["Received By", "ReceivedByUsers"], ["Informed To", "InformedToUsers"], ["Process Lapse", "ProcessLapse"], ["Service Recovery", "ServiceRecovery"], ["Detailed Investigation", "DetailedInvestigation"], ["Internal Action", "InternalActionTaken"]] },
-  { title: "Workflow", fields: [["Status", "Status"], ["Resolved By", "ResolvedBy"], ["GM Comment", "GMComment"], ["HOD Comments", "DepartmentHODComments"]] },
+  { title: "Status and Follow-up", fields: [["Status", "Status"], ["Resolved By", "ResolvedBy"], ["GM Comment", "GMComment"], ["HOD Comments", "DepartmentHODComments"]] },
   { title: "Audit and Attachment", fields: [["Created By", "CreatedBy"], ["Created Date", "CreatedDate"], ["Modified By", "ModifyBy"], ["Modified Date", "ModifyDate"], ["Attachment", "Attachment"]] },
 ]);
 
@@ -87,9 +87,22 @@ const withOrganization = (operation, allowMultiple = false) => async (data) => {
   }
 };
 
+const withSelectedOrganization = (operation) => async (data) => {
+  try {
+    const organizationID = Number(data.OrganizationID);
+    const mappings = await repository.resolveOrganizations(data.UserID);
+    if (!mappings.some((row) => Number(row.organizationid) === organizationID)) {
+      return fail("You are not authorized to create a Guest Glitch for this organization.", 403);
+    }
+    return operation({ ...data, OrganizationID: organizationID });
+  } catch (error) {
+    console.error("Guest Glitch Organization Validation Error:", error.message);
+    return fail("Unable to validate organization for Guest Glitch at this time.", 503);
+  }
+};
+
 const mapRow = (row) => ({
   ID: Number(row.id), OrganizationID: Number(row.organizationid), EntryDate: row.entrydate,
-  CurrentWorkflowStage: row.currentworkflowstage,
   Status: row.status, ResolvedBy: row.resolvedby, GuestName: row.guestname,
   RoomNumber: row.roomnumber, Time: row.time, Complaint: row.complaint,
   ServiceRecovery: row.servicerecovery, DetailedInvestigation: row.detailedinvestigation,
@@ -181,13 +194,11 @@ const create = async (data) => {
   const client = await repository.getClient();
   try {
     await client.query("BEGIN");
-    const firstStage = await repository.getFirstWorkflowStage(client, data.OrganizationID);
-    if (!firstStage) { await client.query("ROLLBACK"); return fail("Guest Glitch workflow configuration is not available for this organization.", 409); }
-    data.CurrentWorkflowStage = firstStage.stagekey;
     data.Status = cleanText(data.Status) || "Open";
+    data.EntryDate = data.EntryDate || formatDate(new Date(), "YYYY-MM-DD");
     const selections = await validateSelections(client, data, data.OrganizationID);
     if (selections.error) { await client.query("ROLLBACK"); return selections.error; }
-    const optionError = await validateOptions(client, data, data.OrganizationID);
+    const optionError = await validateOptions(client, { GuestStatus: data.GuestStatus }, data.OrganizationID);
     if (optionError) { await client.query("ROLLBACK"); return optionError; }
     const prepared = applySnapshots(data, selections);
     const result = await repository.insert(client, prepared);
@@ -276,8 +287,6 @@ const get = async (data) => {
     if (found.error) return found.error;
     const row = found.record;
     const recordOrganizationID = Number(row.organizationid);
-    const workflow = await resolveWorkflowAccess(client, row, data, "VIEW");
-    if (workflow.error) return workflow.error;
     const [departments, receivedUsers, informedUsers] = await Promise.all([
       repository.validateDepartments(client, recordOrganizationID, row.departmentids || []),
       repository.validateUsers(client, recordOrganizationID, row.receivedbyids || []),
@@ -286,7 +295,6 @@ const get = async (data) => {
     return {
       success: true, message: "Guest glitch retrieved successfully.", data: {
       ...formatGuestGlitchDates(mapRow(row)),
-        workflow: workflowDTO(workflow.access),
         DepartmentHODComments: (row.departmenthodcomments || []).map((item) => ({ ...item,
           departmentId: Number(item.departmentId),
           departmentName: departments.find((department) => Number(department.departmentid) === Number(item.departmentId))?.departmentname || null,
@@ -308,17 +316,7 @@ const update = async (data) => {
     await client.query("BEGIN");
     const found = await ensureOwnedRecord(client, data.ID, data.OrganizationID, true);
     if (found.error) { await client.query("ROLLBACK"); return found.error; }
-    const workflow = await resolveWorkflowAccess(client, found.record, data, "UPDATE");
-    if (workflow.error) { await client.query("ROLLBACK"); return workflow.error; }
     const current = mapRow(found.record);
-    const allowedFields = new Set(workflow.access.editablefields || []);
-    for (const field of Object.keys(data)) {
-      if (repository.COLUMN_MAP[field] && field !== "CurrentWorkflowStage" &&
-          canonical(data[field]) !== canonical(current[field]) &&
-          (workflow.access.canedit !== true || !allowedFields.has(field))) {
-        delete data[field];
-      }
-    }
     if (Object.prototype.hasOwnProperty.call(data, "DepartmentHODComments")) {
       data.DepartmentHODComments = mergeDepartmentComments(current.DepartmentHODComments, data.DepartmentHODComments, data);
     }
@@ -337,27 +335,13 @@ const update = async (data) => {
     for (const [field, value] of Object.entries(prepared)) {
       if (repository.COLUMN_MAP[field] && canonical(value) !== canonical(current[field])) changed[field] = value;
     }
-    if (String(data.WorkflowAction || "").toUpperCase() === "PROCEED") {
-      if (workflow.access.canproceed !== true) { await client.query("ROLLBACK"); return fail("You are not authorized to proceed this Guest Glitch workflow.", 403); }
-      const resulting = { ...current, ...changed };
-      const missing = (workflow.access.requiredactionfields || []).find((field) => {
-        const value = resulting[field];
-        return value == null || value === "" || (Array.isArray(value) && value.length === 0);
-      });
-      if (missing) { await client.query("ROLLBACK"); return fail(`${missing} is required before proceeding to the next workflow stage.`); }
-      if (!workflow.access.isfinalstage && !workflow.access.nextstage) { await client.query("ROLLBACK"); return fail("The next Guest Glitch workflow stage is not configured.", 409); }
-      if (!workflow.access.isfinalstage) changed.CurrentWorkflowStage = workflow.access.nextstage;
-    }
     if (!Object.keys(changed).length) {
       await client.query("ROLLBACK");
-      if (String(data.WorkflowAction || "").toUpperCase() === "PROCEED" && workflow.access.isfinalstage) {
-        return { success: true, message: "Guest Glitch workflow is complete.", data: { ID: Number(data.ID), CurrentWorkflowStage: current.CurrentWorkflowStage } };
-      }
       return { success: true, message: "No changes were detected.", data: { ID: Number(data.ID) } };
     }
     await repository.updateChangedFields(client, data.ID, data.OrganizationID, changed, data.UserID, data.Username, data.IP);
     await client.query("COMMIT");
-    return { success: true, message: "Guest glitch updated successfully.", data: { ID: Number(data.ID), CurrentWorkflowStage: changed.CurrentWorkflowStage || current.CurrentWorkflowStage } };
+    return { success: true, message: "Guest glitch updated successfully.", data: { ID: Number(data.ID) } };
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Update Guest Glitch Error:", error.message);
@@ -425,28 +409,6 @@ const resolveReportRows = async (client, rows) => {
   return rows.map((row) => ({ row, resolved: resolvedByRow.get(row) }));
 };
 
-const workflowDTO = (access) => ({ currentStage: access.stagekey, currentStageName: access.stagename,
-  canView: access.canview === true, canEdit: access.canedit === true,
-  editableFields: access.editablefields || [], canProceed: access.canproceed === true,
-  nextStage: access.nextstage || null, isFinalStage: access.isfinalstage === true });
-
-const resolveWorkflowAccess = async (client, row, data, action = "VIEW") => {
-  if (!row.currentworkflowstage) return { error: fail("Guest Glitch workflow stage is not configured for this record.", 409) };
-  const access = await repository.getWorkflowAccess(client, row, data);
-  if (!access && String(row.createdby) === String(data.UserID)) {
-    const stage = await repository.getWorkflowStageState(client, row.organizationid, row.currentworkflowstage);
-    if (stage) return { access: { ...stage, canview: true, canedit: false, canproceed: false,
-      editablefields: [], requiredactionfields: [] } };
-  }
-  if (!access || access.canview !== true) {
-    console.warn("Guest Glitch workflow access denied", { GuestGlitchID: Number(row.id), UserID: data.UserID,
-      OrganizationID: data.OrganizationID, currentWorkflowStage: row.currentworkflowstage,
-      configuredStage: access?.stagekey || null, action });
-    return { error: fail("You are not authorized to access this Guest Glitch at its current workflow stage.", 403) };
-  }
-  return { access };
-};
-
 const selectionNames = (items = []) => items.map((item) => item.Name ?? item.name).filter(Boolean).join(", ");
 const mapCompactReportRows = (resolvedRows) => resolvedRows.map(({ row, resolved }) => compactReportDTO({
   ...row,
@@ -505,10 +467,8 @@ const reportDetail = async (data) => {
   try {
     const row = await repository.findReportByID(client, data.ID, data.OrganizationIDs || data.OrganizationID);
     if (!row) return fail("Guest Glitch not found", 404);
-    const workflow = await resolveWorkflowAccess(client, row, data, "REPORT_VIEW");
-    if (workflow.error) return workflow.error;
     const [resolved] = await repository.resolveSelections(client, Number(row.organizationid), [row]);
-    return { success: true, message: "Guest Glitch report detail fetched successfully", data: { ...completeReportDTO(row, resolved), workflow: workflowDTO(workflow.access) } };
+    return { success: true, message: "Guest Glitch report detail fetched successfully", data: completeReportDTO(row, resolved) };
   } catch (error) {
     console.error("Guest Glitch Report Detail Error:", error.message);
     return fail("Unable to retrieve Guest Glitch report detail at this time.", 503);
@@ -541,8 +501,6 @@ const attachment = async (data) => {
   try {
     const row = await repository.findByID(client, data.ID, data.OrganizationIDs || data.OrganizationID);
     if (!row) return fail("Guest Glitch not found", 404);
-    const workflow = await resolveWorkflowAccess(client, row, data, "ATTACHMENT_VIEW");
-    if (workflow.error) return workflow.error;
     if (!row.attachment) return fail("Attachment not found", 404);
     const title = row.attachmenttitle || `guest-glitch-${data.ID}-attachment`;
     return {
@@ -558,71 +516,8 @@ const attachment = async (data) => {
   } finally { client.release(); }
 };
 
-const getWorkflowConfig = async (data) => {
-  const client = await repository.getClient();
-  try {
-    const rows = await repository.getWorkflowConfig(client, data.OrganizationID);
-    const stages = [];
-    for (const row of rows) {
-      let stage = stages.find((item) => item.FlowConfigID === Number(row.flowconfigid));
-      if (!stage) {
-        stage = { FlowConfigID: Number(row.flowconfigid), StageKey: row.stagekey, StageName: row.stagename,
-          StageOrder: Number(row.stageorder), IsFinalStage: row.isfinalstage, IsActive: row.isactive, Actors: [] };
-        stages.push(stage);
-      }
-      if (row.flowconfigdetailid) stage.Actors.push({ FlowConfigDetailID: Number(row.flowconfigdetailid), ActorType: row.actortype,
-        ActorValue: row.actorvalue, CanView: row.canview, CanEdit: row.canedit, CanProceed: row.canproceed,
-        EditableFields: row.editablefields || [], RequiredActionFields: row.requiredactionfields || [] });
-    }
-    return { success: true, message: "Guest Glitch workflow configuration fetched successfully.", data: stages };
-  } catch (error) { console.error("Get Guest Glitch Workflow Error:", error.message); return fail("Unable to fetch Guest Glitch workflow configuration at this time.", 503); }
-  finally { client.release(); }
-};
-
-const saveWorkflowConfig = async (data) => {
-  const client = await repository.getClient();
-  try { await client.query("BEGIN");
-    const actors = data.Stages.flatMap((stage) => stage.Actors);
-    const userIDs = [...new Set(actors.filter((actor) => actor.ActorType === "USER_ID").map((actor) => Number(actor.ActorValue)))];
-    const departmentIDs = [...new Set(actors.filter((actor) => actor.ActorType === "DEPARTMENT_ID").map((actor) => Number(actor.ActorValue)))];
-    const userTypes = [...new Set(actors.filter((actor) => actor.ActorType === "USER_TYPE").map((actor) => String(actor.ActorValue).trim().toUpperCase()))];
-    if (userIDs.some((id) => !Number.isSafeInteger(id) || id <= 0)) { await client.query("ROLLBACK"); return fail("USER_ID actor values must be positive integers."); }
-    if (departmentIDs.some((id) => !Number.isSafeInteger(id) || id <= 0)) { await client.query("ROLLBACK"); return fail("DEPARTMENT_ID actor values must be positive integers."); }
-    const [users, departments, availableTypes] = await Promise.all([
-      repository.validateUsers(client, data.OrganizationID, userIDs), repository.validateDepartments(client, data.OrganizationID, departmentIDs),
-      repository.validateWorkflowUserTypes(client, data.OrganizationID, userTypes),
-    ]);
-    const validUsers = new Set(users.map((row) => Number(row.userid))), validDepartments = new Set(departments.map((row) => Number(row.departmentid)));
-    const invalidUser = userIDs.find((id) => !validUsers.has(id));
-    if (invalidUser) { await client.query("ROLLBACK"); return fail(`Invalid workflow user ID: ${invalidUser}`); }
-    const invalidDepartment = departmentIDs.find((id) => !validDepartments.has(id));
-    if (invalidDepartment) { await client.query("ROLLBACK"); return fail(`Invalid workflow department ID: ${invalidDepartment}`); }
-    const validTypes = new Set(availableTypes), invalidType = userTypes.find((type) => !validTypes.has(type));
-    if (invalidType) { await client.query("ROLLBACK"); return fail(`Invalid workflow user type: ${invalidType}`); }
-    const stagesInUse = await repository.findWorkflowStagesInUseOutside(client, data.OrganizationID, data.Stages.map((stage) => stage.StageKey));
-    if (stagesInUse.length) { await client.query("ROLLBACK"); return fail(`Workflow stages currently in use cannot be removed: ${stagesInUse.join(", ")}`, 409); }
-    await repository.replaceWorkflowConfig(client, data); await client.query("COMMIT");
-    return { success: true, message: "Guest Glitch workflow configuration saved successfully." };
-  } catch (error) { await client.query("ROLLBACK"); console.error("Save Guest Glitch Workflow Error:", error.message);
-    return retryableDatabaseResponse(error) || fail("Unable to save Guest Glitch workflow configuration at this time.", 503); }
-  finally { client.release(); }
-};
-
-const deleteWorkflowConfig = async (data) => {
-  const client = await repository.getClient();
-  try { await client.query("BEGIN");
-    const stagesInUse = await repository.findWorkflowStagesInUseOutside(client, data.OrganizationID, []);
-    if (stagesInUse.length) { await client.query("ROLLBACK"); return fail("Guest Glitch workflow configuration cannot be deleted while active records use it.", 409); }
-    const count = await repository.deleteWorkflowConfig(client, data.OrganizationID, data.UserID);
-    if (!count) { await client.query("ROLLBACK"); return fail("Guest Glitch workflow configuration not found.", 404); }
-    await client.query("COMMIT"); return { success: true, message: "Guest Glitch workflow configuration deleted successfully." };
-  } catch (error) { await client.query("ROLLBACK"); console.error("Delete Guest Glitch Workflow Error:", error.message);
-    return retryableDatabaseResponse(error) || fail("Unable to delete Guest Glitch workflow configuration at this time.", 503); }
-  finally { client.release(); }
-};
-
 module.exports = {
-  create: withOrganization(create),
+  create: withSelectedOrganization(create),
   list: withOrganization(list, true),
   get: withOrganization(get, true),
   update: withOrganization(update),
@@ -638,8 +533,5 @@ module.exports = {
   gmAction: withOrganization(gmAction),
   attachment: withOrganization(attachment, true),
   exportReport: withOrganization(exportReport, true),
-  getWorkflowConfig: withOrganization(getWorkflowConfig),
-  saveWorkflowConfig: withOrganization(saveWorkflowConfig),
-  deleteWorkflowConfig: withOrganization(deleteWorkflowConfig),
   resolveOrganization,
 };

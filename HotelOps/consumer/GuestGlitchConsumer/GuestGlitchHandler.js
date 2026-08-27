@@ -18,9 +18,6 @@ const GuestGlitchHandler = async (message) => {
     case "GET_GUEST_GLITCH_GM": return service.gmView(message.data);
     case "GUEST_GLITCH_GM_ACTION": return service.gmAction(message.data);
     case "GET_GUEST_GLITCH_ATTACHMENT": return service.attachment(message.data);
-    case "SAVE_GUEST_GLITCH_WORKFLOW": return service.saveWorkflowConfig(message.data);
-    case "GET_GUEST_GLITCH_WORKFLOW": return service.getWorkflowConfig(message.data);
-    case "DELETE_GUEST_GLITCH_WORKFLOW": return service.deleteWorkflowConfig(message.data);
     default: return { success: false, statusCode: 400, message: "Invalid Guest Glitch action." };
   }
 };

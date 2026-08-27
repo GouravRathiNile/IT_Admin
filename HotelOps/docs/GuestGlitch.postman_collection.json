@@ -7,11 +7,16 @@
     { "key": "GuestGlitchID", "value": "1" }
   ],
   "item": [
-    { "name": "Save Workflow Config", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"Stages\": [\n    { \"StageKey\": \"CREATOR_REVIEW\", \"StageName\": \"Creator Review\", \"StageOrder\": 1, \"IsFinalStage\": false, \"Actors\": [{ \"ActorType\": \"CREATOR\", \"CanView\": true, \"CanEdit\": true, \"CanProceed\": true, \"EditableFields\": [\"Complaint\"], \"RequiredActionFields\": [\"Complaint\"] }] },\n    { \"StageKey\": \"FINAL_REVIEW\", \"StageName\": \"Final Review\", \"StageOrder\": 2, \"IsFinalStage\": true, \"Actors\": [{ \"ActorType\": \"USER_TYPE\", \"ActorValue\": \"CEO\", \"CanView\": true, \"CanEdit\": false, \"CanProceed\": true, \"EditableFields\": [], \"RequiredActionFields\": [] }] }\n  ]\n}" }, "url": "{{LocalUrl}}/GuestGlitch/workflow/config" } },
-    { "name": "Get Workflow Config", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/workflow/config" } },
-    { "name": "Delete Workflow Config", "request": { "method": "DELETE", "url": "{{LocalUrl}}/GuestGlitch/workflow/config" } },
-    { "name": "Workflow-aware Detail", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/{{GuestGlitchID}}" } },
-    { "name": "Workflow Update and Proceed", "request": { "method": "PUT", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"ID\": {{GuestGlitchID}},\n  \"DepartmentHODComments\": [\n    {\n      \"departmentId\": 10,\n      \"comment\": \"Engineering team inspected the room and corrective action has been taken.\"\n    }\n  ],\n  \"WorkflowAction\": \"PROCEED\"\n}" }, "url": "{{LocalUrl}}/GuestGlitch/update" } },
+    { "name": "Create Guest Glitch", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [
+      { "key": "OrganizationID", "value": "30", "type": "text" }, { "key": "GuestStatus", "value": "In House", "type": "text" },
+      { "key": "RoomNumber", "value": "101", "type": "text" }, { "key": "GuestName", "value": "Rohit Sharma", "type": "text" },
+      { "key": "Complaint", "value": "Air conditioning is not cooling properly.", "type": "text" },
+      { "key": "DepartmentIDs", "value": "[10]", "type": "text" }, { "key": "ReceivedByIDs", "value": "[3]", "type": "text" },
+      { "key": "InformedToIDs", "value": "[4]", "type": "text" }, { "key": "Time", "value": "14:30", "type": "text" },
+      { "key": "CompanyName", "value": "ABC Limited", "type": "text" }, { "key": "Attachment", "type": "file", "src": [] }
+    ] }, "url": "{{LocalUrl}}/GuestGlitch/create" } },
+    { "name": "List Guest Glitches", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/list?organizationId=30&fromDate=2026-08-01&toDate=2026-08-25&status=Open&search=air&page=1&pageSize=10" } },
+    { "name": "Guest Glitch Detail", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/{{GuestGlitchID}}" } },
     { "name": "Compact Report", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/report?page=1&pageSize=10&sortBy=EntryDate&sortDirection=DESC" } },
     { "name": "Report Detail", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/report/{{GuestGlitchID}}" } },
     { "name": "Master Report", "request": { "method": "GET", "url": "{{LocalUrl}}/GuestGlitch/master-report?page=1&pageSize=10" } },

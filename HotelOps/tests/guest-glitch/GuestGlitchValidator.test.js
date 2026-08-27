@@ -5,10 +5,10 @@ const { getPermissions } = require("../../config/guestGlitchPermissions");
 const { PERMISSIONS } = require("../../config/guestGlitchConstants");
 
 const validCreate = () => ({
+  OrganizationID: 30,
   GuestStatus: "In House", RoomNumber: "101", GuestName: "Test Guest",
   Complaint: "Air conditioning issue", DepartmentIDs: [1], ReceivedByIDs: [2],
-  InformedToIDs: [3], DepartmentHODComments: [{ departmentId: 1, comment: "Reviewing" }],
-  Time: "14:30", CheckInDate: "2026-08-14", CheckOutDate: "2026-08-15", Rate: "1200.00",
+  InformedToIDs: [3], Time: "14:30", CompanyName: "ABC Limited",
 });
 
 test("valid create payload passes structural validation", () => {
@@ -26,7 +26,7 @@ test("duplicate IDs are rejected", () => {
   assert.ok(validator.validateCreate(input).errors.some((item) => item.field === "DepartmentIDs"));
 });
 
-test("invalid dates, time, and negative values are rejected", () => {
+test("invalid time and extra create fields are rejected", () => {
   const input = validCreate();
   input.Time = "25:00"; input.CheckOutDate = "2026-08-01"; input.SRA_Room = -1;
   const errors = validator.validateCreate(input).errors;
@@ -35,18 +35,18 @@ test("invalid dates, time, and negative values are rejected", () => {
   assert.ok(errors.some((item) => item.field === "SRA_Room"));
 });
 
-test("protected audit and organization fields are rejected", () => {
+test("body organization is accepted while audit fields are rejected", () => {
   const input = validCreate(); input.OrganizationID = 99; input.CreatedBy = 1;
   const errors = validator.validateCreate(input).errors;
-  assert.ok(errors.some((item) => item.field === "OrganizationID"));
+  assert.equal(errors.some((item) => item.field === "OrganizationID"), false);
   assert.ok(errors.some((item) => item.field === "CreatedBy"));
 });
 
-test("HOD comment is rejected for an unselected department", () => {
+test("create rejects fields outside the simplified contract", () => {
   const input = validCreate();
   input.DepartmentHODComments = [{ departmentId: 99, comment: "Not selected" }];
   const errors = validator.validateCreate(input).errors;
-  assert.ok(errors.some((item) => item.message === "Department HOD comment can only be added for a selected department"));
+  assert.ok(errors.some((item) => item.field === "DepartmentHODComments"));
 });
 
 test("list pagination and safe sorting are validated", () => {

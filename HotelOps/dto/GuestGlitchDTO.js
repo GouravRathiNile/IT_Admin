@@ -47,7 +47,11 @@ const PROTECTED_FIELDS = Object.freeze([
   "UserID",
   "Username",
   "IP",
-  "CurrentWorkflowStage",
+]);
+
+const CREATE_FIELDS = Object.freeze([
+  "OrganizationID", "GuestStatus", "RoomNumber", "GuestName", "Complaint",
+  "DepartmentIDs", "ReceivedByIDs", "InformedToIDs", "Time", "CompanyName",
 ]);
 
 const pick = (source, fields) =>
@@ -59,14 +63,12 @@ const pick = (source, fields) =>
   }, {});
 
 const createDTO = (body = {}) => ({
-  ...pick(body, EDITABLE_FIELDS),
-  UpdatedBy: body.UpdatedBy ?? null,
+  ...pick(body, CREATE_FIELDS),
 });
 
 const updateDTO = (body = {}) => ({
   ID: body.ID ?? body.id,
   ...pick(body, EDITABLE_FIELDS),
-  WorkflowAction: body.WorkflowAction,
   UpdatedBy: body.UpdatedBy ?? null,
 });
 
@@ -95,6 +97,8 @@ const formatGuestGlitchDates = (data = {}) => ({
 const listDTO = (query = {}) => ({
   page: query.page ?? 1,
   pageSize: query.pageSize ?? 10,
+
+  organizationId: query.organizationId ?? query.OrganizationID ?? null,
 
   search: query.search ?? "",
 
@@ -155,40 +159,19 @@ const listResponseDTO = (row, resolved = {}) => ({
       ? null
       : Number(row.organizationid),
 
-  OrganizationName: row.organizationname ?? null,
+  OrganizationName: row.shortname ?? null,
 
   EntryDate: formatDate(row.entrydate),
   Time: row.time,
 
   RoomNumber: row.roomnumber,
   GuestName: row.guestname,
-  GuestStatus: row.gueststatus,
-
   Departments: resolved.departments || [],
 
   Complaint: row.complaint,
   Status: row.status,
-  CurrentWorkflowStage: row.currentworkflowstage ?? null,
-
-  ComplaintSource: row.complaintsource,
-  RaiseSource: row.raisesource,
-
-  ProcessLapse: row.processlapse,
-  ProcessLapseCategory: row.processlapsecategory,
 
   ServiceRecovery: row.servicerecovery,
-
-  InternalActionTaken: row.internalactiontaken,
-  InternalActionTakenCategory:
-    row.internalactiontakencategory,
-
-  CompanyName: row.companyname,
-
-  CheckInDate: formatDate(row.checkindate),
-  CheckOutDate: formatDate(row.checkoutdate),
-
-  CreatedBy: row.createdby,
-  UpdatedBy: row.updatedby,
 });
 
 /*
@@ -213,8 +196,6 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
   Status:
     row.status ?? row.Status ?? null,
 
-  CurrentWorkflowStage:
-    row.currentworkflowstage ?? row.CurrentWorkflowStage ?? null,
 
   ResolvedBy:
     row.resolvedby ?? row.ResolvedBy ?? null,
@@ -408,6 +389,7 @@ const compactReportDTO = (row = {}) => ({
 
 module.exports = {
   EDITABLE_FIELDS,
+  CREATE_FIELDS,
   PROTECTED_FIELDS,
   createDTO,
   updateDTO,
