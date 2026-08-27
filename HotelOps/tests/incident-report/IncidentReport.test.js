@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const router = require("../../routes/IncidentReportRoutes/IncidentReportRoutes");
 const validator = require("../../validators/IncidentReportValidator");
-const { createDTO, listDTO, compactDTO, detailDTO } = require("../../dto/IncidentReportDTO");
+const { createDTO, listDTO, compactDTO, detailDTO, publicID } = require("../../dto/IncidentReportDTO");
 const service = require("../../services/IncidentReportService/IncidentReportService");
 const repository = require("../../repositories/IncidentReportRepository/IncidentReportRepository");
 const { generatePdf } = require("../../utils/pdfHelper");
@@ -40,10 +40,10 @@ test("time, date, update ID, pagination and sorting validation are safe", () => 
   assert.ok(validator.validateList(listDTO({ sortBy: "reportdate; DROP TABLE users" })).some((item) => item.field === "sortBy"));
 });
 
-test("generated IDs fit the database column and expected timestamp format", () => {
-  const ids = new Set(Array.from({ length: 100 }, () => service.generateID()));
-  assert.equal(ids.size, 100);
-  for (const id of ids) assert.match(id, /^\d{20}$/);
+test("Incident IDs use the PostgreSQL sequence and never MAX ID generation", () => {
+  const repositorySource = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../../repositories/IncidentReportRepository/IncidentReportRepository.js"), "utf8");
+  assert.match(repositorySource, /nextval\('incident_report_id_seq'\)/);
+  assert.doesNotMatch(repositorySource, /MAX\s*\(\s*id\s*\)\s*\+\s*1/i);
 });
 
 test("organization resolution handles no, single and multiple mappings", async () => {
@@ -75,14 +75,48 @@ test("list organization query is optional, validated and preserved with existing
   assert.equal(listDTO({}).organizationId, undefined);
 });
 
+test("list year and month combinations follow the report filter contract", () => {
+  const yearAndMonth = listDTO({ year: "2026", month: "8" });
+  assert.deepEqual(validator.validateList(yearAndMonth), []);
+
+  const yearOnly = listDTO({ year: "2026" });
+  assert.equal(yearOnly.month, null);
+  assert.deepEqual(validator.validateList(yearOnly), []);
+
+  const monthOnlyErrors = validator.validateList(listDTO({ month: "8" }));
+  assert.equal(monthOnlyErrors.find((error) => error.field === "year")?.message, "Please Select Year");
+  assert.equal(monthOnlyErrors.some((error) => error.message === "Year must be a valid four-digit year."), false);
+
+  const noPeriod = listDTO({});
+  assert.equal(noPeriod.year, null);
+  assert.equal(noPeriod.month, null);
+  assert.deepEqual(validator.validateList(noPeriod), []);
+
+  const emptyMonth = listDTO({ year: "2026", month: "" });
+  assert.deepEqual(validator.validateList(emptyMonth), []);
+
+  const emptyPeriod = listDTO({ year: "", month: "" });
+  assert.deepEqual(validator.validateList(emptyPeriod), []);
+});
+
+test("repository keeps whole-year and selected-month date ranges distinct", () => {
+  const source = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../../repositories/IncidentReportRepository/IncidentReportRepository.js"), "utf8");
+  assert.match(source, /const month = data\.month \? Number\(data\.month\) : 1/);
+  assert.match(source, /data\.month[\s\S]*Date\.UTC\(Number\(data\.year\), month, 1\)[\s\S]*Number\(data\.year\) \+ 1/);
+  assert.match(source, /ir\.reportdate >= \?/);
+  assert.match(source, /ir\.reportdate < \?/);
+});
+
 test("create stores the explicitly requested accessible organization", async () => {
   const originalRequested = repository.resolveRequestedOrganization;
   const originalGetClient = repository.getClient;
+  const originalNextIncidentID = repository.nextIncidentID;
   const originalInsert = repository.insert;
   let insertedOrganization;
   try {
     repository.resolveRequestedOrganization = async (_userID, organizationID) => ({ organizationid: organizationID, organizationname: "Hotel" });
     repository.getClient = async () => ({ release() {} });
+    repository.nextIncidentID = async () => 123;
     repository.insert = async (_client, id, organizationID, payload) => {
       insertedOrganization = organizationID;
       assert.equal(payload.OrganizationID, undefined);
@@ -94,6 +128,7 @@ test("create stores the explicitly requested accessible organization", async () 
   } finally {
     repository.resolveRequestedOrganization = originalRequested;
     repository.getClient = originalGetClient;
+    repository.nextIncidentID = originalNextIncidentID;
     repository.insert = originalInsert;
   }
 });
@@ -105,6 +140,36 @@ test("response DTOs keep list compact and detail complete", () => {
   assert.equal(compactDTO(row).OrganizationID, undefined);
   assert.equal(detailDTO(row).Description, "Detail");
   assert.equal(detailDTO(row).IsDeleted, undefined);
+});
+
+test("new safe IDs are numeric while legacy oversized IDs remain compatible", () => {
+  assert.equal(publicID("123"), 123);
+  assert.equal(publicID("20260827112352669760"), "20260827112352669760");
+  assert.deepEqual(validator.validateID(123), []);
+  assert.deepEqual(validator.validateID("20260827112352669760"), []);
+  assert.ok(validator.validateID("legacy-id").length > 0);
+});
+
+test("concurrent creates obtain distinct sequence IDs", async () => {
+  const originalRequested = repository.resolveRequestedOrganization;
+  const originalGetClient = repository.getClient;
+  const originalNextIncidentID = repository.nextIncidentID;
+  const originalInsert = repository.insert;
+  let sequence = 0;
+  try {
+    repository.resolveRequestedOrganization = async () => ({ organizationid: 10, organizationname: "Hotel" });
+    repository.getClient = async () => ({ release() {} });
+    repository.nextIncidentID = async () => { sequence += 1; return sequence; };
+    repository.insert = async (_client, id) => ({ id: String(id) });
+    const responses = await Promise.all(Array.from({ length: 25 }, () => service.create({ UserID: 7, Payload: createDTO(valid) })));
+    assert.equal(new Set(responses.map((response) => response.data.ID)).size, 25);
+    assert.ok(responses.every((response) => Number.isInteger(response.data.ID)));
+  } finally {
+    repository.resolveRequestedOrganization = originalRequested;
+    repository.getClient = originalGetClient;
+    repository.nextIncidentID = originalNextIncidentID;
+    repository.insert = originalInsert;
+  }
 });
 
 test("record organization is derived from the incident and access checked", async () => {

@@ -7,7 +7,7 @@ const isDate = (value) => {
   const parsed = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === String(value);
 };
-const isID = (value) => /^[A-Za-z0-9_-]{1,30}$/.test(String(value || ""));
+const isID = (value) => /^\d{1,30}$/.test(String(value || "").trim()) && !/^0+$/.test(String(value || "").trim());
 const isTime = (value) => /^(([01]\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2]):[0-5]\d\s?(?:AM|PM))$/i.test(String(value || "").trim());
 
 const validateFields = (data, create) => {
@@ -48,14 +48,16 @@ function validateID(value) {
 }
 const validateList = (data) => {
   const errors = [];
+  const hasYear = data.year != null && String(data.year).trim() !== "";
+  const hasMonth = data.month != null && String(data.month).trim() !== "";
   if (data.organizationId != null && data.organizationId !== "" && (!/^\d+$/.test(String(data.organizationId).trim()) || Number(data.organizationId) <= 0)) {
     errors.push(validationError("organizationId", "Invalid OrganizationID."));
   }
   if (!/^\d+$/.test(String(data.page)) || Number(data.page) < 1) errors.push(validationError("page", "Page must be a positive integer."));
   if (!/^\d+$/.test(String(data.pageSize)) || Number(data.pageSize) < 1 || Number(data.pageSize) > 100) errors.push(validationError("pageSize", "Page size must be between 1 and 100."));
-  if (data.year != null && (!/^\d{4}$/.test(String(data.year)) || Number(data.year) < 1900 || Number(data.year) > 9999)) errors.push(validationError("year", "Year must be a valid four-digit year."));
-  if (data.month != null && (!/^\d{1,2}$/.test(String(data.month)) || Number(data.month) < 1 || Number(data.month) > 12)) errors.push(validationError("month", "Month must be between 1 and 12."));
-  if (data.month != null && data.year == null) errors.push(validationError("month", "Year is required when month is supplied."));
+  if (hasMonth && !hasYear) errors.push(validationError("year", "Please Select Year"));
+  else if (hasYear && (!/^\d{4}$/.test(String(data.year)) || Number(data.year) < 1900 || Number(data.year) > 9999)) errors.push(validationError("year", "Year must be a valid four-digit year."));
+  if (hasMonth && (!/^\d{1,2}$/.test(String(data.month)) || Number(data.month) < 1 || Number(data.month) > 12)) errors.push(validationError("month", "Month must be between 1 and 12."));
   for (const field of ["fromDate", "toDate"]) if (data[field] && !isDate(data[field])) errors.push(validationError(field, `${field} must use YYYY-MM-DD format.`));
   if (data.fromDate && data.toDate && data.toDate < data.fromDate) errors.push(validationError("toDate", "To date cannot be before from date."));
   if (!SORT_COLUMNS[data.sortBy]) errors.push(validationError("sortBy", "Invalid sort field."));

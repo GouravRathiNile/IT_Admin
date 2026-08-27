@@ -20,7 +20,7 @@
       "request": {
         "method": "POST",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"Title\": \"Rooms Occupied (Comp+House)\",\n  \"OrderBy\": 1,\n  \"IsActive\": true\n}" },
+        "body": { "mode": "raw", "raw": "{\n  \"Title\": \"Small Banquet No of Hours\"\n}" },
         "url": "{{LocalUrl}}/HLPReport/master-list"
       }
     },
@@ -29,8 +29,17 @@
       "request": {
         "method": "PUT",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"ID\": 1,\n  \"Title\": \"Rooms Occupied (Comp+House)\",\n  \"OrderBy\": 2,\n  \"IsActive\": true\n}" },
+        "body": { "mode": "raw", "raw": "{\n  \"ID\": 4,\n  \"Title\": \"Small Banquet No. of Hours\"\n}" },
         "url": "{{LocalUrl}}/HLPReport/master-list"
+      }
+    },
+    {
+      "name": "Reorder Master Fields",
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"items\": [\n    { \"ID\": 4, \"OrderBy\": 1 },\n    { \"ID\": 1, \"OrderBy\": 2 },\n    { \"ID\": 2, \"OrderBy\": 3 },\n    { \"ID\": 3, \"OrderBy\": 4 }\n  ]\n}" },
+        "url": "{{LocalUrl}}/HLPReport/master-list/reorder"
       }
     },
     {

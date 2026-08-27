@@ -15,8 +15,14 @@ const listDTO = (query = {}) => ({
   sortBy: query.sortBy ?? "ReportDate", sortDirection: query.sortDirection ?? "DESC",
 });
 
+const publicID = (value) => {
+  const text = String(value ?? "");
+  const numeric = Number(text);
+  return /^\d+$/.test(text) && Number.isSafeInteger(numeric) ? numeric : value;
+};
+
 const compactDTO = (row) => ({
-  ID: row.id, Organization: row.organizationshortname ?? null, ReportDate: formatDate(row.reportdate),
+  ID: publicID(row.id), Organization: row.organizationshortname ?? null, ReportDate: formatDate(row.reportdate),
   IncidentDate: formatDate(row.incidentdate), Time: row.time, Location: row.location,
   AccidentCause: row.accidentcause, Anycasualty: row.anycasualty,
   PresentDuringIncident: row.presentduringincident, ReportTo: row.reportto, ReportBy: row.reportby,
@@ -29,4 +35,4 @@ const detailDTO = (row) => ({
   ModifyDate: formatDate(row.modifydate, "DD MMM YYYY HH:mm"), ModifyBy: row.modifyby,
 });
 
-module.exports = { createDTO, updateDTO, listDTO, compactDTO, detailDTO };
+module.exports = { createDTO, updateDTO, listDTO, compactDTO, detailDTO, publicID };

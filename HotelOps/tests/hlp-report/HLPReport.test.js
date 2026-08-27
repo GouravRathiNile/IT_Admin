@@ -13,6 +13,7 @@ test("HLP routes expose the approved authenticated API contract", () => {
   assert.match(source, /router\.use\(authenticateToken\)/);
   assert.match(source, /router\.get\("\/master-list"/);
   assert.match(source, /router\.post\("\/master-list"/);
+  assert.match(source, /router\.put\("\/master-list\/reorder", controller\.reorderMasterFields\)/);
   assert.match(source, /router\.put\("\/master-list"/);
   assert.match(source, /router\.delete\("\/master-list"/);
   assert.match(source, /router\.post\("\/create"/);
@@ -45,7 +46,7 @@ test("numeric total eligibility accepts numeric text and rejects mixed text", ()
 
 test("handler declares existing and master configuration actions", () => {
   const source = read("consumer/HLPReportConsumer/HLPReportHandler.js");
-  for (const action of ["GET_HLP_MASTER_LIST", "CREATE_HLP_MASTER_FIELD", "UPDATE_HLP_MASTER_FIELD", "DELETE_HLP_MASTER_FIELD", "CREATE_HLP_REPORT", "UPDATE_HLP_REPORT", "GET_HLP_MONTHLY_REPORT", "GET_HLP_LAST_YEAR_REPORT"]) {
+  for (const action of ["GET_HLP_MASTER_LIST", "CREATE_HLP_MASTER_FIELD", "UPDATE_HLP_MASTER_FIELD", "REORDER_HLP_MASTER_FIELDS", "DELETE_HLP_MASTER_FIELD", "CREATE_HLP_REPORT", "UPDATE_HLP_REPORT", "GET_HLP_MONTHLY_REPORT", "GET_HLP_LAST_YEAR_REPORT"]) {
     assert.match(source, new RegExp(`case "${action}"`));
   }
 });
@@ -69,7 +70,7 @@ test("master list and create integrity use only active configured fields", () =>
   const source = read("services/HLPReportService/HLPReportService.js");
   assert.match(source, /WHERE isactive = TRUE/);
   assert.match(source, /id = ANY\(\$1::bigint\[\]\) AND isactive = TRUE/);
-  assert.match(source, /isactive = FALSE, modifyby/);
+  assert.match(source, /isactive = FALSE, orderby = NULL, modifyby/);
 });
 
 test("report controller accepts optional lowercase organization filters", () => {
@@ -130,6 +131,28 @@ test("monthly PDF uses the compact single-page landscape table layout", () => {
   assert.match(helper, /Page \$\{page\} of \$\{count\}/);
 });
 
+test("master list ordering is backend controlled and active state is not publicly selected", () => {
+  const source = read("services/HLPReportService/HLPReportService.js");
+  assert.match(source, /MAX\(orderby\), 0\) \+ 1 AS orderby/);
+  assert.match(source, /Only Title can be supplied when creating an HLP master field/);
+  assert.match(source, /Only ID and Title can be supplied when updating an HLP master field/);
+  assert.match(source, /ORDER BY orderby NULLS LAST, id/);
+  assert.match(source, /SELECT id AS "ID", title AS "Title", orderby AS "OrderBy"/);
+});
+
+test("reorder validation rejects malformed, duplicate and discontinuous orders", async () => {
+  assert.match((await service.reorderMasterFields({ UserID: 1, items: [] })).message, /non-empty array/);
+  assert.match((await service.reorderMasterFields({ UserID: 1, items: [{ ID: 1, OrderBy: 1 }, { ID: 1, OrderBy: 2 }] })).message, /Duplicate HLP master field ID/);
+  assert.match((await service.reorderMasterFields({ UserID: 1, items: [{ ID: 1, OrderBy: 1 }, { ID: 2, OrderBy: 1 }] })).message, /Duplicate OrderBy/);
+  assert.match((await service.reorderMasterFields({ UserID: 1, items: [{ ID: 1, OrderBy: 1 }, { ID: 2, OrderBy: 3 }] })).message, /continuous sequence/);
+});
+
+test("reorder and delete use transactions and safe two-phase resequencing", () => {
+  const source = read("services/HLPReportService/HLPReportService.js");
+  assert.match(source, /const reorderMasterFields[\s\S]*BEGIN[\s\S]*FOR UPDATE[\s\S]*orderby = -id[\s\S]*unnest[\s\S]*COMMIT/);
+  assert.match(source, /const deleteMasterField[\s\S]*BEGIN[\s\S]*isactive = FALSE, orderby = NULL[\s\S]*orderby = -orderby[\s\S]*ROW_NUMBER[\s\S]*COMMIT/);
+});
+
 test("HLP PDFs share the requested logo, metadata, and footer design", () => {
   const pdfSource = read("utils/pdfHelper.js");
   const serviceSource = read("services/HLPReportService/HLPReportService.js");
@@ -183,5 +206,5 @@ test("HLP PDF lookup preserves snapshotted titles and applies report organizatio
   assert.match(source, /SELECT title AS "Title", yod AS "YOD", lyod AS "LYOD"[\s\S]*FROM hlpreport_entry_details/);
   assert.match(source, /validateOrganization\(client, UserID, record\.organizationid\)/);
   assert.match(source, /return fail\("HLP report not found", 404\)/);
-  assert.doesNotMatch(source.match(/const generateReportPdf[\s\S]*?module\.exports/)?.[0] || "", /isactive = TRUE/);
+  assert.doesNotMatch(source.match(/const generateReportPdf[\s\S]*?const reportOrganizationMetadata/)?.[0] || "", /isactive = TRUE/);
 });
