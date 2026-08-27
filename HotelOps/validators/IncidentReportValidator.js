@@ -12,10 +12,17 @@ const isTime = (value) => /^(([01]\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2]):[0-5]\d\
 
 const validateFields = (data, create) => {
   const errors = [];
-  const allowed = new Set([...EDITABLE_FIELDS, ...(create ? [] : ["ID", "id"])]);
+  const allowed = new Set([...EDITABLE_FIELDS, ...(create ? ["OrganizationID"] : ["ID", "id"])]);
   for (const field of Object.keys(data)) {
-    if (PROTECTED_FIELDS.includes(field)) errors.push(validationError(field, `${field} cannot be supplied by the client.`));
+    if (PROTECTED_FIELDS.includes(field) && !(create && field === "OrganizationID")) errors.push(validationError(field, `${field} cannot be supplied by the client.`));
     else if (!allowed.has(field)) errors.push(validationError(field, `${field} is not an allowed field.`));
+  }
+  if (create) {
+    if (data.OrganizationID === undefined || data.OrganizationID === null || String(data.OrganizationID).trim() === "") {
+      errors.push(validationError("OrganizationID", "OrganizationID is required."));
+    } else if (!/^\d+$/.test(String(data.OrganizationID).trim()) || Number(data.OrganizationID) <= 0) {
+      errors.push(validationError("OrganizationID", "Invalid OrganizationID."));
+    }
   }
   for (const field of ["ReportDate", "IncidentDate", "Time", "Location", "AccidentCause", "Anycasualty", "Description"]) {
     if (create && !String(data[field] ?? "").trim()) errors.push(validationError(field, `${field} is required.`));
@@ -41,6 +48,9 @@ function validateID(value) {
 }
 const validateList = (data) => {
   const errors = [];
+  if (data.organizationId != null && data.organizationId !== "" && (!/^\d+$/.test(String(data.organizationId).trim()) || Number(data.organizationId) <= 0)) {
+    errors.push(validationError("organizationId", "Invalid OrganizationID."));
+  }
   if (!/^\d+$/.test(String(data.page)) || Number(data.page) < 1) errors.push(validationError("page", "Page must be a positive integer."));
   if (!/^\d+$/.test(String(data.pageSize)) || Number(data.pageSize) < 1 || Number(data.pageSize) > 100) errors.push(validationError("pageSize", "Page size must be between 1 and 100."));
   if (data.year != null && (!/^\d{4}$/.test(String(data.year)) || Number(data.year) < 1900 || Number(data.year) > 9999)) errors.push(validationError("year", "Year must be a valid four-digit year."));

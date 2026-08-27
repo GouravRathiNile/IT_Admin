@@ -5,16 +5,18 @@ const DETAIL_COLUMNS = `ir.id, ir.organizationid, ir.reportdate, ir.incidentdate
   ir.time, ir.location, ir.accidentcause, ir.anycasualty, ir.description,
   ir.damagedcaused, ir.investigation, ir.investigatedby,
   ir.presentduringincident, ir.reportto, ir.reportby,
-  ir.createddate, ir.createdby, ir.modifydate, ir.modifyby`;
+  ir.createddate, ir.createdby, ir.modifydate, ir.modifyby,
+  om.shortname AS organizationshortname`;
 const COMPACT_COLUMNS = `ir.id, ir.organizationid, ir.reportdate, ir.incidentdate,
   ir.time, ir.location, ir.accidentcause, ir.anycasualty,
-  ir.presentduringincident, ir.reportto, ir.reportby`;
+  ir.presentduringincident, ir.reportto, ir.reportby,
+  om.shortname AS organizationshortname`;
 
 const getClient = () => pool.connect();
 
 const resolveOrganizations = async (userID) => {
   const result = await pool.query(
-    `SELECT uom.organizationid, om.organizationname
+    `SELECT uom.organizationid, om.organizationname, om.shortname
      FROM user_org_mapping uom
      INNER JOIN organization_master om ON om.organizationid = uom.organizationid
      WHERE uom.userid = $1 AND uom.isactive = TRUE AND uom.isdeleted = FALSE
@@ -23,6 +25,19 @@ const resolveOrganizations = async (userID) => {
      LIMIT 2;`, [userID]
   );
   return result.rows;
+};
+
+const resolveRequestedOrganization = async (userID, organizationID) => {
+  const result = await pool.query(
+    `SELECT uom.organizationid, om.organizationname, om.shortname
+     FROM user_org_mapping uom
+     INNER JOIN organization_master om ON om.organizationid = uom.organizationid
+     WHERE uom.userid = $1 AND uom.organizationid = $2
+       AND uom.isactive = TRUE AND uom.isdeleted = FALSE
+       AND om.isactive = TRUE AND om.activationstatus = TRUE AND om.isdeleted = FALSE
+     LIMIT 1;`, [userID, organizationID]
+  );
+  return result.rows[0] || null;
 };
 
 const insert = async (client, id, organizationID, data, userID) => {
@@ -43,8 +58,19 @@ const findByID = async (client, id, organizationID, lock = false) => {
   const result = await client.query(
     `SELECT ${DETAIL_COLUMNS}
      FROM incident_report_entry_master ir
+     INNER JOIN organization_master om ON om.organizationid = ir.organizationid
      WHERE ir.id = $1 AND ir.organizationid = $2 AND ir.isdeleted = FALSE
      LIMIT 1 ${lock ? "FOR UPDATE" : ""};`, [id, organizationID]
+  );
+  return result.rows[0] || null;
+};
+
+const findOrganizationByID = async (client, id) => {
+  const result = await client.query(
+    `SELECT ir.organizationid
+     FROM incident_report_entry_master ir
+     WHERE ir.id = $1 AND ir.isdeleted = FALSE
+     LIMIT 1;`, [id]
   );
   return result.rows[0] || null;
 };
@@ -111,11 +137,13 @@ const list = async (data, organizationID, detailed = false, paginate = true) => 
   const direction = String(data.sortDirection).toUpperCase() === "ASC" ? "ASC" : "DESC";
   const result = await pool.query(
     `SELECT ${detailed ? DETAIL_COLUMNS : COMPACT_COLUMNS}
-     FROM incident_report_entry_master ir WHERE ${where}
+     FROM incident_report_entry_master ir
+     INNER JOIN organization_master om ON om.organizationid = ir.organizationid
+     WHERE ${where}
      ORDER BY ${SORT_COLUMNS[data.sortBy]} ${direction}, ir.id DESC
      ${paginationSQL};`, queryValues
   );
   return { rows: result.rows, total: paginate ? Number(count.rows[0].total) : result.rows.length };
 };
 
-module.exports = { getClient, resolveOrganizations, insert, findByID, update, softDelete, list };
+module.exports = { getClient, resolveOrganizations, resolveRequestedOrganization, findOrganizationByID, insert, findByID, update, softDelete, list };

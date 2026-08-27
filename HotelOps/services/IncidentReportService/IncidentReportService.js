@@ -7,7 +7,8 @@ const { generateCSV, generateExcel } = require("../../utils/exportHelper");
 const { formatDate } = require("../../utils/dateFormatter");
 
 const INCIDENT_EXPORT_COLUMNS = Object.freeze([
-  { key: "ID", header: "ID", width: 24 }, { key: "ReportDate", header: "Report Date", width: 16 },
+  { key: "ID", header: "ID", width: 24 }, { key: "Organization", header: "Organization", width: 24 },
+  { key: "ReportDate", header: "Report Date", width: 16 },
   { key: "IncidentDate", header: "Incident Date", width: 16 }, { key: "Time", header: "Time", width: 12 },
   { key: "Location", header: "Location", width: 28 }, { key: "AccidentCause", header: "Accident Cause", width: 35 },
   { key: "Anycasualty", header: "Any Casualty", width: 18 }, { key: "Description", header: "Description", width: 45 },
@@ -31,20 +32,32 @@ const generateID = () => {
   return `${timestamp}${String(crypto.randomInt(0, 1000000)).padStart(6, "0")}`;
 };
 
-const resolveOrganization = async (userID) => {
+const resolveOrganization = async (userID, requestedOrganizationID = null) => {
+  if (requestedOrganizationID !== null && requestedOrganizationID !== undefined && requestedOrganizationID !== "") {
+    const row = await repository.resolveRequestedOrganization(userID, Number(requestedOrganizationID));
+    if (!row) return { error: fail("You do not have access to the selected organization.", 403) };
+    return { OrganizationID: Number(row.organizationid), OrganizationName: row.organizationname, OrganizationShortName: row.shortname };
+  }
   const rows = await repository.resolveOrganizations(userID);
   if (rows.length === 0) return { error: fail("No active organization is assigned to the authenticated user.", 403) };
   if (rows.length > 1) return { error: fail("Multiple organizations are assigned to this user. An organization must be selected before accessing Incident Reports.", 409) };
-  return { OrganizationID: Number(rows[0].organizationid), OrganizationName: rows[0].organizationname };
+  return { OrganizationID: Number(rows[0].organizationid), OrganizationName: rows[0].organizationname, OrganizationShortName: rows[0].shortname };
+};
+
+const resolveRecordOrganization = async (client, userID, incidentID) => {
+  const record = await repository.findOrganizationByID(client, incidentID);
+  if (!record) return { error: fail("Incident report not found.", 404) };
+  return resolveOrganization(userID, record.organizationid);
 };
 
 const create = async (data) => {
   let client;
   try {
-    const organization = await resolveOrganization(data.UserID);
+    const organization = await resolveOrganization(data.UserID, data.Payload.OrganizationID);
     if (organization.error) return organization.error;
     client = await repository.getClient();
-    const prepared = clean(data.Payload);
+    const { OrganizationID, ...payload } = data.Payload;
+    const prepared = clean(payload);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         const id = generateID();
@@ -64,9 +77,9 @@ const create = async (data) => {
 const get = async (data) => {
   let client;
   try {
-    const organization = await resolveOrganization(data.UserID);
-    if (organization.error) return organization.error;
     client = await repository.getClient();
+    const organization = await resolveRecordOrganization(client, data.UserID, data.ID);
+    if (organization.error) return organization.error;
     const row = await repository.findByID(client, data.ID, organization.OrganizationID);
     if (!row) return fail("Incident report not found.", 404);
     return { success: true, message: "Incident report retrieved successfully.", data: detailDTO(row) };
@@ -78,7 +91,7 @@ const get = async (data) => {
 
 const list = async (data, detailed = false) => {
   try {
-    const organization = await resolveOrganization(data.UserID);
+    const organization = await resolveOrganization(data.UserID, data.Query.organizationId);
     if (organization.error) return organization.error;
     const result = await repository.list(data.Query, organization.OrganizationID, detailed);
     return {
@@ -96,9 +109,9 @@ const list = async (data, detailed = false) => {
 const update = async (data) => {
   let client;
   try {
-    const organization = await resolveOrganization(data.UserID);
-    if (organization.error) return organization.error;
     client = await repository.getClient();
+    const organization = await resolveRecordOrganization(client, data.UserID, data.ID);
+    if (organization.error) return organization.error;
     await client.query("BEGIN");
     const current = await repository.findByID(client, data.ID, organization.OrganizationID, true);
     if (!current) { await client.query("ROLLBACK"); return fail("Incident report not found.", 404); }
@@ -115,9 +128,9 @@ const update = async (data) => {
 const remove = async (data) => {
   let client;
   try {
-    const organization = await resolveOrganization(data.UserID);
-    if (organization.error) return organization.error;
     client = await repository.getClient();
+    const organization = await resolveRecordOrganization(client, data.UserID, data.ID);
+    if (organization.error) return organization.error;
     const result = await repository.softDelete(client, data.ID, organization.OrganizationID, data.UserID);
     if (!result) return fail("Incident report not found.", 404);
     return { success: true, message: "Incident report deleted successfully." };
@@ -130,12 +143,12 @@ const remove = async (data) => {
 const reportPdf = async (data) => {
   let client;
   try {
-    const organization = await resolveOrganization(data.UserID);
-    if (organization.error) return organization.error;
     client = await repository.getClient();
+    const organization = await resolveRecordOrganization(client, data.UserID, data.ID);
+    if (organization.error) return organization.error;
     const row = await repository.findByID(client, data.ID, organization.OrganizationID);
     if (!row) return fail("Incident report not found.", 404);
-    const detail = { ...detailDTO(row), OrganizationName: organization.OrganizationName };
+    const detail = { ...detailDTO(row), OrganizationName: row.organizationshortname ?? organization.OrganizationShortName };
     const buffer = await generatePdf({
       title: "INCIDENT REPORT", reportName: "Incident Report", organizationId: organization.OrganizationID,
       metadata: INCIDENT_PDF_FIELDS.map(([label, key]) => ({ label, value: detail[key] })),
@@ -150,7 +163,7 @@ const reportPdf = async (data) => {
 const exportReport = async (data) => {
   try {
     if (!["csv", "excel"].includes(data.format)) return fail("Invalid Incident Report export format.");
-    const organization = await resolveOrganization(data.UserID);
+    const organization = await resolveOrganization(data.UserID, data.Query.organizationId);
     if (organization.error) return organization.error;
     const result = await repository.list(data.Query, organization.OrganizationID, true, false);
     const rows = result.rows.map(detailDTO);
@@ -170,4 +183,4 @@ const exportReport = async (data) => {
   }
 };
 
-module.exports = { create, list: (data) => list(data, false), get, update, remove, report: (data) => list(data, true), reportPdf, exportReport, generateID, resolveOrganization };
+module.exports = { create, list: (data) => list(data, false), get, update, remove, report: (data) => list(data, true), reportPdf, exportReport, generateID, resolveOrganization, resolveRecordOrganization };

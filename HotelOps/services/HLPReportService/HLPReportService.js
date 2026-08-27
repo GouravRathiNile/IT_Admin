@@ -295,7 +295,7 @@ const numericValue = (value) => /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(String(val
 const hasMonthlyReportData = (rows) => (rows || []).some((row) => Object.entries(row).some(([key, value]) =>
   !["ID", "Title", "Total"].includes(key) && value !== null && value !== undefined && String(value).trim() !== ""
 ));
-const getMonthlyReport = async ({ OrganizationID, Year, Month }) => {
+const getMonthlyReport = async ({ OrganizationID, OrganizationIDs, Year, Month }) => {
   const year = Number(Year); const month = Number(Month);
   if (!Number.isInteger(year) || year < 1 || year > 9999) return fail("Year must be between 1 and 9999");
   if (!Number.isInteger(month) || month < 1 || month > 12) return fail("Month must be between 1 and 12");
@@ -304,8 +304,12 @@ const getMonthlyReport = async ({ OrganizationID, Year, Month }) => {
     if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "" && !positiveInteger(OrganizationID)) return fail("Organization ID must be a positive integer");
     const masters = (await getMasterRows(client, false)).rows;
     const queryValues = [year, month];
-    const organizationClause = OrganizationID === undefined || OrganizationID === null || String(OrganizationID).trim() === ""
-      ? "" : `AND em.organizationid = $${queryValues.push(Number(OrganizationID))}`;
+    let organizationClause = "";
+    if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "") {
+      organizationClause = `AND em.organizationid = $${queryValues.push(Number(OrganizationID))}`;
+    } else if (Array.isArray(OrganizationIDs)) {
+      organizationClause = `AND em.organizationid = ANY($${queryValues.push(OrganizationIDs.map(Number))}::bigint[])`;
+    }
     const values = await client.query(
       `SELECT EXTRACT(DAY FROM em.entrydate)::int AS day, d.title AS "Title", d.yod AS "YOD"
          FROM hlpreport_entry_master em
@@ -335,14 +339,18 @@ const getMonthlyReport = async ({ OrganizationID, Year, Month }) => {
   } finally { client.release(); }
 };
 
-const getLastYearReport = async ({ OrganizationID, EntryDate }) => {
+const getLastYearReport = async ({ OrganizationID, OrganizationIDs, EntryDate }) => {
   if (!isRealDate(EntryDate)) return fail("EntryDate must be a valid date in YYYY-MM-DD format");
   const client = await pool.connect();
   try {
     if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "" && !positiveInteger(OrganizationID)) return fail("Organization ID must be a positive integer");
     const queryValues = [EntryDate];
-    const organizationClause = OrganizationID === undefined || OrganizationID === null || String(OrganizationID).trim() === ""
-      ? "" : `AND organizationid = $${queryValues.push(Number(OrganizationID))}`;
+    let organizationClause = "";
+    if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "") {
+      organizationClause = `AND organizationid = $${queryValues.push(Number(OrganizationID))}`;
+    } else if (Array.isArray(OrganizationIDs)) {
+      organizationClause = `AND organizationid = ANY($${queryValues.push(OrganizationIDs.map(Number))}::bigint[])`;
+    }
     const entry = await client.query(
       `SELECT id FROM hlpreport_entry_master WHERE entrydate = $1 ${organizationClause} ORDER BY id LIMIT 1`,
       queryValues

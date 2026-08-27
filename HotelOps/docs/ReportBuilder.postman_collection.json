@@ -1,0 +1,171 @@
+{
+  "info": {
+    "name": "HotelOps Module Reports",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{AuthToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "LocalUrl", "value": "http://localhost:5000/api" },
+    { "key": "AuthToken", "value": "" },
+    { "key": "OrganizationID", "value": "10" }
+  ],
+  "item": [
+    {
+      "name": "Guest Glitch Report Types",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/types" }
+    },
+    {
+      "name": "Guest Glitch Report Configuration",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch/config" }
+    },
+    {
+      "name": "Guest Glitch Master Report Configuration",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch-master/config" }
+    },
+    {
+      "name": "Guest Glitch Master Organization Options",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch-master/options/organization" }
+    },
+    {
+      "name": "Guest Glitch Master Department Options",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch-master/options/department?organizationId={{OrganizationID}}" }
+    },
+    {
+      "name": "Guest Glitch Master Status Options",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch-master/options/status?organizationId={{OrganizationID}}" }
+    },
+    {
+      "name": "Run Guest Glitch Master Report",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"filters\": {\n    \"organizationId\": {{OrganizationID}},\n    \"fromDate\": \"2026-08-01\",\n    \"toDate\": \"2026-08-25\",\n    \"departmentId\": 1029,\n    \"status\": \"Open\",\n    \"complaint\": \"cooling\"\n  },\n  \"sort\": {\n    \"field\": \"entryDate\",\n    \"direction\": \"DESC\"\n  },\n  \"page\": 1,\n  \"pageSize\": 10\n}"
+        },
+        "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch-master/run"
+      }
+    },
+    {
+      "name": "Guest Glitch Organization Options",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch/options/organization" }
+    },
+    {
+      "name": "Guest Glitch Department Options",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch/options/department?organizationId={{OrganizationID}}" }
+    },
+    {
+      "name": "Guest Glitch Status Options",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch/options/status?organizationId={{OrganizationID}}" }
+    },
+    {
+      "name": "Run Guest Glitch Report",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"filters\": {\n    \"organizationId\": {{OrganizationID}},\n    \"fromDate\": \"2026-08-01\",\n    \"toDate\": \"2026-08-25\",\n    \"departmentId\": 1029,\n    \"status\": \"Open\",\n    \"complaint\": \"cooling\"\n  },\n  \"sort\": {\n    \"field\": \"entryDate\",\n    \"direction\": \"DESC\"\n  },\n  \"page\": 1,\n  \"pageSize\": 10\n}"
+        },
+        "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch/run"
+      }
+    },
+    {
+      "name": "Incident Report Types",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/IncidentReport/types" }
+    },
+    {
+      "name": "Incident Report Configuration",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/IncidentReport/incident/config" }
+    },
+    {
+      "name": "Run Incident Report",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"filters\": {\n    \"search\": \"lobby\",\n    \"year\": 2026,\n    \"month\": 8,\n    \"fromDate\": \"2026-08-01\",\n    \"toDate\": \"2026-08-31\"\n  },\n  \"sort\": { \"field\": \"reportDate\", \"direction\": \"DESC\" },\n  \"page\": 1,\n  \"pageSize\": 10\n}"
+        },
+        "url": "{{LocalUrl}}/Report/IncidentReport/incident/run"
+      }
+    },
+    {
+      "name": "HLP Report Types",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/HLPReport/types" }
+    },
+    {
+      "name": "HLP Monthly Configuration",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/HLPReport/monthly/config" }
+    },
+    {
+      "name": "HLP Monthly Organization Options",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/HLPReport/monthly/options/organization" }
+    },
+    {
+      "name": "Run HLP Monthly Report",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"filters\": {\n    \"organizationId\": {{OrganizationID}},\n    \"year\": 2026,\n    \"month\": 8\n  },\n  \"page\": 1,\n  \"pageSize\": 10\n}" },
+        "url": "{{LocalUrl}}/Report/HLPReport/monthly/run"
+      }
+    },
+    {
+      "name": "HLP Last Year Same Day Configuration",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/HLPReport/last-year-same-day/config" }
+    },
+    {
+      "name": "HLP Last Year Organization Options",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/Report/HLPReport/last-year-same-day/options/organization" }
+    },
+    {
+      "name": "Run HLP Last Year Same Day Report",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"filters\": {\n    \"organizationId\": {{OrganizationID}},\n    \"entryDate\": \"2026-08-21\"\n  },\n  \"page\": 1,\n  \"pageSize\": 10\n}" },
+        "url": "{{LocalUrl}}/Report/HLPReport/last-year-same-day/run"
+      }
+    },
+    {
+      "name": "Export Guest Glitch Report - CSV",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"format\": \"csv\",\n  \"filters\": {\n    \"organizationId\": {{OrganizationID}},\n    \"fromDate\": \"2026-08-01\",\n    \"toDate\": \"2026-08-31\"\n  },\n  \"sort\": { \"field\": \"entryDate\", \"direction\": \"DESC\" }\n}"
+        },
+        "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch/export"
+      }
+    },
+    {
+      "name": "Export Guest Glitch Report - Excel Selected Columns",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"format\": \"excel\",\n  \"columns\": [\"id\", \"entryDate\", \"guestName\", \"complaint\", \"status\"],\n  \"filters\": { \"status\": \"Open\" }\n}"
+        },
+        "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch/export"
+      }
+    },
+    {
+      "name": "Export Guest Glitch Report - PDF",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"format\": \"pdf\",\n  \"filters\": {\n    \"departmentId\": {{DepartmentID}},\n    \"complaint\": \"cooling\"\n  }\n}"
+        },
+        "url": "{{LocalUrl}}/Report/GuestGlitch/guest-glitch/export"
+      }
+    }
+  ]
+}
