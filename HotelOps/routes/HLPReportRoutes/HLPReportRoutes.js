@@ -4,17 +4,17 @@ const controller = require("../../controllers/HLPReportController/HLPReportContr
 
 const router = express.Router();
 router.use(authenticateToken);
-router.get("/master-list", controller.masterList);
-router.post("/master-list", controller.createMasterField);
-router.put("/master-list/reorder", controller.reorderMasterFields);
-router.put("/master-list", controller.updateMasterField);
-router.delete("/master-list", controller.deleteMasterField);
-router.post("/create", controller.create);
-router.put("/update", controller.update);
-router.get("/monthly-report", controller.monthlyReport);
-router.get("/last-year-report", controller.lastYearReport);
-router.get("/monthly-report/pdf", controller.monthlyReportPdf);
-router.get("/last-year-report/pdf", controller.lastYearReportPdf);
-router.get("/:id/pdf", controller.reportPdf);
+router.get("/MasterList", controller.masterList);
+router.post("/CreateMasterField", controller.createMasterField);
+router.put("/MasterField/Reorder", controller.reorderMasterFields);
+router.put("/UpdateMasterField", controller.updateMasterField);
+router.delete("/DeleteMasterField", controller.deleteMasterField);
+router.post("/Create", controller.create);
+router.put("/Update", controller.update);
+router.get("/MonthlyReport", controller.monthlyReport);
+router.get("/LastYearReport", controller.lastYearReport);
+router.get("/MonthlyReport/PDF", controller.monthlyReportPdf);
+router.get("/LastYearReport/PDF", controller.lastYearReportPdf);
+router.get("/:id/PDF", controller.reportPdf);
 
 module.exports = router;

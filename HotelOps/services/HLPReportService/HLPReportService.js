@@ -57,7 +57,11 @@ const getMasterList = async () => {
   const client = await pool.connect();
   try {
     const result = await getMasterRows(client);
-    return { success: true, message: "HLP report master list fetched successfully", data: result.rows };
+    return {
+      success: true,
+      message: "HLP report master list fetched successfully",
+      data: result.rows.map((row) => ({ ...row, YOD: "", LYOD: "" })),
+    };
   } catch (error) {
     console.error("Get HLP Master List Error:", error.message);
     return fail("Unable to fetch HLP master list at this time.", 503);
