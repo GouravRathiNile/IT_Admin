@@ -619,6 +619,808 @@ const getMetByReport = async (data) => {
     return databaseFailure(error, "Generate Guest Meet Met By report");
   }
 };
+
+// =============================================================Date Range Report PDF
+const generateDateRangeReportPdf = async (data) => {
+  try {
+    // ============================================================
+    // VALIDATION
+    // ============================================================
+
+    if (
+      !data.OrganizationID ||
+      !data.FromDate ||
+      !data.ToDate
+    ) {
+      return {
+        success: false,
+        message:
+          "OrganizationID, FromDate and ToDate are required.",
+        statusCode: 400,
+      };
+    }
+
+    if (data.FromDate > data.ToDate) {
+      return {
+        success: false,
+        message:
+          "FromDate cannot be greater than ToDate.",
+        statusCode: 400,
+      };
+    }
+
+    const parameters = [
+      data.OrganizationID,
+      data.FromDate,
+      data.ToDate,
+    ];
+
+    // ============================================================
+    // MASTER SUMMARY
+    // Same query as getDateRangeReport
+    // ============================================================
+
+    const masterResult = await pool.query(
+      `
+      SELECT
+        ARRAY_AGG(
+          m.GMMasterID
+          ORDER BY
+            m.EntryDate DESC,
+            m.GMMasterID DESC
+        ) AS GMMasterIDs,
+
+        COALESCE(
+          SUM(m.Roomsinhouse),
+          0
+        )::bigint AS Roomsinhouse,
+
+        COALESCE(
+          SUM(m.Guestsinhouse),
+          0
+        )::bigint AS Guestsinhouse,
+
+        COALESCE(
+          SUM(m.Arrivals),
+          0
+        )::bigint AS Arrivals,
+
+        COALESCE(
+          SUM(m.Departures),
+          0
+        )::bigint AS Departures,
+
+        COALESCE(
+          AVG(m.Occupancy),
+          0
+        )::numeric(10,2) AS Occupancy,
+
+        (
+          ARRAY_AGG(
+            m.CreatedDate
+            ORDER BY
+              m.EntryDate DESC,
+              m.GMMasterID DESC
+          )
+        )[1] AS CreatedDate
+
+      FROM GuestMeet_Daily_Entry_Master m
+
+      WHERE m.OrganizationID = $1
+        AND m.EntryDate BETWEEN $2 AND $3
+        AND m.IsDeleted = FALSE;
+      `,
+      parameters,
+    );
+
+    const master = masterResult.rows[0];
+
+    // ============================================================
+    // GUEST DETAILS
+    // Same query without LIMIT / OFFSET
+    // ============================================================
+
+    const detailsResult = await pool.query(
+  `
+  SELECT
+    d.*,
+    um.FullName AS MetByName
+
+  FROM GuestMeet_Daily_Entry_Details d
+
+  INNER JOIN GuestMeet_Daily_Entry_Master m
+    ON m.GMMasterID = d.GMMasterID
+   AND m.IsDeleted = FALSE
+
+  LEFT JOIN user_master um
+    ON um.UserID = d.MetBy
+   AND um.IsDeleted = FALSE
+
+  WHERE m.OrganizationID = $1
+    AND m.EntryDate BETWEEN $2 AND $3
+    AND d.IsDeleted = FALSE
+
+  ORDER BY
+    m.EntryDate DESC,
+    m.GMMasterID DESC,
+    d.GMDetailID ASC;
+  `,
+  parameters,
+);
+
+    // ============================================================
+    // MAP DETAILS
+    // Same mapper as GET API
+    // ============================================================
+
+    const guestDetails =
+      detailsResult.rows.map(mapDetail);
+
+    const organizationId =
+      Number(data.OrganizationID);
+
+    // ============================================================
+    // PDF COLUMNS
+    // ============================================================
+
+    const columns = [
+      {
+        header: "Guest Name",
+        value: (row) => row.GuestName,
+        width: 75,
+      },
+      {
+        header: "RN#.",
+        value: (row) => row.RoomNo,
+        width: 30,
+        align: "center",
+      },
+      {
+        header: "Booking Source",
+        value: (row) => row.BookingSource,
+        width: 60,
+      },
+      {
+        header: "Arrival",
+        value: (row) => row.Arrival,
+        width: 55,
+        align: "center",
+      },
+      {
+        header: "Departure",
+        value: (row) => row.Departure,
+        width: 55,
+        align: "center",
+      },
+      {
+        header: "Feedback",
+        value: (row) => row.Feedback,
+        width: 105,
+      },
+      {
+        header: "Action Taken",
+        value: (row) => row.ActionTaken,
+        width: 105,
+      },
+      {
+        header: "Met By",
+        value: (row) => row.MetBy,
+        width: 45,
+        align: "center",
+      },
+      {
+        header: "Met On",
+        value: (row) => row.MetOn,
+        width: 55,
+        align: "center",
+      },
+      {
+        header: "Feedback",
+        value: (row) => row.FeedbackType,
+        width: 50,
+        align: "center",
+      },
+      {
+        header: "Guest Status",
+        value: (row) => row.GuestStatus,
+        width: 55,
+        align: "center",
+      },
+      
+    ];
+
+    // ============================================================
+    // METADATA
+    // ============================================================
+
+    const metadata = [
+      {
+        label: "Filters",
+        value:
+          `From Date: ${formatDate(data.FromDate)}` +
+          `    |    To Date: ${formatDate(data.ToDate)}`,
+      },
+      {
+        label: "Total Records",
+        value: guestDetails.length,
+      },
+      {
+        label: "Rooms In House",
+        value: Number(master?.roomsinhouse || 0),
+      },
+      {
+        label: "Guests In House",
+        value: Number(master?.guestsinhouse || 0),
+      },
+      {
+        label: "Arrivals",
+        value: Number(master?.arrivals || 0),
+      },
+      {
+        label: "Departures",
+        value: Number(master?.departures || 0),
+      },
+      {
+        label: "Avg. Occupancy",
+        value: `${Number(master?.occupancy || 0)}%`,
+      },
+      {
+        label: "Created Date",
+        value: master?.createddate
+          ? formatDate(master.createddate)
+          : "-",
+      },
+    ];
+
+    // ============================================================
+    // GENERATE PDF
+    // ============================================================
+
+    const pdfBuffer = await generatePdf({
+      title: "GUEST MEET DATE RANGE REPORT",
+
+      reportName:
+        "Guest Meet Date Range Report",
+
+      organizationId,
+
+      logoUrl:
+        data.logoUrl,
+
+      orientation:
+        "landscape",
+
+      metadata,
+
+      columns,
+
+      rows:
+        guestDetails,
+
+      pageMargins:
+        [20, 25, 20, 35],
+    });
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
+    return {
+      success: true,
+
+      message:
+        "Guest Meet date range PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Guest_Meet_Date_Range_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+  } catch (error) {
+    console.error(
+      "Guest Meet Date Range PDF Error:",
+      error,
+    );
+
+    return {
+      success: false,
+
+      message:
+        "Unable to generate Guest Meet date range PDF.",
+
+      statusCode:
+        503,
+    };
+  }
+};
+// ============================================================ Feedback Report Pdf
+const generateFeedbackReportPdf = async (data) => {
+  try {
+    // ============================================================
+    // FILTERS
+    // Same filters as getFeedbackReport
+    // ============================================================
+
+    const values = [];
+    const filter = addDateFilters(data, values);
+
+    // ============================================================
+    // FEEDBACK REPORT QUERY
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      WITH FeedbackCounts AS
+      (
+        SELECT
+          m.OrganizationID,
+          om.ShortName,
+
+          COALESCE(
+            NULLIF(
+              TRIM(d.FeedbackType),
+              ''
+            ),
+            'Unspecified'
+          ) AS FeedbackType,
+
+          COUNT(*)::bigint AS TotalGuests
+
+        FROM GuestMeet_Daily_Entry_Master m
+
+        INNER JOIN GuestMeet_Daily_Entry_Details d
+          ON d.GMMasterID = m.GMMasterID
+         AND d.IsDeleted = FALSE
+
+        INNER JOIN Organization_Master om
+          ON om.OrganizationID = m.OrganizationID
+
+        WHERE m.IsDeleted = FALSE
+          ${filter}
+
+        GROUP BY
+          m.OrganizationID,
+          om.ShortName,
+
+          COALESCE(
+            NULLIF(
+              TRIM(d.FeedbackType),
+              ''
+            ),
+            'Unspecified'
+          )
+      )
+
+      SELECT
+        OrganizationID,
+        ShortName,
+
+        JSON_AGG(
+          JSON_BUILD_OBJECT(
+            'FeedbackType',
+            FeedbackType,
+            'TotalGuests',
+            TotalGuests
+          )
+          ORDER BY
+            TotalGuests DESC,
+            FeedbackType
+        ) AS FeedbackData
+
+      FROM FeedbackCounts
+
+      GROUP BY
+        OrganizationID,
+        ShortName
+
+      ORDER BY
+        ShortName,
+        OrganizationID;
+      `,
+      values,
+    );
+
+    // ============================================================
+    // MAP QUERY RESULT
+    // ============================================================
+
+    const reportData = result.rows.map((row) => ({
+      OrganizationID:
+        Number(row.organizationid),
+
+      ShortName:
+        row.shortname,
+
+      FeedbackData:
+        row.feedbackdata || [],
+    }));
+
+    // ============================================================
+    // ORGANIZATION-WISE FEEDBACK COUNTS
+    // Negative and Positive as separate columns
+    // ============================================================
+
+    const feedbackRows = reportData.map((organization) => {
+      const feedbackCounts = {};
+
+      for (const feedback of organization.FeedbackData) {
+        const feedbackType = String(
+          feedback.FeedbackType || "Unspecified",
+        )
+          .trim()
+          .toUpperCase();
+
+        feedbackCounts[feedbackType] =
+          Number(feedback.TotalGuests || 0);
+      }
+
+      return {
+        OrganizationID:
+          organization.OrganizationID,
+
+        ShortName:
+          organization.ShortName,
+
+        Negative:
+          feedbackCounts.NEGATIVE || 0,
+
+        Positive:
+          feedbackCounts.POSITIVE || 0,
+      };
+    });
+
+    // ============================================================
+    // ORGANIZATION FOR LOGO
+    // ============================================================
+
+    const organizationId =
+      data.OrganizationID ||
+      reportData[0]?.OrganizationID ||
+      null;
+
+    // ============================================================
+    // PDF COLUMNS
+    // ============================================================
+
+    const columns = [
+      {
+        header: "Organization",
+        value: (row) => row.ShortName,
+        width: "*",
+      },
+      {
+        header: "Negative Feedback",
+        value: (row) => row.Negative,
+        width: "*",
+        align: "center",
+        bold: true,
+      },
+      {
+        header: "Positive Feedback",
+        value: (row) => row.Positive,
+        width: "*",
+        align: "center",
+        bold: true,
+      },
+    ];
+
+    // ============================================================
+    // METADATA FILTER VALUES
+    // ============================================================
+
+    const organizationFilter =
+      data.OrganizationID
+        ? data.OrganizationID
+        : "All Organizations";
+
+    const fromDateFilter =
+      data.FromDate
+        ? formatDate(data.FromDate)
+        : "All";
+
+    const toDateFilter =
+      data.ToDate
+        ? formatDate(data.ToDate)
+        : "All";
+
+    // Same count as the original feedback report:
+    // one record per organization and feedback type
+    const totalRecords = reportData.reduce(
+      (total, organization) =>
+        total + organization.FeedbackData.length,
+      0,
+    );
+
+    // ============================================================
+    // PDF METADATA
+    // Filters first line and Total Records second line
+    // ============================================================
+
+    const metadata = [
+  {
+    label: "Organization",
+    value: organizationFilter,
+  },
+  {
+    label: "From Date",
+    value: fromDateFilter,
+  },
+  {
+    label: "To Date",
+    value: toDateFilter,
+  },
+  {
+    label: "Total Records",
+    value: totalRecords,
+  },
+];
+
+    // ============================================================
+    // GENERATE PDF
+    // ============================================================
+
+    const pdfBuffer = await generatePdf({
+      title:
+        "GUEST MEET FEEDBACK REPORT",
+
+      reportName:
+        "Guest Meet Feedback Report",
+
+      organizationId,
+
+      logoUrl:
+        data.logoUrl,
+
+      orientation:
+        "portrait",
+
+      metadata,
+
+      columns,
+
+      rows:
+        feedbackRows,
+
+      pageMargins:
+        [24, 26, 24, 34],
+    });
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
+    return {
+      success: true,
+
+      message:
+        "Guest Meet feedback PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Guest_Meet_Feedback_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+  } catch (error) {
+    console.error(
+      "Guest Meet Feedback PDF Error:",
+      error,
+    );
+
+    return {
+      success: false,
+
+      message:
+        "Unable to generate Guest Meet feedback PDF.",
+
+      statusCode:
+        503,
+    };
+  }
+};
+// ============================================================ Met By Report Pdf
+const generateMetByReportPdf = async (data) => {
+  try {
+    // ============================================================
+    // FILTERS
+    // Same filters as getMetByReport
+    // ============================================================
+
+    const values = [];
+    const filter = addDateFilters(data, values);
+
+    // ============================================================
+    // MET BY REPORT QUERY
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        d.MetBy,
+        um.FullName,
+        COUNT(*)::bigint AS TotalGuestsMet
+
+      FROM GuestMeet_Daily_Entry_Master m
+
+      INNER JOIN GuestMeet_Daily_Entry_Details d
+        ON d.GMMasterID = m.GMMasterID
+       AND d.IsDeleted = FALSE
+
+      LEFT JOIN user_master um
+        ON um.UserID = d.MetBy
+
+      WHERE m.IsDeleted = FALSE
+        AND d.MetBy IS NOT NULL
+        ${filter}
+
+      GROUP BY
+        d.MetBy,
+        um.FullName
+
+      ORDER BY
+        TotalGuestsMet DESC,
+        um.FullName;
+      `,
+      values,
+    );
+
+    // ============================================================
+    // MAP REPORT DATA
+    // ============================================================
+
+    const metByRows = result.rows.map((row) => ({
+      MetBy:
+        Number(row.metby),
+
+      FullName:
+        row.fullname || "-",
+
+      TotalGuestsMet:
+        Number(row.totalguestsmet),
+    }));
+
+    // ============================================================
+    // ORGANIZATION FOR LOGO
+    // ============================================================
+
+    const organizationId =
+      data.OrganizationID || null;
+
+    // ============================================================
+    // PDF COLUMNS
+    // ============================================================
+
+    const columns = [
+      {
+        header: "Met By",
+        value: (row) => row.FullName,
+        width: "*",
+      },
+      {
+        header: "Total Guests Met",
+        value: (row) => row.TotalGuestsMet,
+        width: 130,
+        align: "center",
+        bold: true,
+      },
+    ];
+
+    // ============================================================
+    // METADATA VALUES
+    // ============================================================
+
+    const organizationFilter =
+      data.OrganizationID
+        ? data.OrganizationID
+        : "All Organizations";
+
+    const fromDateFilter =
+      data.FromDate
+        ? formatDate(data.FromDate)
+        : "All";
+
+    const toDateFilter =
+      data.ToDate
+        ? formatDate(data.ToDate)
+        : "All";
+
+    // ============================================================
+    // METADATA
+    // ============================================================
+
+    const metadata = [
+      {
+        label: "Organization",
+        value: organizationFilter,
+      },
+      {
+        label: "From Date",
+        value: fromDateFilter,
+      },
+      {
+        label: "To Date",
+        value: toDateFilter,
+      },
+      {
+        label: "Total Records",
+        value: metByRows.length,
+      },
+    ];
+
+    // ============================================================
+    // GENERATE PDF
+    // ============================================================
+
+    const pdfBuffer = await generatePdf({
+      title:
+        "GUEST MEET MET BY REPORT",
+
+      reportName:
+        "Guest Meet Met By Report",
+
+      organizationId,
+
+      logoUrl:
+        data.logoUrl,
+
+      orientation:
+        "portrait",
+
+      metadata,
+
+      columns,
+
+      rows:
+        metByRows,
+
+      pageMargins:
+        [24, 26, 24, 34],
+    });
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
+    return {
+      success: true,
+
+      message:
+        "Guest Meet Met By PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Guest_Meet_Met_By_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+  } catch (error) {
+    console.error(
+      "Guest Meet Met By PDF Error:",
+      error,
+    );
+
+    return {
+      success: false,
+
+      message:
+        "Unable to generate Guest Meet Met By PDF.",
+
+      statusCode:
+        503,
+    };
+  }
+};
+
 // ============================================================ Public Service API
 module.exports = {
   createDailyEntry,
@@ -631,4 +1433,7 @@ module.exports = {
   getDateRangeReport,
   getFeedbackReport,
   getMetByReport,
+  generateDateRangeReportPdf,
+  generateFeedbackReportPdf,
+  generateMetByReportPdf
 };

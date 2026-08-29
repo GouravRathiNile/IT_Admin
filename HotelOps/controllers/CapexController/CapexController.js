@@ -202,6 +202,50 @@ exports.getAllCapex = async (req, res) => {
       OrganizationID = Number(req.query.OrganizationID);
     }
 
+    // ================= Department =================
+
+    const Department = req.query.Department
+      ? String(req.query.Department).trim()
+      : null;
+
+    // ================= Created Date Range =================
+
+    const FromDate = req.query.FromDate
+      ? String(req.query.FromDate).trim()
+      : null;
+    const ToDate = req.query.ToDate
+      ? String(req.query.ToDate).trim()
+      : null;
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+    for (const [fieldName, value] of [
+      ["FromDate", FromDate],
+      ["ToDate", ToDate],
+    ]) {
+      const parsedDate = value
+        ? new Date(`${value}T00:00:00.000Z`)
+        : null;
+
+      if (
+        value &&
+        (!datePattern.test(value) ||
+          Number.isNaN(parsedDate.getTime()) ||
+          parsedDate.toISOString().slice(0, 10) !== value)
+      ) {
+        throw new AppError(
+          `${fieldName} must be a valid date in YYYY-MM-DD format`,
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+    }
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "FromDate cannot be greater than ToDate",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
     // ================= Status =================
 
     let Status = null;
@@ -249,6 +293,9 @@ exports.getAllCapex = async (req, res) => {
   const response = await CapexService.getAllCapex({
   ...user,
   OrganizationID,
+  Department,
+  FromDate,
+  ToDate,
   Status,
   page,
   PageSize,
@@ -739,6 +786,60 @@ const reportFilters = (req) => {
     OrganizationID: Number(rawOrganizationID),
   };
 };
+
+// Validate the optional CAPEX creation-date range used by report endpoints.
+const reportDateFilters = (req) => {
+  const FromDate = req.query.FromDate
+    ? String(req.query.FromDate).trim()
+    : null;
+  const ToDate = req.query.ToDate
+    ? String(req.query.ToDate).trim()
+    : null;
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+  for (const [fieldName, value] of [
+    ["FromDate", FromDate],
+    ["ToDate", ToDate],
+  ]) {
+    const parsedDate = value
+      ? new Date(`${value}T00:00:00.000Z`)
+      : null;
+
+    if (
+      value &&
+      (!datePattern.test(value) ||
+        Number.isNaN(parsedDate.getTime()) ||
+        parsedDate.toISOString().slice(0, 10) !== value)
+    ) {
+      throw new AppError(
+        `${fieldName} must be a valid date in YYYY-MM-DD format`,
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+  }
+
+  if (FromDate && ToDate && FromDate > ToDate) {
+    throw new AppError(
+      "FromDate cannot be greater than ToDate",
+      STATUS_CODES.BAD_REQUEST
+    );
+  }
+
+  return { FromDate, ToDate };
+};
+
+// Department report supports department and CAPEX creation-date filters.
+const departmentReportFilters = (req) => {
+  const Department = req.query.Department
+    ? String(req.query.Department).trim()
+    : null;
+
+  return {
+    ...reportFilters(req),
+    Department,
+    ...reportDateFilters(req),
+  };
+};
 // All reports use the same JWT context and RabbitMQ request flow.
 const getReport = async (req, res, action) => {
   try {
@@ -755,8 +856,28 @@ const getReport = async (req, res, action) => {
 // ============================================================ Summary Report
 exports.getCapexSummaryReport = async (req, res) => {
   try {
+    if (!isPositiveInteger(req.query.OrganizationID)) {
+      throw new AppError(
+        "Organization ID is required and must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const user = authenticatedUser(req);
+    const UserType = user.UserType.toUpperCase();
+
+    if (!["GM", "CEO", "OWNER"].includes(UserType)) {
+      throw new AppError(
+        "Only GM, CEO, or OWNER can access the CAPEX summary report",
+        STATUS_CODES.FORBIDDEN
+      );
+    }
+
     const response = await CapexService.getCapexSummaryReport({
-      Filters: reportFilters(req),
+      Filters: {
+        OrganizationID: Number(req.query.OrganizationID),
+      },
+      UserType,
     });
 
     if (!response.success) {
@@ -776,7 +897,7 @@ exports.getCapexSummaryReport = async (req, res) => {
 exports.getCapexDepartmentReport = async (req, res) => {
   try {
     const response = await CapexService.getCapexDepartmentReport({
-      Filters: reportFilters(req),
+      Filters: departmentReportFilters(req),
     });
 
     if (!response.success) {
@@ -796,7 +917,10 @@ exports.getCapexDepartmentReport = async (req, res) => {
 exports.getCapexOrganizationReport = async (req, res) => {
   try {
     const response = await CapexService.getCapexOrganizationReport({
-      Filters: reportFilters(req),
+      Filters: {
+        ...reportFilters(req),
+        ...reportDateFilters(req),
+      },
     });
 
     if (!response.success) {
@@ -937,14 +1061,58 @@ exports.deleteCapexApprovalConfig = async (req, res) => {
 // ============================================================Generate CAPEX List PDF
 exports.generateCapexListPdf = async (req, res) => {
   try {
+    const user = authenticatedUser(req);
+    const Department = req.query.Department
+      ? String(req.query.Department).trim()
+      : null;
+    const FromDate = req.query.FromDate
+      ? String(req.query.FromDate).trim()
+      : null;
+    const ToDate = req.query.ToDate
+      ? String(req.query.ToDate).trim()
+      : null;
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+    for (const [fieldName, value] of [
+      ["FromDate", FromDate],
+      ["ToDate", ToDate],
+    ]) {
+      const parsedDate = value
+        ? new Date(`${value}T00:00:00.000Z`)
+        : null;
+
+      if (
+        value &&
+        (!datePattern.test(value) ||
+          Number.isNaN(parsedDate.getTime()) ||
+          parsedDate.toISOString().slice(0, 10) !== value)
+      ) {
+        throw new AppError(
+          `${fieldName} must be a valid date in YYYY-MM-DD format`,
+          STATUS_CODES.BAD_REQUEST
+        );
+      }
+    }
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "FromDate cannot be greater than ToDate",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
     const response = await CapexService.generateCapexListPdf({
       OrganizationID: req.query.OrganizationID
         ? Number(req.query.OrganizationID)
         : null,
 
-      UserType: req.query.UserType || null,
+      UserType: user.UserType,
 
       Status: req.query.Status || null,
+
+      Department,
+      FromDate,
+      ToDate,
 
       logoUrl: req.query.logoUrl || null,
     });
@@ -977,7 +1145,7 @@ exports.generateCapexListPdf = async (req, res) => {
 exports.getCapexDepartmentReportPdf = async (req, res) => {
   try {
     const response = await CapexService.getCapexDepartmentReportPdf({
-      Filters: reportFilters(req),
+      Filters: departmentReportFilters(req),
     });
 
     if (!response.success) {
@@ -1005,7 +1173,10 @@ exports.getCapexOrganizationReportPdf = async (req, res) => {
   try {
     const response =
       await CapexService.getCapexOrganizationReportPdf({
-        Filters: reportFilters(req),
+        Filters: {
+          ...reportFilters(req),
+          ...reportDateFilters(req),
+        },
       });
 
     if (!response.success) {

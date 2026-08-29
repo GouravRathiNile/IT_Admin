@@ -263,33 +263,20 @@ exports.getMetByReport = async (req, res) => {
 exports.getDateRangeReportPdf = async (req, res) => {
   try {
     const data = {
-      OrganizationID: req.query.OrganizationID || null,
-      FromDate: req.query.FromDate || null,
-      ToDate: req.query.ToDate || null,
+      OrganizationID:
+        req.query.OrganizationID || null,
 
-      // PDF mein pagination nahi rakhi hai.
-      // Saare guest records fetch honge.
-      page: 1,
-      PageSize: 10000,
+      FromDate:
+        req.query.FromDate || null,
+
+      ToDate:
+        req.query.ToDate || null,
     };
 
-    // =====================================================
-    // Required fields validation
-    // =====================================================
-
-    if (!data.OrganizationID || !data.FromDate || !data.ToDate) {
-      return res.status(400).json({
-        success: false,
-        message: "OrganizationID, FromDate and ToDate are required.",
-      });
-    }
-
-    // =====================================================
-    // Report data fetch
-    // =====================================================
-
     const response =
-      await GuestMeetService.getDateRangeReport(data);
+      await GuestMeetService.generateDateRangeReportPdf(
+        data,
+      );
 
     if (!response.success) {
       return res
@@ -297,195 +284,123 @@ exports.getDateRangeReportPdf = async (req, res) => {
         .json(response);
     }
 
-    const report = response.data?.[0];
-
-    if (!report) {
-      return res.status(404).json({
-        success: false,
-        message: "No Guest Meet report data found for the selected date range.",
-      });
-    }
-
-    // =====================================================
-    // PDF generate
-    // =====================================================
-
-    const pdfBuffer = await generatePdf({
-      title: "Guest Meet Date Range Report",
-      reportName: "Guest Meet Date Range Report",
-
-      organizationId: report.OrganizationID,
-
-      orientation: "landscape",
-
-      pageMargins: [20, 24, 20, 34],
-
-      metadata: [
-        {
-          label: "Organization ID",
-          value: report.OrganizationID,
-        },
-        {
-          label: "Date Range",
-          value: `${report.EntryDateFrom} - ${report.EntryDateTo}`,
-        },
-        {
-          label: "Rooms In House",
-          value: report.Roomsinhouse,
-        },
-        {
-          label: "Guests In House",
-          value: report.Guestsinhouse,
-        },
-        {
-          label: "Arrivals",
-          value: report.Arrivals,
-        },
-        {
-          label: "Departures",
-          value: report.Departures,
-        },
-        {
-          label: "Average Occupancy",
-          value: `${report.Occupancy}%`,
-        },
-        {
-          label: "Total Guest Records",
-          value: response.TotalCount || report.GuestDetails?.length || 0,
-        },
-      ],
-
-      columns: [
-        {
-          header: "S.No.",
-          value: (_row, index) => index + 1,
-          width: 28,
-          align: "center",
-        },
-        {
-          header: "Guest Name",
-          key: "GuestName",
-          width: 80,
-        },
-        {
-          header: "Room No.",
-          key: "RoomNo",
-          width: 42,
-          align: "center",
-        },
-        {
-          header: "Booking Source",
-          key: "BookingSource",
-          width: 65,
-        },
-        {
-          header: "Arrival",
-          key: "Arrival",
-          width: 55,
-          align: "center",
-        },
-        {
-          header: "Departure",
-          key: "Departure",
-          width: 55,
-          align: "center",
-        },
-        {
-          header: "Feedback",
-          key: "Feedback",
-          width: "*",
-        },
-        {
-          header: "Action Taken",
-          key: "ActionTaken",
-          width: "*",
-        },
-        {
-          header: "Met By",
-          key: "MetBy",
-          width: 38,
-          align: "center",
-        },
-        {
-          header: "Met On",
-          key: "MetOn",
-          width: 55,
-          align: "center",
-        },
-        {
-          header: "Feedback Type",
-          key: "FeedbackType",
-          width: 58,
-          align: "center",
-        },
-        {
-          header: "Guest Status",
-          key: "GuestStatus",
-          width: 52,
-          align: "center",
-        },
-      ],
-
-      rows: report.GuestDetails || [],
-
-      styles: {
-        pdfTitle: {
-          fontSize: 17,
-          bold: true,
-          color: "#082B5C",
-        },
-        pdfTableHeader: {
-          fontSize: 7,
-          bold: true,
-          color: "#FFFFFF",
-        },
-        pdfTableCell: {
-          fontSize: 6.8,
-          color: "#172033",
-        },
-      },
-
-      tableOptions: {
-        table: {
-          headerRows: 1,
-          dontBreakRows: false,
-        },
-        layout: {
-          paddingLeft: () => 3,
-          paddingRight: () => 3,
-          paddingTop: () => 4,
-          paddingBottom: () => 4,
-        },
-      },
-    });
-
-    // =====================================================
-    // File name
-    // =====================================================
-
-    const fromDate = String(data.FromDate).replaceAll("/", "-");
-    const toDate = String(data.ToDate).replaceAll("/", "-");
-
-    const fileName =
-      `Guest-Meet-Report-${fromDate}-to-${toDate}.pdf`;
-
-    // =====================================================
-    // PDF response
-    // =====================================================
-
-    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Type",
+      response.contentType,
+    );
 
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${fileName}"`,
+      `attachment; filename="${response.fileName}"`,
     );
 
-    res.setHeader("Content-Length", pdfBuffer.length);
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
 
-    return res.status(200).send(pdfBuffer);
+    return res
+      .status(200)
+      .send(response.data);
   } catch (error) {
-    console.error("Guest Meet PDF generation error:", error);
+    return handleError(error, res);
+  }
+};
+exports.getFeedbackReportPdf = async (req, res) => {
+  try {
+    const data = {
+      OrganizationID:
+        req.query.OrganizationID || null,
 
+      FromDate:
+        req.query.FromDate || null,
+
+      ToDate:
+        req.query.ToDate || null,
+
+      logoUrl:
+        req.query.logoUrl || null,
+    };
+
+    const response =
+      await GuestMeetService.generateFeedbackReportPdf(
+        data,
+      );
+
+    if (!response.success) {
+      return res
+        .status(response.statusCode || 400)
+        .json(response);
+    }
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType,
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+    return res
+      .status(200)
+      .send(response.data);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+exports.getMetByReportPdf = async (req, res) => {
+  try {
+    const data = {
+      OrganizationID:
+        req.query.OrganizationID || null,
+
+      FromDate:
+        req.query.FromDate || null,
+
+      ToDate:
+        req.query.ToDate || null,
+
+      logoUrl:
+        req.query.logoUrl || null,
+    };
+
+    const response =
+      await GuestMeetService.generateMetByReportPdf(
+        data,
+      );
+
+    if (!response.success) {
+      return res
+        .status(response.statusCode || 400)
+        .json(response);
+    }
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType,
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+    return res
+      .status(200)
+      .send(response.data);
+  } catch (error) {
     return handleError(error, res);
   }
 };

@@ -598,6 +598,28 @@ const getAllCapex = async (data) => {
     }
 
     // =====================================================
+    // Department Filter
+    // =====================================================
+
+    if (data.Department) {
+      params.push(String(data.Department).trim());
+
+      query += `
+        AND LOWER(TRIM(cm.Department)) = LOWER($${params.length})
+      `;
+    }
+
+    if (data.FromDate) {
+      params.push(data.FromDate);
+      query += ` AND cm.CreatedDate >= $${params.length}::date `;
+    }
+
+    if (data.ToDate) {
+      params.push(data.ToDate);
+      query += ` AND cm.CreatedDate < ($${params.length}::date + INTERVAL '1 day') `;
+    }
+
+    // =====================================================
     // STATUS FILTER
     // =====================================================
 
@@ -613,6 +635,7 @@ const getAllCapex = async (data) => {
           query += `
             AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
         } else if (approvalStatus) {
           params.push(approvalStatus);
@@ -642,6 +665,7 @@ const getAllCapex = async (data) => {
                 'PENDING'
               )
             ) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
         }
       }
@@ -656,6 +680,7 @@ const getAllCapex = async (data) => {
           query += `
             AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
         } else if (approvalStatus) {
           params.push(approvalStatus);
@@ -685,6 +710,7 @@ const getAllCapex = async (data) => {
                 'PENDING'
               )
             ) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
         }
       }
@@ -699,6 +725,7 @@ const getAllCapex = async (data) => {
           query += `
             AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
         } else if (approvalStatus) {
           params.push(approvalStatus);
@@ -728,6 +755,7 @@ const getAllCapex = async (data) => {
                 'PENDING'
               )
             ) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
         }
       }
@@ -914,6 +942,24 @@ const getAllCapex = async (data) => {
       `;
     }
 
+    if (data.Department) {
+      countParams.push(String(data.Department).trim());
+
+      countQuery += `
+        AND LOWER(TRIM(cm.Department)) = LOWER($${countParams.length})
+      `;
+    }
+
+    if (data.FromDate) {
+      countParams.push(data.FromDate);
+      countQuery += ` AND cm.CreatedDate >= $${countParams.length}::date `;
+    }
+
+    if (data.ToDate) {
+      countParams.push(data.ToDate);
+      countQuery += ` AND cm.CreatedDate < ($${countParams.length}::date + INTERVAL '1 day') `;
+    }
+
     // =====================================================
     // COUNT STATUS FILTER
     // =====================================================
@@ -935,6 +981,7 @@ const getAllCapex = async (data) => {
         countQuery += `
           AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${countParams.length}
           AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+          AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
         `;
       } else if (approvalStatus) {
         countParams.push(approvalStatus);
@@ -2421,6 +2468,7 @@ const REPORT_DATA_CTE = `
       cm.CapexID,
       cm.OrganizationID,
       cm.Department,
+      cm.CreatedDate,
       COALESCE(cm.Total, 0)::numeric AS Total,
 
       CASE
@@ -2493,6 +2541,27 @@ const reportParameters = (data) => {
 
   return [filters.OrganizationID ?? null];
 };
+
+const departmentReportParameters = (data) => {
+  const filters = data.Filters || {};
+
+  return [
+    filters.OrganizationID ?? null,
+    filters.Department || null,
+    filters.FromDate || null,
+    filters.ToDate || null,
+  ];
+};
+
+const organizationReportParameters = (data) => {
+  const filters = data.Filters || {};
+
+  return [
+    filters.OrganizationID ?? null,
+    filters.FromDate || null,
+    filters.ToDate || null,
+  ];
+};
 // Read/report failures return synchronously; they are not background-retried.
 const reportFailure = (error, reportName) => {
   console.error(`${reportName} Error:`, error.message);
@@ -2502,109 +2571,149 @@ const reportFailure = (error, reportName) => {
 // ============================================================ Summary Report
 const getCapexSummaryReport = async (data) => {
   try {
-    console.log("Received Filters:", JSON.stringify(data.Filters));
-    console.log("Query params:", reportParameters(data));
+    const OrganizationID = Number(data?.Filters?.OrganizationID);
+    const UserType = String(data.UserType || "").trim().toUpperCase();
+
+    if (!Number.isSafeInteger(OrganizationID) || OrganizationID < 1) {
+      return fail("OrganizationID is required.", 400);
+    }
+
+    if (!["GM", "CEO", "OWNER"].includes(UserType)) {
+      return fail("Only GM, CEO, or OWNER can access this report.", 403);
+    }
+
     const result = await pool.query(
       `
-      ${REPORT_DATA_CTE}
+      WITH role_capex AS
+      (
+        SELECT
+          cm.CapexID,
+          COALESCE(cm.Total, 0)::numeric AS Total,
+          cm.IsVoid,
+          UPPER(COALESCE(ca.FinalStatus, 'PENDING')) AS FinalStatus,
+
+          UPPER(COALESCE(
+            CASE $2::text
+              WHEN 'GM' THEN ca.GMStatus
+              WHEN 'CEO' THEN ca.CEOStatus
+              WHEN 'OWNER' THEN ca.OwnerStatus
+            END,
+            'PENDING'
+          )) AS RoleStatus,
+
+          UPPER(COALESCE(current_stage.ApprovalRole, '')) AS CurrentApprovalRole,
+          UPPER(COALESCE(current_stage.Status, 'PENDING')) AS CurrentStageStatus
+
+        FROM Capex_Master cm
+
+        LEFT JOIN Capex_Approval ca
+          ON ca.CapexID = cm.CapexID
+         AND ca.IsDeleted = FALSE
+
+        LEFT JOIN LATERAL
+        (
+          SELECT
+            cfg.ApprovalRole,
+            CASE UPPER(cfg.ApprovalRole)
+              WHEN 'GM' THEN COALESCE(ca.GMStatus, 'Pending')
+              WHEN 'CEO' THEN COALESCE(ca.CEOStatus, 'Pending')
+              WHEN 'OWNER' THEN COALESCE(ca.OwnerStatus, 'Pending')
+            END AS Status,
+            cfg.ApprovalLevel,
+            cfg.ApprovalOrder
+          FROM
+          (
+            SELECT
+              configured.ApprovalLevel,
+              configured.ApprovalRole,
+              configured.ApprovalOrder
+            FROM Capex_Approval_Config configured
+            WHERE configured.OrganizationID = cm.OrganizationID
+              AND configured.IsDeleted = FALSE
+
+            UNION ALL
+
+            SELECT
+              defaults.ApprovalLevel,
+              defaults.ApprovalRole,
+              defaults.ApprovalOrder
+            FROM
+            (
+              VALUES
+                (1, 'GM', 1),
+                (2, 'CEO', 2),
+                (3, 'OWNER', 3)
+            ) defaults(ApprovalLevel, ApprovalRole, ApprovalOrder)
+            WHERE NOT EXISTS
+            (
+              SELECT 1
+              FROM Capex_Approval_Config configured
+              WHERE configured.OrganizationID = cm.OrganizationID
+                AND configured.IsDeleted = FALSE
+            )
+          ) cfg
+          WHERE UPPER(
+            CASE UPPER(cfg.ApprovalRole)
+              WHEN 'GM' THEN COALESCE(ca.GMStatus, 'Pending')
+              WHEN 'CEO' THEN COALESCE(ca.CEOStatus, 'Pending')
+              WHEN 'OWNER' THEN COALESCE(ca.OwnerStatus, 'Pending')
+            END
+          ) NOT IN ('APPROVED', 'REJECTED')
+          ORDER BY cfg.ApprovalOrder ASC, cfg.ApprovalLevel ASC
+          LIMIT 1
+        ) current_stage ON TRUE
+
+        WHERE cm.OrganizationID = $1
+          AND cm.IsDeleted = FALSE
+      ),
+
+      visible_capex AS
+      (
+        SELECT
+          CapexID,
+          Total,
+          CASE
+            WHEN IsVoid = TRUE THEN 'Void'
+            WHEN RoleStatus = 'PENDING'
+              AND CurrentApprovalRole = $2
+              AND CurrentStageStatus = 'PENDING'
+              AND FinalStatus = 'PENDING'
+            THEN 'Pending'
+            WHEN RoleStatus = 'APPROVED' THEN 'Approved'
+            WHEN RoleStatus = 'REJECTED' THEN 'Rejected'
+            WHEN RoleStatus = 'HOLD' THEN 'Hold'
+            WHEN RoleStatus = 'RETURNED' THEN 'Returned'
+            ELSE NULL
+          END AS Status
+        FROM role_capex
+        WHERE RoleStatus IN ('APPROVED', 'REJECTED', 'HOLD', 'RETURNED')
+           OR (
+             RoleStatus = 'PENDING'
+             AND CurrentApprovalRole = $2
+             AND CurrentStageStatus = 'PENDING'
+             AND FinalStatus = 'PENDING'
+           )
+      )
 
       SELECT
-
-        -- ====================================================
-        -- TOTAL
-        -- ====================================================
-
         COUNT(*)::bigint AS TotalCapex,
-
-        COALESCE(
-          SUM(Total),
-          0
-        ) AS TotalAmount,
-
-
-        -- ====================================================
-        -- PENDING
-        -- ====================================================
-
-        COUNT(*) FILTER (
-          WHERE Status = 'Pending'
-        )::bigint AS PendingCount,
-
-        COALESCE(
-          SUM(Total) FILTER (
-            WHERE Status = 'Pending'
-          ),
-          0
-        ) AS PendingAmount,
-
-
-        -- ====================================================
-        -- APPROVED
-        -- ====================================================
-
-        COUNT(*) FILTER (
-          WHERE Status = 'Approved'
-        )::bigint AS ApprovedCount,
-
-        COALESCE(
-          SUM(Total) FILTER (
-            WHERE Status = 'Approved'
-          ),
-          0
-        ) AS ApprovedAmount,
-
-
-        -- ====================================================
-        -- REJECTED
-        -- ====================================================
-
-        COUNT(*) FILTER (
-          WHERE Status = 'Rejected'
-        )::bigint AS RejectedCount,
-
-        COALESCE(
-          SUM(Total) FILTER (
-            WHERE Status = 'Rejected'
-          ),
-          0
-        ) AS RejectedAmount,
-
-
-        -- ====================================================
-        -- RETURNED
-        -- ====================================================
-
-        COUNT(*) FILTER (
-          WHERE Status = 'Returned'
-        )::bigint AS ReturnedCount,
-
-        COALESCE(
-          SUM(Total) FILTER (
-            WHERE Status = 'Returned'
-          ),
-          0
-        ) AS ReturnedAmount,
-
-
-        -- ====================================================
-        -- VOID
-        -- ====================================================
-
-        COUNT(*) FILTER (
-          WHERE Status = 'Void'
-        )::bigint AS VoidCount,
-
-        COALESCE(
-          SUM(Total) FILTER (
-            WHERE Status = 'Void'
-          ),
-          0
-        ) AS VoidAmount
-
-      FROM capex_data;
+        COALESCE(SUM(Total), 0) AS TotalAmount,
+        COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
+        COALESCE(SUM(Total) FILTER (WHERE Status = 'Pending'), 0) AS PendingAmount,
+        COUNT(*) FILTER (WHERE Status = 'Approved')::bigint AS ApprovedCount,
+        COALESCE(SUM(Total) FILTER (WHERE Status = 'Approved'), 0) AS ApprovedAmount,
+        COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
+        COALESCE(SUM(Total) FILTER (WHERE Status = 'Rejected'), 0) AS RejectedAmount,
+        COUNT(*) FILTER (WHERE Status = 'Hold')::bigint AS HoldCount,
+        COALESCE(SUM(Total) FILTER (WHERE Status = 'Hold'), 0) AS HoldAmount,
+        COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount,
+        COALESCE(SUM(Total) FILTER (WHERE Status = 'Returned'), 0) AS ReturnedAmount,
+        COUNT(*) FILTER (WHERE Status = 'Void')::bigint AS VoidCount,
+        COALESCE(SUM(Total) FILTER (WHERE Status = 'Void'), 0) AS VoidAmount
+      FROM visible_capex
+      WHERE Status IS NOT NULL;
       `,
-
-      reportParameters(data),
+      [OrganizationID, UserType],
     );
 
     const row = result.rows[0];
@@ -2626,6 +2735,9 @@ const getCapexSummaryReport = async (data) => {
 
         RejectedCount: Number(row.rejectedcount),
         RejectedAmount: Number(row.rejectedamount),
+
+        HoldCount: Number(row.holdcount),
+        HoldAmount: Number(row.holdamount),
 
         ReturnedCount: Number(row.returnedcount),
         ReturnedAmount: Number(row.returnedamount),
@@ -2667,9 +2779,12 @@ const getCapexDepartmentReport = async (data) => {
          COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
          COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount
        FROM capex_data
+       WHERE ($2::text IS NULL OR LOWER(TRIM(COALESCE(Department, 'Unspecified'))) = LOWER(TRIM($2::text)))
+         AND ($3::date IS NULL OR CreatedDate >= $3::date)
+         AND ($4::date IS NULL OR CreatedDate < ($4::date + INTERVAL '1 day'))
        GROUP BY COALESCE(Department, 'Unspecified')
        ORDER BY COALESCE(Department, 'Unspecified') ASC;`,
-      reportParameters(data),
+      departmentReportParameters(data),
     );
 
     return {
@@ -2716,13 +2831,16 @@ const getCapexOrganizationReport = async (data) => {
          ON om.OrganizationID = cm.OrganizationID
          AND om.IsDeleted = FALSE
 
+       WHERE ($2::date IS NULL OR cm.CreatedDate >= $2::date)
+         AND ($3::date IS NULL OR cm.CreatedDate < ($3::date + INTERVAL '1 day'))
+
        GROUP BY
          cm.OrganizationID,
          om.ShortName
 
        ORDER BY
          cm.OrganizationID ASC;`,
-      reportParameters(data),
+      organizationReportParameters(data),
     );
 
     return {
@@ -3273,6 +3391,23 @@ const generateCapexListPdf = async (data) => {
       `;
     }
 
+    if (data.Department) {
+      params.push(String(data.Department).trim());
+      query += `
+        AND LOWER(TRIM(cm.Department)) = LOWER($${params.length})
+      `;
+    }
+
+    if (data.FromDate) {
+      params.push(data.FromDate);
+      query += ` AND cm.CreatedDate >= $${params.length}::date `;
+    }
+
+    if (data.ToDate) {
+      params.push(data.ToDate);
+      query += ` AND cm.CreatedDate < ($${params.length}::date + INTERVAL '1 day') `;
+    }
+
     // ============================================================
     // STATUS FILTER
     // ============================================================
@@ -3614,7 +3749,11 @@ const generateCapexListPdf = async (data) => {
     label: "Filters",
     value: `Organization: ${
       data.OrganizationID ? organizationId : "All Organizations"
-    }    |    Status: ${approvalStatus || "All"}`,
+    }    |    Department: ${data.Department || "All"}    |    From: ${
+      data.FromDate || "All"
+    }    |    To: ${data.ToDate || "All"}    |    Status: ${
+      approvalStatus || "All"
+    }`,
   },
   {
     label: "Total Records",
@@ -3678,9 +3817,12 @@ const getCapexDepartmentReportPdf = async (data) => {
            WHERE Status = 'Returned'
          )::bigint AS ReturnedCount
        FROM capex_data
+       WHERE ($2::text IS NULL OR LOWER(TRIM(COALESCE(Department, 'Unspecified'))) = LOWER(TRIM($2::text)))
+         AND ($3::date IS NULL OR CreatedDate >= $3::date)
+         AND ($4::date IS NULL OR CreatedDate < ($4::date + INTERVAL '1 day'))
        GROUP BY COALESCE(Department, 'Unspecified')
        ORDER BY COALESCE(Department, 'Unspecified') ASC;`,
-      reportParameters(data),
+      departmentReportParameters(data),
     );
 
     const rows = result.rows;
@@ -3702,6 +3844,12 @@ const getCapexDepartmentReportPdf = async (data) => {
         {
           label: "Generated Date",
           value: formatDate(new Date()),
+        },
+        {
+          label: "Filters",
+          value: `Department: ${data?.Filters?.Department || "All"} | From: ${
+            data?.Filters?.FromDate || "All"
+          } | To: ${data?.Filters?.ToDate || "All"}`,
         },
       ],
 
@@ -3798,13 +3946,16 @@ const getCapexOrganizationReportPdf = async (data) => {
          ON om.OrganizationID = cm.OrganizationID
          AND om.IsDeleted = FALSE
 
+       WHERE ($2::date IS NULL OR cm.CreatedDate >= $2::date)
+         AND ($3::date IS NULL OR cm.CreatedDate < ($3::date + INTERVAL '1 day'))
+
        GROUP BY
          cm.OrganizationID,
          om.ShortName
 
        ORDER BY
          cm.OrganizationID ASC;`,
-      reportParameters(data),
+      organizationReportParameters(data),
     );
 
     const rows = result.rows;
@@ -3817,6 +3968,15 @@ const getCapexOrganizationReportPdf = async (data) => {
         data?.Filters?.OrganizationID || null,
 
       orientation: "landscape",
+
+      metadata: [
+        {
+          label: "Filters",
+          value: `From: ${data?.Filters?.FromDate || "All"} | To: ${
+            data?.Filters?.ToDate || "All"
+          }`,
+        },
+      ],
 
       columns: [
         {

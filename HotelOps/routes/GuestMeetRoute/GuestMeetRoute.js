@@ -1,6 +1,6 @@
 const express = require("express");
 const authenticateToken = require("../../middleware/authMiddleware");
-const { createDailyEntry,getAllDailyEntries,deleteDailyEntry,createGuestDetail,updateGuestDetail,deleteGuestDetail,getGuestDetailById,getDateRangeReport,getFeedbackReport,getMetByReport } = require("../../controllers/GuestMeetController/GuestMeetController");
+const { createDailyEntry,getAllDailyEntries,deleteDailyEntry,createGuestDetail,updateGuestDetail,deleteGuestDetail,getGuestDetailById,getDateRangeReport,getFeedbackReport,getMetByReport,getDateRangeReportPdf,getFeedbackReportPdf,getMetByReportPdf } = require("../../controllers/GuestMeetController/GuestMeetController");
 
 const router = express.Router();
 
@@ -22,5 +22,10 @@ router.get("/GuestEntry/GuestDetails/:id", authenticateToken, getGuestDetailById
 router.get("/GuestsDetailsReport", authenticateToken, getDateRangeReport);
 router.get("/GuestsFeedbackReport", authenticateToken, getFeedbackReport);
 router.get("/GuestMetByReport", authenticateToken, getMetByReport);
+
+// ============================================================ Report APIs PDfs
+router.get("/GuestsDetailsReportPdf", authenticateToken, getDateRangeReportPdf);
+router.get("/GuestsFeedbackReportPdf", authenticateToken, getFeedbackReportPdf);
+router.get("/GuestMetByReportPdf", authenticateToken, getMetByReportPdf);
 
 module.exports = router;

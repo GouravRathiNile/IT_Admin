@@ -34,3 +34,65 @@ WHERE um.IsDeleted = FALSE
   AND um.IsActive = TRUE
 
 ORDER BY um.UserID, uom.OrganizationID, upm.ProductID;
+
+
+
+SELECT
+   
+    cm.CapexID,
+    cm.OrganizationID,
+    cm.CapexNumber,
+    cm.Department,
+    cm.Item,
+    cm.Description,
+    cm.Make,
+    cm.Qty,
+    cm.Rate,
+    cm.Total,
+    cm.IsVoid,
+    cm.VoidRemarks,
+    cm.CreatedBy,
+    cm.CreatedDate,
+    cm.ModifiedBy,
+    cm.ModifiedDate,
+    cm.DeletedBy,
+    cm.DeletedDate,
+
+    -- =========================
+    -- CAPEX APPROVAL
+    -- =========================
+    ca.CapexApprovalID,
+
+    -- GM
+    ca.GMStatus,
+    ca.GMStatusDateTime,
+    ca.GMStatusApprovedBy,
+    ca.GMRemarks,
+    ca.GMApprovedQuantity,
+
+    -- CEO
+    ca.CEOStatus,
+    ca.CEOStatusDateTime,
+    ca.CEOStatusApprovedBy,
+    ca.CEORemarks,
+    ca.CEOApprovedQuantity,
+
+    -- OWNER
+    ca.OwnerStatus,
+    ca.OwnerStatusDateTime,
+    ca.OwnerStatusApprovedBy,
+    ca.OwnerRemarks,
+    ca.OwnerApprovedQuantity,
+
+    -- FINAL
+    ca.FinalStatus,
+    ca.FinalStatusDateTime
+
+FROM Capex_Master cm
+
+LEFT JOIN Capex_Approval ca
+    ON ca.CapexID = cm.CapexID
+    AND ca.IsDeleted = FALSE
+
+WHERE cm.CapexID = 4
+  AND cm.IsDeleted = FALSE;
