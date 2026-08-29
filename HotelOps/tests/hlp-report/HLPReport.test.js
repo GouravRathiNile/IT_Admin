@@ -8,10 +8,12 @@ const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
 const root = path.resolve(__dirname, "../..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
+// Architecture and public-contract regression coverage.
 test("HLP routes expose the approved authenticated API contract", () => {
   const source = read("routes/HLPReportRoutes/HLPReportRoutes.js");
   assert.match(source, /router\.use\(authenticateToken\)/);
   assert.match(source, /router\.get\("\/MasterList"/);
+  assert.match(source, /router\.get\("\/HLPList", controller\.hlpList\)/);
   assert.match(source, /router\.post\("\/CreateMasterField"/);
   assert.match(source, /router\.put\("\/MasterField\/Reorder", controller\.reorderMasterFields\)/);
   assert.match(source, /router\.put\("\/UpdateMasterField"/);
@@ -46,11 +48,12 @@ test("numeric total eligibility accepts numeric text and rejects mixed text", ()
 
 test("handler declares existing and master configuration actions", () => {
   const source = read("consumer/HLPReportConsumer/HLPReportHandler.js");
-  for (const action of ["GET_HLP_MASTER_LIST", "CREATE_HLP_MASTER_FIELD", "UPDATE_HLP_MASTER_FIELD", "REORDER_HLP_MASTER_FIELDS", "DELETE_HLP_MASTER_FIELD", "CREATE_HLP_REPORT", "UPDATE_HLP_REPORT", "GET_HLP_MONTHLY_REPORT", "GET_HLP_LAST_YEAR_REPORT"]) {
+  for (const action of ["GET_HLP_MASTER_LIST", "GET_HLP_LIST", "CREATE_HLP_MASTER_FIELD", "UPDATE_HLP_MASTER_FIELD", "REORDER_HLP_MASTER_FIELDS", "DELETE_HLP_MASTER_FIELD", "CREATE_HLP_REPORT", "UPDATE_HLP_REPORT", "GET_HLP_MONTHLY_REPORT", "GET_HLP_LAST_YEAR_REPORT"]) {
     assert.match(source, new RegExp(`case "${action}"`));
   }
 });
 
+// Persistence mapping and validation coverage for master/report operations.
 test("report update changes the existing parent and preserves inactive historical details", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
   assert.match(source, /SELECT id, organizationid FROM hlpreport_entry_master WHERE id = \$1 FOR UPDATE/);
@@ -80,10 +83,10 @@ test("report controller accepts optional lowercase organization filters", () => 
   assert.match(source, /entryDate \?\? req\.query\?\.EntryDate/);
 });
 
-test("master list accepts organization and entry-date filters together", async () => {
-  assert.match((await service.getMasterList({ UserID: 1, OrganizationID: 10 })).message, /must be provided together/);
-  assert.match((await service.getMasterList({ UserID: 1, EntryDate: "2026-08-21" })).message, /must be provided together/);
-  assert.match((await service.getMasterList({ UserID: 1, OrganizationID: 10, EntryDate: "2026-02-30" })).message, /valid date/);
+test("HLP entry list requires date and resolves organization/date values", async () => {
+  assert.equal((await service.getHLPList({ UserID: 1, OrganizationID: 10 })).message, "Entry date is required");
+  assert.match((await service.getHLPList({ UserID: 1, EntryDate: "2026-08-21" })).message, /positive integer/);
+  assert.match((await service.getHLPList({ UserID: 1, OrganizationID: 10, EntryDate: "2026-02-30" })).message, /valid date/);
 
   const pool = require("../../db").pool;
   const originalConnect = pool.connect;
@@ -98,11 +101,12 @@ test("master list accepts organization and entry-date filters together", async (
       },
       release() {},
     });
-    const response = await service.getMasterList({ UserID: 7, OrganizationID: 10, EntryDate: "2026-08-21" });
+    const response = await service.getHLPList({ UserID: 7, OrganizationID: 10, EntryDate: "2026-08-21" });
     assert.deepEqual(response.data, [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1, YOD: "125", LYOD: "110" }]);
   } finally { pool.connect = originalConnect; }
 });
 
+// PDF transport, layout, and report-calculation reuse coverage.
 test("HLP PDF uses the existing queue flow and returns inline binary headers", () => {
   const handler = read("consumer/HLPReportConsumer/HLPReportHandler.js");
   const controller = read("controllers/HLPReportController/HLPReportController.js");
@@ -155,6 +159,7 @@ test("monthly PDF uses the compact single-page landscape table layout", () => {
   assert.match(helper, /Page \$\{page\} of \$\{count\}/);
 });
 
+// Create-or-update concurrency contract and master-list maintenance coverage.
 test("create report is an organization-date locked create-or-update operation", () => {
   const serviceSource = read("services/HLPReportService/HLPReportService.js");
   const controllerSource = read("controllers/HLPReportController/HLPReportController.js");
@@ -205,10 +210,10 @@ test("master list ordering is backend controlled and active state is not publicl
   assert.match(source, /Only ID and Title can be supplied when updating an HLP master field/);
   assert.match(source, /ORDER BY orderby NULLS LAST, id/);
   assert.match(source, /SELECT id AS "ID", title AS "Title", orderby AS "OrderBy"/);
-  assert.match(source, /result\.rows\.map\(\(row\) => \(\{ \.\.\.row, YOD: row\.YOD \?\? "", LYOD: row\.LYOD \?\? "" \}\)\)/);
+  assert.match(source, /const result = await getMasterRows\(client\)/);
 });
 
-test("master list adds blank YOD and LYOD placeholders without changing existing fields", async () => {
+test("master list returns only ID, Title and OrderBy", async () => {
   const pool = require("../../db").pool;
   const originalConnect = pool.connect;
   try {
@@ -217,7 +222,7 @@ test("master list adds blank YOD and LYOD placeholders without changing existing
       release() {},
     });
     const response = await service.getMasterList({ UserID: 1 });
-    assert.deepEqual(response.data, [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1, YOD: "", LYOD: "" }]);
+    assert.deepEqual(response.data, [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1 }]);
   } finally { pool.connect = originalConnect; }
 });
 

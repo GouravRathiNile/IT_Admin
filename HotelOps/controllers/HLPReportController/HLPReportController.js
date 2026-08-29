@@ -4,11 +4,13 @@ const STATUS_CODES = require("../../utils/statusCodes");
 const AppError = require("../../utils/AppError");
 const handleError = require("../../utils/errorHandler");
 
+// Audit identity always comes from the authenticated JWT, never request input.
 const userID = (req) => {
   const id = Number(req.user?.UserID);
   if (!Number.isSafeInteger(id) || id < 1) throw new AppError("Authenticated user is invalid", STATUS_CODES.UNAUTHORIZED);
   return id;
 };
+// Shared JSON bridge for HLP controller-to-RabbitMQ communication.
 const send = async (req, res, action, data, successStatus = STATUS_CODES.SUCCESS) => {
   try {
     const response = await producer.sendMessage(QUEUE.HLP_REPORT.REQUEST, QUEUE.HLP_REPORT.RESPONSE, {
@@ -27,7 +29,11 @@ const send = async (req, res, action, data, successStatus = STATUS_CODES.SUCCESS
   }
 };
 
-exports.masterList = (req, res) => send(req, res, "GET_HLP_MASTER_LIST", {
+// Master-page list returns configuration fields only.
+exports.masterList = (req, res) => send(req, res, "GET_HLP_MASTER_LIST", {});
+
+// Entry-page list resolves stored values for one organization and entry date.
+exports.hlpList = (req, res) => send(req, res, "GET_HLP_LIST", {
   OrganizationID: req.query?.organizationId ?? req.query?.OrganizationID ?? req.query?.organizationid,
   EntryDate: req.query?.entryDate ?? req.query?.EntryDate ?? req.query?.entrydate,
 });
@@ -35,6 +41,7 @@ exports.createMasterField = (req, res) => send(req, res, "CREATE_HLP_MASTER_FIEL
 exports.reorderMasterFields = (req, res) => send(req, res, "REORDER_HLP_MASTER_FIELDS", req.body || {});
 exports.updateMasterField = (req, res) => send(req, res, "UPDATE_HLP_MASTER_FIELD", req.body || {});
 exports.deleteMasterField = (req, res) => send(req, res, "DELETE_HLP_MASTER_FIELD", req.body || {});
+// Create performs create-or-update using OrganizationID + EntryDate.
 exports.create = (req, res) => {
   const body = req.body || {};
   return send(req, res, "CREATE_HLP_REPORT", body, STATUS_CODES.CREATED);
@@ -50,6 +57,7 @@ exports.lastYearReport = (req, res) => send(req, res, "GET_HLP_LAST_YEAR_REPORT"
   EntryDate: req.query?.entryDate ?? req.query?.EntryDate,
 });
 
+// PDF bytes travel through RabbitMQ as base64 and are restored before HTTP output.
 const sendPdf = async (req, res, action, data) => {
   try {
     const response = await producer.sendMessage(QUEUE.HLP_REPORT.REQUEST, QUEUE.HLP_REPORT.RESPONSE, {
@@ -82,6 +90,7 @@ exports.lastYearReportPdf = (req, res) => sendPdf(req, res, "GENERATE_HLP_LAST_Y
   EntryDate: req.query?.entryDate ?? req.query?.EntryDate,
 });
 
+// Validate the public route ID before dispatching individual PDF generation.
 exports.reportPdf = async (req, res) => {
   try {
     const normalizedID = String(req.params?.id ?? "").trim();
