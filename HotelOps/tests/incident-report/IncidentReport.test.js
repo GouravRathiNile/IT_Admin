@@ -67,6 +67,20 @@ test("organization resolution handles no, single and multiple mappings", async (
   }
 });
 
+test("Incident GET controllers use direct services while mutation actions remain queued", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controller = fs.readFileSync(path.resolve(__dirname, "../../controllers/IncidentReportController/IncidentReportController.js"), "utf8");
+  const handler = fs.readFileSync(path.resolve(__dirname, "../../consumer/IncidentReportConsumer/IncidentReportHandler.js"), "utf8");
+  for (const method of ["list", "get", "report", "exportReport", "reportPdf"]) {
+    assert.match(controller, new RegExp(`IncidentReportService\\.${method}`));
+  }
+  assert.doesNotMatch(handler, /case "(?:LIST_INCIDENT_REPORTS|GET_INCIDENT_REPORT|REPORT_INCIDENT_REPORTS|EXPORT_INCIDENT_REPORTS|INCIDENT_REPORT_PDF)"/);
+  for (const action of ["CREATE_INCIDENT_REPORT", "UPDATE_INCIDENT_REPORT", "DELETE_INCIDENT_REPORT"]) {
+    assert.match(handler, new RegExp(`case "${action}"`));
+  }
+});
+
 test("list organization query is optional, validated and preserved with existing filters", () => {
   const query = { ...listDTO({ page: "2", pageSize: "10", search: "rainfall", fromDate: "2026-08-01", toDate: "2026-08-31", year: "2026", month: "8" }), organizationId: "30" };
   assert.equal(query.organizationId, "30");
@@ -133,13 +147,62 @@ test("create stores the explicitly requested accessible organization", async () 
   }
 });
 
-test("response DTOs keep list compact and detail complete", () => {
-  const row = { id: "1", organizationid: "10", organizationshortname: "Ramada Encore", reportdate: "2026-08-20", description: "Detail", isdeleted: false };
-  assert.equal(compactDTO(row).Description, undefined);
+test("list DTO includes fields required to reopen an incident for editing", () => {
+  const row = { id: "1", organizationid: "10", organizationshortname: "Ramada Encore", reportdate: "2026-08-20", description: "Detail", damagedcaused: "Cable", investigation: "Inspected", isdeleted: false };
+  assert.equal(compactDTO(row).Description, "Detail");
+  assert.equal(compactDTO(row).Damagedcaused, "Cable");
+  assert.equal(compactDTO(row).Investigation, "Inspected");
   assert.equal(compactDTO(row).Organization, "Ramada Encore");
   assert.equal(compactDTO(row).OrganizationID, undefined);
   assert.equal(detailDTO(row).Description, "Detail");
   assert.equal(detailDTO(row).IsDeleted, undefined);
+});
+
+test("updated edit fields are returned by the Incident List service", async () => {
+  const originals = {
+    resolveRequestedOrganization: repository.resolveRequestedOrganization,
+    findOrganizationByID: repository.findOrganizationByID,
+    getClient: repository.getClient,
+    findByID: repository.findByID,
+    update: repository.update,
+    list: repository.list,
+  };
+  const stored = {
+    id: "123", organizationid: "30", organizationshortname: "Nile",
+    reportdate: "2026-08-20", incidentdate: "2026-08-20", description: "Old",
+    damagedcaused: "Old damage", investigation: "Old investigation",
+  };
+  try {
+    repository.resolveRequestedOrganization = async () => ({ organizationid: "30", organizationname: "Nile", shortname: "Nile" });
+    repository.findOrganizationByID = async () => ({ organizationid: "30" });
+    repository.getClient = async () => ({ query: async () => ({}), release() {} });
+    repository.findByID = async () => stored;
+    repository.update = async (_client, _id, _organizationID, payload) => Object.assign(stored, {
+      description: payload.Description,
+      damagedcaused: payload.Damagedcaused,
+      investigation: payload.Investigation,
+    });
+    repository.list = async () => ({ rows: [stored], total: 1 });
+
+    const updated = await service.update({
+      UserID: 7, ID: "123", Payload: {
+        Description: "Updated description",
+        Damagedcaused: "Updated damage",
+        Investigation: "Updated investigation",
+      },
+    });
+    assert.equal(updated.success, true);
+    const listed = await service.list({
+      UserID: 7,
+      Query: { organizationId: 30, page: 1, pageSize: 10 },
+    });
+    assert.deepEqual(
+      { Description: listed.data[0].Description, Damagedcaused: listed.data[0].Damagedcaused, Investigation: listed.data[0].Investigation },
+      { Description: "Updated description", Damagedcaused: "Updated damage", Investigation: "Updated investigation" },
+    );
+  } finally {
+    Object.assign(repository, originals);
+  }
 });
 
 test("new safe IDs are numeric while legacy oversized IDs remain compatible", () => {

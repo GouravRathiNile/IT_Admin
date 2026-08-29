@@ -54,6 +54,20 @@ test("list query parses organization and comma-separated department IDs", () => 
   assert.deepEqual(data.departmentIds, [1, 2, 3]);
 });
 
+test("Guest Glitch GET controllers call services directly and mutation queues remain", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const controller = fs.readFileSync(path.resolve(__dirname, "../../controllers/GuestGlitchController/GuestGlitchController.js"), "utf8");
+  const handler = fs.readFileSync(path.resolve(__dirname, "../../consumer/GuestGlitchConsumer/GuestGlitchHandler.js"), "utf8");
+  for (const method of ["list", "get", "listOptions", "report", "masterReport", "reportDetail", "gmView", "exportReport", "masterReportPdf", "attachment"]) {
+    assert.match(controller, new RegExp(`GuestGlitchService\\.${method}`));
+  }
+  assert.doesNotMatch(handler, /case "(?:LIST_GUEST_GLITCH|GET_GUEST_GLITCH|LIST_GUEST_GLITCH_OPTIONS|REPORT_GUEST_GLITCH|EXPORT_GUEST_GLITCH_REPORT|REPORT_GUEST_GLITCH_DETAIL|MASTER_REPORT_GUEST_GLITCH|MASTER_REPORT_GUEST_GLITCH_PDF|GET_GUEST_GLITCH_GM|GET_GUEST_GLITCH_ATTACHMENT)"/);
+  for (const action of ["CREATE_GUEST_GLITCH", "UPDATE_GUEST_GLITCH", "DELETE_GUEST_GLITCH", "UPDATE_GUEST_GLITCH_STATUS", "UPSERT_GUEST_GLITCH_OPTION", "GUEST_GLITCH_GM_ACTION"]) {
+    assert.match(handler, new RegExp(`case "${action}"`));
+  }
+});
+
 test("list response contains only approved fields and organization short name", () => {
   const response = listResponseDTO({ id: 1012, organizationid: 30, organizationname: "Ramada Encore by Wyndham, Udaipur", shortname: "Ramada",
     entrydate: "2026-08-25", time: "14:30", roomnumber: "101", guestname: "Rohit Sharma", complaint: "Air conditioning issue",

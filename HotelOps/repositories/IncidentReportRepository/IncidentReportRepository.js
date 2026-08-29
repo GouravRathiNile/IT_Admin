@@ -8,7 +8,8 @@ const DETAIL_COLUMNS = `ir.id, ir.organizationid, ir.reportdate, ir.incidentdate
   ir.createddate, ir.createdby, ir.modifydate, ir.modifyby,
   om.shortname AS organizationshortname`;
 const COMPACT_COLUMNS = `ir.id, ir.organizationid, ir.reportdate, ir.incidentdate,
-  ir.time, ir.location, ir.accidentcause, ir.anycasualty,
+  ir.time, ir.location, ir.accidentcause, ir.anycasualty, ir.description,
+  ir.damagedcaused, ir.investigation,
   ir.presentduringincident, ir.reportto, ir.reportby,
   om.shortname AS organizationshortname`;
 

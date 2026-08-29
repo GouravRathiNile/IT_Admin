@@ -26,6 +26,7 @@ const INCIDENT_PDF_FIELDS = Object.freeze([
 const fail = (message, statusCode = 400) => ({ success: false, statusCode, message });
 const clean = (data) => Object.fromEntries(Object.entries(data).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value]));
 
+// Resolve either the explicitly selected authorized organization or the user's sole mapping.
 const resolveOrganization = async (userID, requestedOrganizationID = null) => {
   if (requestedOrganizationID !== null && requestedOrganizationID !== undefined && requestedOrganizationID !== "") {
     const row = await repository.resolveRequestedOrganization(userID, Number(requestedOrganizationID));
@@ -38,12 +39,14 @@ const resolveOrganization = async (userID, requestedOrganizationID = null) => {
   return { OrganizationID: Number(rows[0].organizationid), OrganizationName: rows[0].organizationname, OrganizationShortName: rows[0].shortname };
 };
 
+// Resolve an existing record's organization without leaking cross-organization ownership.
 const resolveRecordOrganization = async (client, userID, incidentID) => {
   const record = await repository.findOrganizationByID(client, incidentID);
   if (!record) return { error: fail("Incident report not found.", 404) };
   return resolveOrganization(userID, record.organizationid);
 };
 
+// Create delegates ID reservation and insertion to the organization-scoped repository.
 const create = async (data) => {
   let client;
   try {
@@ -61,6 +64,7 @@ const create = async (data) => {
   } finally { if (client) client.release(); }
 };
 
+// Detail reads validate record ownership before returning the public detail DTO.
 const get = async (data) => {
   let client;
   try {
@@ -76,6 +80,7 @@ const get = async (data) => {
   } finally { if (client) client.release(); }
 };
 
+// Shared database-paginated list implementation powers compact and detailed reports.
 const list = async (data, detailed = false) => {
   try {
     const organization = await resolveOrganization(data.UserID, data.Query.organizationId);
@@ -93,6 +98,7 @@ const list = async (data, detailed = false) => {
   }
 };
 
+// Mutations lock and scope the existing record before applying supplied changes.
 const update = async (data) => {
   let client;
   try {
@@ -127,6 +133,7 @@ const remove = async (data) => {
   } finally { if (client) client.release(); }
 };
 
+// PDF generation reuses the same organization-scoped detail lookup as JSON reads.
 const reportPdf = async (data) => {
   let client;
   try {
@@ -147,6 +154,7 @@ const reportPdf = async (data) => {
   } finally { if (client) client.release(); }
 };
 
+// CSV/Excel exports reuse repository filters without public pagination limits.
 const exportReport = async (data) => {
   try {
     if (!["csv", "excel"].includes(data.format)) return fail("Invalid Incident Report export format.");
