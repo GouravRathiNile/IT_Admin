@@ -1,6 +1,7 @@
 const { pool } = require("../../db");
 const {retryableDatabaseResponse} = require("../../utils/retryableDatabaseError");
 const { formatDate } = require("../../utils/dateFormatter");
+const { generatePdf } = require("../../utils/pdfHelper");
 
 // ============================================================ Shared Responses(Success,Fail Massege Helper)
 const fail = (message, statusCode = 400) => ({
