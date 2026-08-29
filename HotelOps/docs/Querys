@@ -1,0 +1,36 @@
+SELECT
+    um.UserID,
+    um.Username,
+    um.FullName,
+    um.EmployeeCode,
+    um.UserType,
+    um.LoginType,
+    um.Email,
+    um.PhoneNumber,
+    um.Designation,
+    um.DepartmentID,
+
+    uom.OrganizationID,
+    om.OrganizationName,
+
+    upm.ProductID,
+    pm.ProductName
+
+FROM user_master um
+
+LEFT JOIN user_org_mapping uom
+    ON um.UserID = uom.UserID
+
+LEFT JOIN organization_master om
+    ON uom.OrganizationID = om.OrganizationID
+
+LEFT JOIN user_product_mapping upm
+    ON um.UserID = upm.UserID
+
+LEFT JOIN product_master pm
+    ON upm.ProductID = pm.ProductID
+
+WHERE um.IsDeleted = FALSE
+  AND um.IsActive = TRUE
+
+ORDER BY um.UserID, uom.OrganizationID, upm.ProductID;

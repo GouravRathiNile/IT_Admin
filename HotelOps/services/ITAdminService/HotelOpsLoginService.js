@@ -277,6 +277,7 @@ LIMIT 1;
         LoginType: user.logintype,
 
         LoginMode: loginMode,
+        UserType: user.usertype,
       },
     };
   } catch (error) {

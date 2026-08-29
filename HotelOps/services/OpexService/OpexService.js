@@ -1,5 +1,7 @@
 const { pool } = require("../../db");
-const {retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
+const {
+  retryableDatabaseResponse,
+} = require("../../utils/retryableDatabaseError");
 const generateDocumentUrl = require("../../AzurConfigration/Opex/AzureGetData");
 const { formatDate } = require("../../utils/dateFormatter");
 const PdfPrinter = require("pdfmake");
@@ -13,13 +15,7 @@ const DEFAULT_APPROVALS = Object.freeze([
   { LevelNo: 4, ApprovalRole: "RD-FC" },
   { LevelNo: 5, ApprovalRole: "CEO" },
 ]);
-const APPROVAL_ROLES = new Set([
-  "HOD",
-  "FC",
-  "GM",
-  "RD-FC",
-  "CEO",
-]);
+const APPROVAL_ROLES = new Set(["HOD", "FC", "GM", "RD-FC", "CEO"]);
 
 // ============================================================ Shared Response Helpers(Create Helpers)
 const fail = (message, statusCode = 400) => ({
@@ -104,9 +100,7 @@ const createOpex = async (data) => {
   let client;
   let transactionStarted = false;
 
-  const documents = Array.isArray(data.Documents)
-    ? data.Documents
-    : [];
+  const documents = Array.isArray(data.Documents) ? data.Documents : [];
 
   try {
     client = await pool.connect();
@@ -133,12 +127,10 @@ const createOpex = async (data) => {
 
       RETURNING LastOpexNumber;
       `,
-      [data.OrganizationID]
+      [data.OrganizationID],
     );
 
-    const OpexNumber = Number(
-      sequenceResult.rows[0].lastopexnumber
-    );
+    const OpexNumber = Number(sequenceResult.rows[0].lastopexnumber);
 
     // ========================================================
     // 2. Create Opex Master
@@ -191,15 +183,13 @@ const createOpex = async (data) => {
         data.Rate,
         data.Total,
         data.CreatedBy,
-      ]
+      ],
     );
 
     // DB generated OpexID
     const OpexID = masterResult.rows[0].opexid;
 
-    const total = Number(
-      masterResult.rows[0].total
-    );
+    const total = Number(masterResult.rows[0].total);
 
     // ========================================================
     // 3. Create Documents
@@ -241,7 +231,7 @@ const createOpex = async (data) => {
           document.FileType,
           document.FileSize,
           data.CreatedBy,
-        ]
+        ],
       );
     }
 
@@ -261,12 +251,10 @@ const createOpex = async (data) => {
         ApprovalLevel ASC,
         OpexApprovalConfigID ASC;
       `,
-      [data.OrganizationID]
+      [data.OrganizationID],
     );
 
-    const approvals = mergeApprovalConfiguration(
-      approvalConfigResult.rows
-    );
+    const approvals = mergeApprovalConfiguration(approvalConfigResult.rows);
 
     // ========================================================
     // 5. Validate Approval Configuration
@@ -277,8 +265,8 @@ const createOpex = async (data) => {
         transactionStarted,
         fail(
           "Opex approval configuration contains an invalid approval role.",
-          400
-        )
+          400,
+        ),
       );
     }
 
@@ -315,10 +303,7 @@ const createOpex = async (data) => {
         CURRENT_TIMESTAMP
       );
       `,
-      [
-        OpexID,
-        data.CreatedBy,
-      ]
+      [OpexID, data.CreatedBy],
     );
 
     // ========================================================
@@ -331,39 +316,24 @@ const createOpex = async (data) => {
       success: true,
       message: "Opex created successfully.",
     };
-
   } catch (error) {
     await rollback(client, transactionStarted);
 
-    console.error(
-      "Create Opex Error:",
-      error.message
-    );
+    console.error("Create Opex Error:", error.message);
 
-    const retryResponse =
-      retryableDatabaseResponse(error);
+    const retryResponse = retryableDatabaseResponse(error);
 
     if (retryResponse) return retryResponse;
 
     if (error.code === "23503") {
-      return fail(
-        "Invalid Opex organization or related data.",
-        400
-      );
+      return fail("Invalid Opex organization or related data.", 400);
     }
 
     if (error.code === "23505") {
-      return fail(
-        "A Opex record with the same details already exists.",
-        409
-      );
+      return fail("A Opex record with the same details already exists.", 409);
     }
 
-    return fail(
-      "Unable to create Opex at this time.",
-      500
-    );
-
+    return fail("Unable to create Opex at this time.", 500);
   } finally {
     if (client) client.release();
   }
@@ -374,6 +344,7 @@ const Opex_SELECT = `
   SELECT 
     cm.OpexID, 
     cm.OrganizationID, 
+    om.ShortName AS OrganizationShortName,
     cm.OpexNumber, 
     cm.Department, 
     cm.Item, 
@@ -509,6 +480,7 @@ const Opex_SELECT = `
 const mapMaster = (row) => ({
   OpexID: Number(row.opexid),
   OrganizationID: Number(row.organizationid),
+  OrganizationShortName: row.organizationshortname,
   OpexNumber: Number(row.opexnumber),
   Department: row.department,
   Item: row.item,
@@ -667,9 +639,7 @@ const attachRelatedData = async (OpexRows) => {
   // ============================================================
 
   for (const row of documentsResult.rows) {
-    byID
-      .get(Number(row.opexid))
-      ?.Documents.push(mapDocument(row));
+    byID.get(Number(row.opexid))?.Documents.push(mapDocument(row));
   }
 
   // ============================================================
@@ -677,18 +647,14 @@ const attachRelatedData = async (OpexRows) => {
   // ============================================================
 
   for (const row of approvalsResult.rows) {
-    byID
-      .get(Number(row.opexid))
-      ?.Approvals.push(mapApproval(row));
+    byID.get(Number(row.opexid))?.Approvals.push(mapApproval(row));
   }
 
   // ============================================================
   // Return
   // ============================================================
 
-  return OpexRows.map((row) =>
-    byID.get(Number(row.opexid))
-  );
+  return OpexRows.map((row) => byID.get(Number(row.opexid)));
 };
 // ============================================================ Get All Opex
 const getAllOpex = async (data) => {
@@ -732,12 +698,19 @@ const getAllOpex = async (data) => {
       ? String(data.Status).toUpperCase()
       : null;
 
-    const validStatuses = ["PENDING", "APPROVED", "REJECTED"];
+    const validStatuses = [
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "HOLD",
+      "RETURNED",
+    ];
 
     if (approvalStatus && !validStatuses.includes(approvalStatus)) {
       return {
         success: false,
-        message: "Status must be Pending, Approved, or Rejected.",
+        message:
+          "Status must be Pending, Approved, Rejected, Hold, or Returned.",
       };
     }
 
@@ -782,7 +755,14 @@ const getAllOpex = async (data) => {
       // ---------------------------------------------------
 
       if (["HOD", "FC", "GM", "RD-FC", "CEO"].includes(userType)) {
-        if (approvalStatus) {
+        if (approvalStatus === "PENDING") {
+          params.push(userType);
+
+          query += `
+            AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
+            AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+          `;
+        } else if (approvalStatus) {
           params.push(approvalStatus);
 
           query += `
@@ -840,20 +820,8 @@ const getAllOpex = async (data) => {
 
     let countQuery = `
       SELECT COUNT(*) AS TotalCount
-
-      FROM Opex_Master cm
-
-      INNER JOIN Organization_Master om
-        ON om.OrganizationID = cm.OrganizationID
-       AND om.IsActive = TRUE
-       AND om.IsDeleted = FALSE
-       AND om.ActivationStatus = TRUE
-
-      LEFT JOIN Opex_Approval approval_state
-        ON approval_state.OpexID = cm.OpexID
-       AND approval_state.IsDeleted = FALSE
-
-      WHERE cm.IsDeleted = FALSE
+      FROM (
+        ${Opex_SELECT}
     `;
 
     const countParams = [];
@@ -875,7 +843,14 @@ const getAllOpex = async (data) => {
     // =====================================================
 
     if (approverStatusColumn) {
-      if (approvalStatus) {
+      if (approvalStatus === "PENDING") {
+        countParams.push(userType);
+
+        countQuery += `
+          AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${countParams.length}
+          AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+        `;
+      } else if (approvalStatus) {
         countParams.push(approvalStatus);
 
         countQuery += `
@@ -887,17 +862,30 @@ const getAllOpex = async (data) => {
           ) = $${countParams.length}
         `;
       } else {
-        // Default pending for approvers
+        countParams.push(userType);
+
+        // Use the same current-stage filter as the main list query.
         countQuery += `
           AND UPPER(
             COALESCE(
-              ${approverStatusColumn},
+              current_stage.ApprovalRole,
+              ''
+            )
+          ) = $${countParams.length}
+
+          AND UPPER(
+            COALESCE(
+              current_stage.Status,
               'PENDING'
             )
           ) = 'PENDING'
         `;
       }
     }
+
+    countQuery += `
+      ) filtered_opex
+    `;
 
     // =====================================================
     // Execute
@@ -1487,7 +1475,7 @@ const processOpexApproval = async (data) => {
     // 2. VALIDATE ACTION
     // ============================================================
 
-    if (!["APPROVE", "REJECT", "RETURN"].includes(action)) {
+    if (!["APPROVE", "REJECT", "RETURN", "HOLD"].includes(action)) {
       return fail("Invalid Opex approval action.", 400);
     }
 
@@ -1495,7 +1483,7 @@ const processOpexApproval = async (data) => {
     // 3. REMARKS REQUIRED
     // ============================================================
 
-    if (["REJECT", "RETURN"].includes(action) && !remarks) {
+    if (["REJECT", "RETURN", "HOLD"].includes(action) && !remarks) {
       return fail(`Remarks are required when the action is ${action}.`, 400);
     }
 
@@ -1526,6 +1514,7 @@ const processOpexApproval = async (data) => {
         cm.OpexID,
         cm.OpexNumber,
         cm.OrganizationID,
+        cm.IsVoid,
         cm.ModifiedDate
       FROM Opex_Master cm
       WHERE cm.OpexID = $1
@@ -1553,6 +1542,12 @@ const processOpexApproval = async (data) => {
     }
 
     const Opex = masterResult.rows[0];
+
+    if (Opex.isvoid === true) {
+      await rollback(client, transactionStarted);
+      transactionStarted = false;
+      return fail("Void Opex cannot be processed for approval.", 400);
+    }
 
     // ============================================================
     // 8. GET APPROVAL CONFIGURATION
@@ -1595,30 +1590,35 @@ const processOpexApproval = async (data) => {
       SELECT
         OpexApprovalID,
 
-        HODStatus,
-        HODStatusDateTime,
-        HODStatusApprovedBy,
-        HODRemarks,
+       HODStatus,
+HODApprovedQuantity,
+HODStatusDateTime,
+HODStatusApprovedBy,
+HODRemarks,
 
-        FCStatus,
-        FCStatusDateTime,
-        FCStatusApprovedBy,
-        FCRemarks,
+FCStatus,
+FCApprovedQuantity,
+FCStatusDateTime,
+FCStatusApprovedBy,
+FCRemarks,
 
-        GMStatus,
-        GMStatusDateTime,
-        GMStatusApprovedBy,
-        GMRemarks,
+GMStatus,
+GMApprovedQuantity,
+GMStatusDateTime,
+GMStatusApprovedBy,
+GMRemarks,
 
-        RDFCStatus,
-        RDFCStatusDateTime,
-        RDFCStatusApprovedBy,
-        RDFCRemarks,
+RDFCStatus,
+RDFCApprovedQuantity,
+RDFCStatusDateTime,
+RDFCStatusApprovedBy,
+RDFCRemarks,
 
-        CEOStatus,
-        CEOStatusDateTime,
-        CEOStatusApprovedBy,
-        CEORemarks,
+CEOStatus,
+CEOApprovedQuantity,
+CEOStatusDateTime,
+CEOStatusApprovedBy,
+CEORemarks,
 
         FinalStatus,
         FinalStatusDateTime
@@ -1658,6 +1658,7 @@ const processOpexApproval = async (data) => {
         case "HOD":
           return {
             status: approval.hodstatus,
+            approvedQuantity: approval.hodapprovedquantity,
             statusDateTime: approval.hodstatusdatetime,
             approvedBy: approval.hodstatusapprovedby,
             remarks: approval.hodremarks,
@@ -1666,6 +1667,7 @@ const processOpexApproval = async (data) => {
         case "FC":
           return {
             status: approval.fcstatus,
+            approvedQuantity: approval.fcapprovedquantity,
             statusDateTime: approval.fcstatusdatetime,
             approvedBy: approval.fcstatusapprovedby,
             remarks: approval.fcremarks,
@@ -1674,6 +1676,7 @@ const processOpexApproval = async (data) => {
         case "GM":
           return {
             status: approval.gmstatus,
+            approvedQuantity: approval.gmapprovedquantity,
             statusDateTime: approval.gmstatusdatetime,
             approvedBy: approval.gmstatusapprovedby,
             remarks: approval.gmremarks,
@@ -1682,6 +1685,7 @@ const processOpexApproval = async (data) => {
         case "RD-FC":
           return {
             status: approval.rdfcstatus,
+            approvedQuantity: approval.rdfcapprovedquantity,
             statusDateTime: approval.rdfcstatusdatetime,
             approvedBy: approval.rdfcstatusapprovedby,
             remarks: approval.rdfcremarks,
@@ -1690,6 +1694,7 @@ const processOpexApproval = async (data) => {
         case "CEO":
           return {
             status: approval.ceostatus,
+            approvedQuantity: approval.ceoapprovedquantity,
             statusDateTime: approval.ceostatusdatetime,
             approvedBy: approval.ceostatusapprovedby,
             remarks: approval.ceoremarks,
@@ -1730,6 +1735,7 @@ const processOpexApproval = async (data) => {
     // APPROVED  -> skip
     // PENDING   -> current
     // RETURNED  -> current
+    // HOLD      -> current
     // REJECTED  -> current
     //
     // This means:
@@ -1832,12 +1838,12 @@ const processOpexApproval = async (data) => {
     // CASE 1:
     // USER IS CURRENT STAGE
     //
-    // PENDING / RETURNED / REJECTED
+    // PENDING / RETURNED / REJECTED / HOLD
     // ------------------------------------------------------------
 
     if (
       userStageIndex === currentIndex &&
-      ["PENDING", "RETURNED", "REJECTED"].includes(userStatus)
+      ["PENDING", "RETURNED", "REJECTED", "HOLD"].includes(userStatus)
     ) {
       canPerformAction = true;
     }
@@ -1888,77 +1894,104 @@ const processOpexApproval = async (data) => {
     // 18. UPDATE ROLE APPROVAL HELPER
     // ============================================================
 
-    const updateRoleApproval = async (role, status, userId, roleRemarks) => {
+    const updateRoleApproval = async (
+      role,
+      status,
+      userId,
+      roleRemarks,
+      approvedQuantity = null,
+    ) => {
       let query = "";
 
       const params = [
         status,
         userId,
         roleRemarks || null,
+        approvedQuantity !== undefined &&
+        approvedQuantity !== null &&
+        approvedQuantity !== ""
+          ? Number(approvedQuantity)
+          : null,
         approval.opexapprovalid,
       ];
-
       switch (role) {
         case "HOD":
           query = `
-            UPDATE Opex_Approval
-            SET HODStatus = $1, HODStatusDateTime = CURRENT_TIMESTAMP,
-                HODStatusApprovedBy = $2, HODRemarks = $3,
-                ModifiedBy = $2, ModifiedDate = CURRENT_TIMESTAMP
-            WHERE OpexApprovalID = $4 AND IsDeleted = FALSE;
-          `;
+    UPDATE Opex_Approval
+    SET
+      HODStatus = $1,
+      HODStatusDateTime = CURRENT_TIMESTAMP,
+      HODStatusApprovedBy = $2,
+      HODRemarks = $3,
+      HODApprovedQuantity = $4,
+      ModifiedBy = $2,
+      ModifiedDate = CURRENT_TIMESTAMP
+    WHERE OpexApprovalID = $5
+      AND IsDeleted = FALSE;
+  `;
           break;
 
         case "FC":
           query = `
-            UPDATE Opex_Approval
-            SET FCStatus = $1, FCStatusDateTime = CURRENT_TIMESTAMP,
-                FCStatusApprovedBy = $2, FCRemarks = $3,
-                ModifiedBy = $2, ModifiedDate = CURRENT_TIMESTAMP
-            WHERE OpexApprovalID = $4 AND IsDeleted = FALSE;
-          `;
+    UPDATE Opex_Approval
+    SET
+      FCStatus = $1,
+      FCStatusDateTime = CURRENT_TIMESTAMP,
+      FCStatusApprovedBy = $2,
+      FCRemarks = $3,
+      FCApprovedQuantity = $4,
+      ModifiedBy = $2,
+      ModifiedDate = CURRENT_TIMESTAMP
+    WHERE OpexApprovalID = $5
+      AND IsDeleted = FALSE;
+  `;
           break;
-
         case "GM":
           query = `
-            UPDATE Opex_Approval
-            SET
-              GMStatus = $1,
-              GMStatusDateTime = CURRENT_TIMESTAMP,
-              GMStatusApprovedBy = $2,
-              GMRemarks = $3,
-              ModifiedBy = $2,
-              ModifiedDate = CURRENT_TIMESTAMP
-            WHERE OpexApprovalID = $4
-              AND IsDeleted = FALSE;
-          `;
-
+    UPDATE Opex_Approval
+    SET
+      GMStatus = $1,
+      GMStatusDateTime = CURRENT_TIMESTAMP,
+      GMStatusApprovedBy = $2,
+      GMRemarks = $3,
+      GMApprovedQuantity = $4,
+      ModifiedBy = $2,
+      ModifiedDate = CURRENT_TIMESTAMP
+    WHERE OpexApprovalID = $5
+      AND IsDeleted = FALSE;
+  `;
           break;
 
         case "RD-FC":
           query = `
-            UPDATE Opex_Approval
-            SET RDFCStatus = $1, RDFCStatusDateTime = CURRENT_TIMESTAMP,
-                RDFCStatusApprovedBy = $2, RDFCRemarks = $3,
-                ModifiedBy = $2, ModifiedDate = CURRENT_TIMESTAMP
-            WHERE OpexApprovalID = $4 AND IsDeleted = FALSE;
-          `;
+    UPDATE Opex_Approval
+    SET
+      RDFCStatus = $1,
+      RDFCStatusDateTime = CURRENT_TIMESTAMP,
+      RDFCStatusApprovedBy = $2,
+      RDFCRemarks = $3,
+      RDFCApprovedQuantity = $4,
+      ModifiedBy = $2,
+      ModifiedDate = CURRENT_TIMESTAMP
+    WHERE OpexApprovalID = $5
+      AND IsDeleted = FALSE;
+  `;
           break;
 
         case "CEO":
           query = `
-            UPDATE Opex_Approval
-            SET
-              CEOStatus = $1,
-              CEOStatusDateTime = CURRENT_TIMESTAMP,
-              CEOStatusApprovedBy = $2,
-              CEORemarks = $3,
-              ModifiedBy = $2,
-              ModifiedDate = CURRENT_TIMESTAMP
-            WHERE OpexApprovalID = $4
-              AND IsDeleted = FALSE;
-          `;
-
+    UPDATE Opex_Approval
+    SET
+      CEOStatus = $1,
+      CEOStatusDateTime = CURRENT_TIMESTAMP,
+      CEOStatusApprovedBy = $2,
+      CEORemarks = $3,
+      CEOApprovedQuantity = $4,
+      ModifiedBy = $2,
+      ModifiedDate = CURRENT_TIMESTAMP
+    WHERE OpexApprovalID = $5
+      AND IsDeleted = FALSE;
+  `;
           break;
 
         default:
@@ -1990,7 +2023,7 @@ const processOpexApproval = async (data) => {
       // Update current role
       // ----------------------------------------------------------
 
-      await updateRoleApproval(approverRole, "Approved", data.UserID, remarks);
+      await updateRoleApproval(approverRole, "Approved", data.UserID, remarks,data.Quantity ?? null,);
 
       // ----------------------------------------------------------
       // Find next stage
@@ -2103,7 +2136,7 @@ const processOpexApproval = async (data) => {
     // ============================================================
 
     if (action === "REJECT") {
-      await updateRoleApproval(approverRole, "Rejected", data.UserID, remarks);
+      await updateRoleApproval(approverRole, "Rejected", data.UserID, remarks, data.Quantity ?? null,);
 
       await client.query(
         `
@@ -2161,7 +2194,7 @@ const processOpexApproval = async (data) => {
       // GM becomes current stage
       // ----------------------------------------------------------
 
-      await updateRoleApproval(approverRole, "Returned", data.UserID, remarks);
+      await updateRoleApproval(approverRole, "Returned", data.UserID, remarks,data.Quantity ?? null,);
 
       await client.query(
         `
@@ -2201,7 +2234,48 @@ const processOpexApproval = async (data) => {
     }
 
     // ============================================================
-    // 22. FALLBACK
+    // 22. HOLD
+    // Keep the current stage actionable for the same approver.
+    // ============================================================
+
+    if (action === "HOLD") {
+      if (userStageIndex !== currentIndex) {
+        await rollback(client, transactionStarted);
+        transactionStarted = false;
+
+        return fail(
+          `Only the current ${currentRole} approval stage can hold this Opex.`,
+          403,
+        );
+      }
+
+      await updateRoleApproval(approverRole, "Hold", data.UserID, remarks,data.Quantity ?? null,);
+
+      await client.query(
+        `
+        UPDATE Opex_Approval
+        SET
+          FinalStatus = 'Hold',
+          FinalStatusDateTime = CURRENT_TIMESTAMP,
+          ModifiedBy = $1,
+          ModifiedDate = CURRENT_TIMESTAMP
+        WHERE OpexApprovalID = $2
+          AND IsDeleted = FALSE;
+        `,
+        [data.UserID, approval.opexapprovalid],
+      );
+
+      await client.query("COMMIT");
+      transactionStarted = false;
+
+      return {
+        success: true,
+        message: "Opex put on hold successfully.",
+      };
+    }
+
+    // ============================================================
+    // 23. FALLBACK
     // ============================================================
 
     await rollback(client, transactionStarted);
@@ -2311,23 +2385,18 @@ const REPORT_DATA_CTE = `
 const reportParameters = (data) => {
   const filters = data.Filters || {};
 
-  return [
-    filters.OrganizationID ?? null,
-  ];
+  return [filters.OrganizationID ?? null];
 };
 // Read/report failures return synchronously; they are not background-retried.
 const reportFailure = (error, reportName) => {
   console.error(`${reportName} Error:`, error.message);
 
-  return fail(
-    `Unable to generate ${reportName} at this time.`,
-    503
-  );
+  return fail(`Unable to generate ${reportName} at this time.`, 503);
 };
 // ============================================================ Summary Report
 const getOpexSummaryReport = async (data) => {
   try {
-// console.log("Received Filters:", JSON.stringify(data.Filters));
+    // console.log("Received Filters:", JSON.stringify(data.Filters));
     // console.log("Query params:", reportParameters(data));
     const result = await pool.query(
       `
@@ -2429,12 +2498,10 @@ const getOpexSummaryReport = async (data) => {
       FROM Opex_data;
       `,
 
-      reportParameters(data)
+      reportParameters(data),
     );
 
-
     const row = result.rows[0];
-
 
     return {
       success: true,
@@ -2461,14 +2528,8 @@ const getOpexSummaryReport = async (data) => {
         VoidAmount: Number(row.voidamount),
       },
     };
-
   } catch (error) {
-
-    return reportFailure(
-      error,
-      "Opex summary report"
-    );
-
+    return reportFailure(error, "Opex summary report");
   }
 };
 // ===========================================================================(Department and Organization Reports Helpers)
@@ -2628,9 +2689,8 @@ const getApprovalConfig = async (data) => {
         ApprovalRole: row.approvalrole,
         ApprovalOrder: Number(row.approvalorder),
         IsMandatory: row.ismandatory,
-       
+
         CreatedDate: formatDate(row.createddate),
-       
       })),
     };
   } catch (error) {
@@ -2641,7 +2701,7 @@ const getApprovalConfig = async (data) => {
 
     return fail(
       "Unable to fetch Opex approval configuration at this time.",
-      500
+      500,
     );
   }
 };
@@ -2655,19 +2715,14 @@ const createApprovalConfig = async (data) => {
 
     const OrganizationID = Number(data.OrganizationID);
 
-    const approvals = Array.isArray(data.Approvals)
-      ? data.Approvals
-      : [];
+    const approvals = Array.isArray(data.Approvals) ? data.Approvals : [];
 
     if (!Number.isInteger(OrganizationID) || OrganizationID <= 0) {
       return fail("OrganizationID is required.", 400);
     }
 
     if (approvals.length === 0) {
-      return fail(
-        "At least one approval configuration is required.",
-        400
-      );
+      return fail("At least one approval configuration is required.", 400);
     }
 
     // ============================================================
@@ -2693,50 +2748,31 @@ const createApprovalConfig = async (data) => {
     const roles = new Set();
 
     for (const approval of normalizedApprovals) {
-      const {
-        ApprovalLevel,
-        ApprovalRole,
-        ApprovalOrder,
-      } = approval;
+      const { ApprovalLevel, ApprovalRole, ApprovalOrder } = approval;
 
-      if (
-        !Number.isInteger(ApprovalLevel) ||
-        ApprovalLevel < 1
-      ) {
-        return fail(
-          "ApprovalLevel must be a positive integer.",
-          400
-        );
+      if (!Number.isInteger(ApprovalLevel) || ApprovalLevel < 1) {
+        return fail("ApprovalLevel must be a positive integer.", 400);
       }
 
-      if (
-        !Number.isInteger(ApprovalOrder) ||
-        ApprovalOrder < 1
-      ) {
-        return fail(
-          "ApprovalOrder must be a positive integer.",
-          400
-        );
+      if (!Number.isInteger(ApprovalOrder) || ApprovalOrder < 1) {
+        return fail("ApprovalOrder must be a positive integer.", 400);
       }
 
       if (!APPROVAL_ROLES.has(ApprovalRole)) {
-        return fail(
-          "ApprovalRole must be HOD, FC, GM, RD-FC, or CEO.",
-          400
-        );
+        return fail("ApprovalRole must be HOD, FC, GM, RD-FC, or CEO.", 400);
       }
 
       if (levels.has(ApprovalLevel)) {
         return fail(
           `Approval level ${ApprovalLevel} is duplicated in request.`,
-          409
+          409,
         );
       }
 
       if (roles.has(ApprovalRole)) {
         return fail(
           `${ApprovalRole} approval stage is duplicated in request.`,
-          409
+          409,
         );
       }
 
@@ -2773,14 +2809,14 @@ const createApprovalConfig = async (data) => {
       ORDER BY ApprovalLevel ASC, OpexApprovalConfigID ASC
       FOR UPDATE;
       `,
-      [OrganizationID]
+      [OrganizationID],
     );
 
     const existingConfigs = existingResult.rows;
 
     console.log(
       "EXISTING Opex CONFIGS =>",
-      JSON.stringify(existingConfigs, null, 2)
+      JSON.stringify(existingConfigs, null, 2),
     );
 
     // ============================================================
@@ -2790,10 +2826,7 @@ const createApprovalConfig = async (data) => {
     const existingByLevel = new Map();
 
     for (const row of existingConfigs) {
-      existingByLevel.set(
-        Number(row.ApprovalLevel),
-        row
-      );
+      existingByLevel.set(Number(row.ApprovalLevel), row);
     }
 
     const processedLevels = new Set();
@@ -2808,12 +2841,8 @@ const createApprovalConfig = async (data) => {
     // ============================================================
 
     for (const approval of normalizedApprovals) {
-      const {
-        ApprovalLevel,
-        ApprovalRole,
-        ApprovalOrder,
-        IsMandatory,
-      } = approval;
+      const { ApprovalLevel, ApprovalRole, ApprovalOrder, IsMandatory } =
+        approval;
 
       const existing = existingByLevel.get(ApprovalLevel);
 
@@ -2822,13 +2851,11 @@ const createApprovalConfig = async (data) => {
       // ==========================================================
 
       if (existing) {
-        const ConfigID = Number(
-          existing.OpexApprovalConfigID
-        );
+        const ConfigID = Number(existing.OpexApprovalConfigID);
 
         if (!Number.isInteger(ConfigID)) {
           throw new Error(
-            `Invalid OpexApprovalConfigID: ${existing.OpexApprovalConfigID}`
+            `Invalid OpexApprovalConfigID: ${existing.OpexApprovalConfigID}`,
           );
         }
 
@@ -2857,7 +2884,7 @@ const createApprovalConfig = async (data) => {
               data.UserID,
               ConfigID,
               OrganizationID,
-            ]
+            ],
           );
 
           restored.push(ConfigID);
@@ -2866,7 +2893,6 @@ const createApprovalConfig = async (data) => {
         // --------------------------------------------------------
         // NORMAL UPDATE
         // --------------------------------------------------------
-
         else {
           await client.query(
             `
@@ -2888,7 +2914,7 @@ const createApprovalConfig = async (data) => {
               data.UserID,
               ConfigID,
               OrganizationID,
-            ]
+            ],
           );
 
           updated.push(ConfigID);
@@ -2898,7 +2924,6 @@ const createApprovalConfig = async (data) => {
       // ==========================================================
       // NEW INSERT
       // ==========================================================
-
       else {
         const [ConfigID] = await reserveNumericIDs(
           client,
@@ -2942,12 +2967,10 @@ const createApprovalConfig = async (data) => {
             ApprovalOrder,
             IsMandatory,
             data.UserID,
-          ]
+          ],
         );
 
-        const savedConfigID = Number(
-          result.rows[0].OpexApprovalConfigID
-        );
+        const savedConfigID = Number(result.rows[0].OpexApprovalConfigID);
 
         inserted.push(savedConfigID);
       }
@@ -2963,17 +2986,12 @@ const createApprovalConfig = async (data) => {
     for (const existing of existingConfigs) {
       const level = Number(existing.ApprovalLevel);
 
-      if (
-        existing.IsDeleted === false &&
-        !processedLevels.has(level)
-      ) {
-        const ConfigID = Number(
-          existing.OpexApprovalConfigID
-        );
+      if (existing.IsDeleted === false && !processedLevels.has(level)) {
+        const ConfigID = Number(existing.OpexApprovalConfigID);
 
         if (!Number.isInteger(ConfigID)) {
           throw new Error(
-            `Invalid OpexApprovalConfigID: ${existing.OpexApprovalConfigID}`
+            `Invalid OpexApprovalConfigID: ${existing.OpexApprovalConfigID}`,
           );
         }
 
@@ -2988,11 +3006,7 @@ const createApprovalConfig = async (data) => {
             AND OrganizationID = $3
             AND IsDeleted = FALSE;
           `,
-          [
-            data.UserID,
-            ConfigID,
-            OrganizationID,
-          ]
+          [data.UserID, ConfigID, OrganizationID],
         );
 
         deleted.push(ConfigID);
@@ -3008,45 +3022,31 @@ const createApprovalConfig = async (data) => {
 
     return {
       success: true,
-      message:
-        "Opex approval configuration saved successfully.",
-
+      message: "Opex approval configuration saved successfully.",
     };
-
   } catch (error) {
     if (client && transactionStarted) {
       await client.query("ROLLBACK");
     }
 
-    console.error(
-      "Save Opex Approval Config Error:",
-      error.message
-    );
+    console.error("Save Opex Approval Config Error:", error.message);
 
-    const retryResponse =
-      retryableDatabaseResponse(error);
+    const retryResponse = retryableDatabaseResponse(error);
 
     if (retryResponse) return retryResponse;
 
     if (error.code === "23505") {
-      return fail(
-        "Opex approval configuration already exists.",
-        409
-      );
+      return fail("Opex approval configuration already exists.", 409);
     }
 
     if (error.code === "23503") {
-      return fail(
-        "Invalid organization or user.",
-        400
-      );
+      return fail("Invalid organization or user.", 400);
     }
 
     return fail(
       "Unable to save Opex approval configuration at this time.",
-      500
+      500,
     );
-
   } finally {
     if (client) {
       client.release();
@@ -3092,10 +3092,7 @@ const deleteApprovalConfig = async (data) => {
       await client.query("ROLLBACK");
       transactionStarted = false;
 
-      return fail(
-        "Opex approval configuration not found.",
-        404,
-      );
+      return fail("Opex approval configuration not found.", 404);
     }
 
     await client.query("COMMIT");
@@ -3104,7 +3101,6 @@ const deleteApprovalConfig = async (data) => {
     return {
       success: true,
       message: "Opex approval configuration deleted successfully.",
-    
     };
   } catch (error) {
     if (client && transactionStarted) {
@@ -3129,22 +3125,10 @@ const deleteApprovalConfig = async (data) => {
 const generateOpexListPdf = async (Opex) => {
   const fonts = {
     Roboto: {
-      normal: path.join(
-        process.cwd(),
-        "fonts/Roboto-Regular.ttf",
-      ),
-      bold: path.join(
-        process.cwd(),
-        "fonts/Roboto-Medium.ttf",
-      ),
-      italics: path.join(
-        process.cwd(),
-        "fonts/Roboto-SemiBold.ttf",
-      ),
-      bolditalics: path.join(
-        process.cwd(),
-        "fonts/Roboto-Bold.ttf",
-      ),
+      normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
+      bold: path.join(process.cwd(), "fonts/Roboto-Medium.ttf"),
+      italics: path.join(process.cwd(), "fonts/Roboto-SemiBold.ttf"),
+      bolditalics: path.join(process.cwd(), "fonts/Roboto-Bold.ttf"),
     },
   };
 
@@ -3210,32 +3194,24 @@ const generateOpexListPdf = async (Opex) => {
     [
       { text: "Created Date", style: "label" },
       {
-        text: Opex.CreatedDate
-          ? formatDate(Opex.CreatedDate)
-          : "-",
+        text: Opex.CreatedDate ? formatDate(Opex.CreatedDate) : "-",
         style: "value",
       },
       { text: "Created By", style: "label" },
       {
-        text: Opex.CreatedBy != null
-          ? String(Opex.CreatedBy)
-          : "-",
+        text: Opex.CreatedBy != null ? String(Opex.CreatedBy) : "-",
         style: "value",
       },
     ],
     [
       { text: "Modified Date", style: "label" },
       {
-        text: Opex.ModifiedDate
-          ? formatDate(Opex.ModifiedDate)
-          : "-",
+        text: Opex.ModifiedDate ? formatDate(Opex.ModifiedDate) : "-",
         style: "value",
       },
       { text: "Modified By", style: "label" },
       {
-        text: Opex.ModifiedBy != null
-          ? String(Opex.ModifiedBy)
-          : "-",
+        text: Opex.ModifiedBy != null ? String(Opex.ModifiedBy) : "-",
         style: "value",
       },
     ],
@@ -3405,8 +3381,7 @@ const generateOpexListPdf = async (Opex) => {
           body: OpexDetails,
         },
         layout: {
-          fillColor: (rowIndex) =>
-            rowIndex % 2 === 0 ? "#F5F7FA" : "#FFFFFF",
+          fillColor: (rowIndex) => (rowIndex % 2 === 0 ? "#F5F7FA" : "#FFFFFF"),
           hLineWidth: () => 0.5,
           vLineWidth: () => 0.5,
           hLineColor: () => "#D0D7DE",
@@ -3583,7 +3558,7 @@ module.exports = {
   getOpexSummaryReport,
   getOpexDepartmentReport,
   getOpexOrganizationReport,
-   getApprovalConfig,
+  getApprovalConfig,
   createApprovalConfig,
   deleteApprovalConfig,
   generateOpexListPdf,

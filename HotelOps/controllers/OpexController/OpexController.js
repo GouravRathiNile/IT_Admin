@@ -213,9 +213,13 @@ exports.getAllOpex = async (req, res) => {
     ) {
       Status = String(req.query.Status).trim().toUpperCase();
 
-      if (!["PENDING", "APPROVED", "REJECTED"].includes(Status)) {
+      if (
+        !["PENDING", "APPROVED", "REJECTED", "HOLD", "RETURNED"].includes(
+          Status
+        )
+      ) {
         throw new AppError(
-          "Status must be Pending, Approved, or Rejected",
+          "Status must be Pending, Approved, Rejected, Hold, or Returned",
           STATUS_CODES.BAD_REQUEST
         );
       }
@@ -640,9 +644,9 @@ exports.approveOpex = async (req, res) => {
       .trim()
       .toUpperCase();
 
-    if (!["APPROVE", "REJECT", "RETURN"].includes(action)) {
+    if (!["APPROVE", "REJECT", "RETURN", "HOLD"].includes(action)) {
       throw new AppError(
-        "Action must be APPROVE, REJECT, or RETURN",
+        "Action must be APPROVE, REJECT, RETURN, or HOLD",
         STATUS_CODES.BAD_REQUEST
       );
     }
@@ -653,7 +657,7 @@ exports.approveOpex = async (req, res) => {
         : "";
 
     if (
-      ["REJECT", "RETURN"].includes(action) &&
+      ["REJECT", "RETURN", "HOLD"].includes(action) &&
       !remarks
     ) {
       throw new AppError(
@@ -963,9 +967,13 @@ exports.generateOpexListPdf = async (req, res) => {
     ) {
       Status = String(req.query.Status).trim().toUpperCase();
 
-      if (!["PENDING", "APPROVED", "REJECTED"].includes(Status)) {
+      if (
+        !["PENDING", "APPROVED", "REJECTED", "HOLD", "RETURNED"].includes(
+          Status
+        )
+      ) {
         throw new AppError(
-          "Status must be Pending, Approved, or Rejected",
+          "Status must be Pending, Approved, Rejected, Hold, or Returned",
           STATUS_CODES.BAD_REQUEST
         );
       }
