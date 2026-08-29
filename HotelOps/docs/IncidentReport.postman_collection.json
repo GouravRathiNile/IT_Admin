@@ -22,7 +22,11 @@
         "url": "{{LocalUrl}}/IncidentReport/create"
       }
     },
-    { "name": "List", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/list?organizationId=30&page=1&pageSize=10&sortBy=ReportDate&sortDirection=DESC" } },
+    {
+      "name": "List",
+      "event": [{ "listen": "test", "script": { "exec": ["const json = pm.response.json();", "pm.test('List items contain Incident Edit fields', () => {", "  (json.data || []).forEach(item => {", "    pm.expect(item).to.have.property('Description');", "    pm.expect(item).to.have.property('Damagedcaused');", "    pm.expect(item).to.have.property('Investigation');", "  });", "});"] } }],
+      "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/list?organizationId=30&page=1&pageSize=10&sortBy=ReportDate&sortDirection=DESC" }
+    },
     { "name": "List - Organization and Filters", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/list?organizationId=30&page=1&pageSize=10&fromDate=2026-08-01&toDate=2026-08-31&search=rainfall" } },
     { "name": "List - Year Month", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/list?year=2026&month=8&page=1&pageSize=10" } },
     { "name": "List - Search", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/list?search=breaker&page=1&pageSize=10" } },
@@ -30,7 +34,7 @@
     {
       "name": "Update", "request": {
         "method": "PUT", "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"ID\": {{IncidentReportID}},\n  \"Time\": \"01:00 PM\",\n  \"Location\": \"Main breaker\",\n  \"AccidentCause\": \"Updated cause\"\n}" },
+        "body": { "mode": "raw", "raw": "{\n  \"ID\": {{IncidentReportID}},\n  \"Time\": \"01:00 PM\",\n  \"Location\": \"Main breaker\",\n  \"AccidentCause\": \"Updated cause\",\n  \"Description\": \"Updated incident description\",\n  \"Damagedcaused\": \"Updated damage details\",\n  \"Investigation\": \"Updated investigation details\"\n}" },
         "url": "{{LocalUrl}}/IncidentReport/update"
       }
     },

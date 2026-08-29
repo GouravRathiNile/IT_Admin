@@ -3,12 +3,15 @@ const QUEUE = require("../../config/queue");
 const STATUS_CODES = require("../../utils/statusCodes");
 const AppError = require("../../utils/AppError");
 const handleError = require("../../utils/errorHandler");
+const ReportBuilderService = require("../../services/ReportBuilderService/ReportBuilderService");
 
+// Construct the trusted registry lookup context from route parameters and JWT identity.
 const context = (req) => ({
   module: req.params.module,
   reportType: req.params.reportType,
   UserID: Number(req.user.UserID),
 });
+// POST run/export operations intentionally retain the existing RabbitMQ flow.
 const callQueue = (action, data) => producer.sendMessage(
   QUEUE.REPORT_BUILDER.REQUEST, QUEUE.REPORT_BUILDER.RESPONSE, { action, data }
 );
@@ -20,6 +23,7 @@ const sendResponse = (res, response) => {
   );
   return res.status(STATUS_CODES.SUCCESS).json(response);
 };
+// Provide one safe error boundary for direct metadata reads and queued report jobs.
 const execute = async (res, work) => {
   try { return await work(); }
   catch (error) {
@@ -32,23 +36,26 @@ const execute = async (res, work) => {
   }
 };
 
+// Registry metadata/options are read-only and therefore call the service directly.
 exports.config = (req, res) => execute(res, async () => sendResponse(
-  res, await callQueue("GET_REPORT_CONFIG", context(req))
+  res, await ReportBuilderService.getConfig(context(req))
 ));
 exports.types = (req, res) => execute(res, async () => sendResponse(
-  res, await callQueue("GET_REPORT_TYPES", {
+  res, await ReportBuilderService.getTypes({
     module: req.params.module, UserID: Number(req.user.UserID),
   })
 ));
 exports.options = (req, res) => execute(res, async () => sendResponse(
-  res, await callQueue("GET_REPORT_OPTIONS", {
+  res, await ReportBuilderService.getOptions({
     ...context(req), field: req.params.field, organizationId: req.query.organizationId,
   })
 ));
+// Report execution remains queued in this phase by design.
 exports.run = (req, res) => execute(res, async () => sendResponse(
   res, await callQueue("RUN_REGISTERED_REPORT", { ...context(req), body: req.body || {} })
 ));
 
+// Export remains queued; base64 is converted back to bytes before the HTTP response.
 exports.exportReport = (req, res) => execute(res, async () => {
   const response = await callQueue("EXPORT_REGISTERED_REPORT", {
     ...context(req), body: req.body,

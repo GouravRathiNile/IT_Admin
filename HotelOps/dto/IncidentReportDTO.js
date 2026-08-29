@@ -25,12 +25,12 @@ const compactDTO = (row) => ({
   ID: publicID(row.id), Organization: row.organizationshortname ?? null, ReportDate: formatDate(row.reportdate),
   IncidentDate: formatDate(row.incidentdate), Time: row.time, Location: row.location,
   AccidentCause: row.accidentcause, Anycasualty: row.anycasualty,
+  Description: row.description, Damagedcaused: row.damagedcaused, Investigation: row.investigation,
   PresentDuringIncident: row.presentduringincident, ReportTo: row.reportto, ReportBy: row.reportby,
 });
 
 const detailDTO = (row) => ({
-  ...compactDTO(row), Description: row.description, Damagedcaused: row.damagedcaused,
-  Investigation: row.investigation, InvestigatedBy: row.investigatedby,
+  ...compactDTO(row), InvestigatedBy: row.investigatedby,
   CreatedDate: formatDate(row.createddate, "DD MMM YYYY HH:mm"), CreatedBy: row.createdby,
   ModifyDate: formatDate(row.modifydate, "DD MMM YYYY HH:mm"), ModifyBy: row.modifyby,
 });

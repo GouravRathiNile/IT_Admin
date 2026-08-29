@@ -6,11 +6,13 @@ const SORT_FIELDS = Object.freeze({
   roomNumber: "RoomNumber", guestName: "GuestName", status: "Status", rate: "Rate",
 });
 
+// Flatten resolved master/user arrays into stable display strings.
 const names = (items) => Array.isArray(items)
   ? items.map((item) => item?.Name ?? item?.name ?? item?.FullName ?? item?.fullname)
     .filter(Boolean).join(", ")
   : (items ?? "");
 
+// Normalize Guest Glitch DTO casing into registry column keys.
 const normalizeRow = (row) => ({
   id: row.ID == null ? null : Number(row.ID),
   organization: row.OrganizationName ?? row.Hotel ?? null,
@@ -34,6 +36,7 @@ const normalizeRow = (row) => ({
   status: row.Status ?? null,
 });
 
+// Column selection is registry-only and preserves the caller's requested order.
 const validateColumns = (definitions, requested) => {
   if (requested === undefined || requested === null) return definitions;
   if (!Array.isArray(requested) || !requested.length) {
@@ -70,6 +73,7 @@ const publicResponse = (response, normalized, columns) => ({
   pagination: normalized.pagination,
 });
 
+// Convert trusted internal definitions into the existing Guest Glitch report query.
 const queryFromDefinition = (definition, organizationIDs) => {
   const query = {
     OrganizationIDs: organizationIDs.map(Number),
@@ -89,6 +93,7 @@ const queryFromDefinition = (definition, organizationIDs) => {
   return query;
 };
 
+// Reuse GuestGlitchService → Repository; no report SQL is duplicated here.
 const getNormalized = async ({ definition, organizationIDs, columns, selectedColumns, exportOptions }) => {
   const trustedColumns = validateColumns(columns, selectedColumns);
   const response = await guestGlitchService.reportForProvider(

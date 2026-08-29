@@ -67,6 +67,7 @@ const mergeDepartmentComments = (existing = [], supplied = [], user = {}) => {
   return [...comments.values()].filter((item) => item.comment);
 };
 
+// Resolve active organization mappings; read/report operations may span all mapped hotels.
 const resolveOrganization = async (userID, allowMultiple = false) => {
   const rows = await repository.resolveOrganizations(userID);
   if (rows.length === 0) return { error: fail("No active organization is assigned to the authenticated user.", 403) };
@@ -76,6 +77,7 @@ const resolveOrganization = async (userID, allowMultiple = false) => {
     UserType: String(rows[0].usertype || "").trim(), DepartmentID: rows[0].departmentid == null ? null : Number(rows[0].departmentid) };
 };
 
+// Decorate service operations with trusted organization and actor context.
 const withOrganization = (operation, allowMultiple = false) => async (data) => {
   try {
     const organization = await resolveOrganization(data.UserID, allowMultiple);
@@ -87,6 +89,7 @@ const withOrganization = (operation, allowMultiple = false) => async (data) => {
   }
 };
 
+// Create accepts a selected organization only when it belongs to the authenticated user.
 const withSelectedOrganization = (operation) => async (data) => {
   try {
     const organizationID = Number(data.OrganizationID);
@@ -226,6 +229,7 @@ const create = async (data) => {
 //   }
 // };
 
+// Fetch an organization-scoped, filtered and paginated entry-page list.
 const list = async (data) => {
   const client = await repository.getClient();
 
@@ -280,6 +284,7 @@ const list = async (data) => {
   }
 };
 
+// Resolve one complete record and its department/user display selections.
 const get = async (data) => {
   const client = await repository.getClient();
   try {
@@ -371,6 +376,7 @@ const remove = async (data) => {
   } finally { client.release(); }
 };
 
+// Return active organization-specific dropdown configuration.
 const listOptions = async (data) => {
   try {
     if (data.OptionType && !OPTION_TYPES.includes(data.OptionType)) return fail("Invalid Guest Glitch option type.");
@@ -417,6 +423,7 @@ const mapCompactReportRows = (resolvedRows) => resolvedRows.map(({ row, resolved
   informedToUsers: selectionNames(resolved.informedToUsers),
 }));
 
+// Shared report reader supports compact/master DTOs and optional export pagination.
 const report = async (data, complete = false, options = {}) => {
   const client = await repository.getClient();
   try {
@@ -448,6 +455,7 @@ const report = async (data, complete = false, options = {}) => {
   } finally { client.release(); }
 };
 
+// Generate CSV/Excel from the same repository filters used by report screens.
 const exportReport = async (data) => {
   const client = await repository.getClient();
   try {
@@ -470,6 +478,7 @@ const exportReport = async (data) => {
   } finally { client.release(); }
 };
 
+// Fetch the complete report DTO for detail, GM view and PDF reuse.
 const reportDetail = async (data) => {
   const client = await repository.getClient();
   try {
@@ -504,6 +513,7 @@ const gmAction = async (data) => {
   return update(data);
 };
 
+// Return a short-lived SAS URL only after organization-scoped record validation.
 const attachment = async (data) => {
   const client = await repository.getClient();
   try {

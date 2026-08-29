@@ -46,11 +46,12 @@ test("numeric total eligibility accepts numeric text and rejects mixed text", ()
   assert.equal(service.numericValue("120 rooms"), false);
 });
 
-test("handler declares existing and master configuration actions", () => {
+test("handler keeps only HLP mutation actions", () => {
   const source = read("consumer/HLPReportConsumer/HLPReportHandler.js");
-  for (const action of ["GET_HLP_MASTER_LIST", "GET_HLP_LIST", "CREATE_HLP_MASTER_FIELD", "UPDATE_HLP_MASTER_FIELD", "REORDER_HLP_MASTER_FIELDS", "DELETE_HLP_MASTER_FIELD", "CREATE_HLP_REPORT", "UPDATE_HLP_REPORT", "GET_HLP_MONTHLY_REPORT", "GET_HLP_LAST_YEAR_REPORT"]) {
+  for (const action of ["CREATE_HLP_MASTER_FIELD", "UPDATE_HLP_MASTER_FIELD", "REORDER_HLP_MASTER_FIELDS", "DELETE_HLP_MASTER_FIELD", "CREATE_HLP_REPORT", "UPDATE_HLP_REPORT"]) {
     assert.match(source, new RegExp(`case "${action}"`));
   }
+  assert.doesNotMatch(source, /case "(?:GET_HLP_|GENERATE_HLP_)/);
 });
 
 // Persistence mapping and validation coverage for master/report operations.
@@ -107,10 +108,9 @@ test("HLP entry list requires date and resolves organization/date values", async
 });
 
 // PDF transport, layout, and report-calculation reuse coverage.
-test("HLP PDF uses the existing queue flow and returns inline binary headers", () => {
-  const handler = read("consumer/HLPReportConsumer/HLPReportHandler.js");
+test("HLP PDF uses direct service flow and returns inline binary headers", () => {
   const controller = read("controllers/HLPReportController/HLPReportController.js");
-  assert.match(handler, /case "GENERATE_HLP_REPORT_PDF"/);
+  assert.match(controller, /HLPReportService\.generateReportPdf/);
   assert.match(controller, /Buffer\.from\(response\.pdfBase64, "base64"\)/);
   assert.match(controller, /Content-Type", "application\/pdf"/);
   assert.match(controller, /inline; filename=\"\$\{response\.filename\}\"/);
@@ -125,10 +125,10 @@ test("monthly and last-year PDF routes precede the generic ID PDF route", () => 
 });
 
 test("report PDF actions reuse existing report service calculations", () => {
-  const handler = read("consumer/HLPReportConsumer/HLPReportHandler.js");
+  const controller = read("controllers/HLPReportController/HLPReportController.js");
   const source = read("services/HLPReportService/HLPReportService.js");
-  assert.match(handler, /case "GENERATE_HLP_MONTHLY_REPORT_PDF"/);
-  assert.match(handler, /case "GENERATE_HLP_LAST_YEAR_REPORT_PDF"/);
+  assert.match(controller, /HLPReportService\.generateMonthlyReportPdf/);
+  assert.match(controller, /HLPReportService\.generateLastYearReportPdf/);
   assert.match(source, /const report = await getMonthlyReport\(data\)/);
   assert.match(source, /const report = await getLastYearReport\(data\)/);
   assert.match(source, /HLP-Monthly-Report-\$\{period\}\.pdf/);

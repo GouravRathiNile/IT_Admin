@@ -15,6 +15,7 @@ const { generatePdf } = require("../../utils/pdfHelper");
 const { formatDate } = require("../../utils/dateFormatter");
 
 const fail = (message, statusCode = 400) => ({ success: false, statusCode, message });
+// Public module/report identifiers must resolve through the immutable registry.
 const requireModule = (moduleName) => {
   const moduleDefinition = registry.getModule(moduleName);
   if (!moduleDefinition) throw new ReportBuilderValidationError("Report module not found.", 404);
@@ -26,6 +27,7 @@ const requireReport = (moduleName, reportType) => {
   if (!report) throw new ReportBuilderValidationError("Report type not found.", 404);
   return report;
 };
+// Resolve the authenticated user's complete active organization boundary once per request.
 const resolveAccess = async (userID) => {
   if (!Number.isInteger(Number(userID)) || Number(userID) <= 0) {
     throw new ReportBuilderValidationError("Invalid authenticated user.", 401);
@@ -34,6 +36,7 @@ const resolveAccess = async (userID) => {
   if (!mappings.length) throw new ReportBuilderValidationError("No active organization is assigned to the authenticated user.", 403);
   return { mappings, organizationIDs: mappings.map((item) => Number(item.organizationid)) };
 };
+// Convert validation and database exceptions into safe Report API responses.
 const execute = async (operation, label) => {
   try { return await operation(); }
   catch (error) {
@@ -43,6 +46,7 @@ const execute = async (operation, label) => {
   }
 };
 
+// Narrow access only after confirming the requested organization belongs to the user.
 const selectOrganizations = (access, requested) => {
   if (requested === undefined || requested === null || requested === "") return access.organizationIDs;
   const organizationID = Number(requested);
@@ -55,6 +59,7 @@ const selectOrganizations = (access, requested) => {
   return [organizationID];
 };
 
+// Config, types and options expose registry/master metadata without queue indirection.
 const getConfig = (data) => execute(async () => {
   const report = requireReport(data.module, data.reportType);
   await resolveAccess(data.UserID);
@@ -119,6 +124,7 @@ const getOptions = (data) => execute(async () => {
   return { success: true, message: "Report filter options fetched successfully", data: rows };
 }, "Options Error");
 
+// Translate the simple public Guest Glitch contract into trusted internal filters.
 const translateRequest = (report, body, access) => {
   const filters = body.filters === undefined ? {} : body.filters;
   if (!filters || typeof filters !== "object" || Array.isArray(filters)) {
@@ -170,6 +176,7 @@ const translateRequest = (report, body, access) => {
   return { filters: translated, sort, page, pageSize };
 };
 
+// Apply the registered Master Report filter/sort allowlists.
 const translateMasterRequest = (report, body, access) => {
   const filters = body.filters === undefined ? {} : body.filters;
   if (!filters || typeof filters !== "object" || Array.isArray(filters)) {
@@ -248,6 +255,7 @@ const getBodyParts = (report, body = {}) => {
   return { filters, definitions, page: Number(page), pageSize: Number(pageSize) };
 };
 
+// Reuse Incident DTO/validation semantics instead of duplicating report SQL rules.
 const translateIncidentRequest = (report, body) => {
   const { filters, page, pageSize } = getBodyParts(report, body);
   const queryInput = { ...filters, page, pageSize };
@@ -271,6 +279,7 @@ const translateIncidentRequest = (report, body) => {
   return query;
 };
 
+// Adapt registered HLP filters to the existing monthly/exact-date service contracts.
 const translateHLPRequest = (report, body, access) => {
   const { filters, definitions, page, pageSize } = getBodyParts(report, body);
   if (body.sort !== undefined && body.sort !== null) {
@@ -302,6 +311,7 @@ const paginateRows = (rows, page, pageSize) => {
   };
 };
 
+// Dispatch execution to existing module services/providers selected by registry metadata.
 const run = (data) => execute(async () => {
   const report = requireReport(data.module, data.reportType);
   const access = await resolveAccess(data.UserID);
@@ -345,6 +355,7 @@ const run = (data) => execute(async () => {
   throw new ReportBuilderValidationError("Report execution is not configured.");
 }, "Run Error");
 
+// Export uses the normalized Guest Glitch provider result for every output format.
 const exportReport = (data) => execute(async () => {
   const report = requireReport(data.module, data.reportType);
   if (report.execution !== "guestGlitchCompact" || !report.export) {

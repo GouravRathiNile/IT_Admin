@@ -169,20 +169,21 @@ test("provider creates a normalized result and rejects unknown columns", () => {
   );
 });
 
-test("handler exposes only the registered-report actions", async () => {
-  const originals = { getTypes: service.getTypes, getConfig: service.getConfig, getOptions: service.getOptions, run: service.run, exportReport: service.exportReport };
+test("handler keeps POST report actions while GET controllers call the service directly", async () => {
+  const originals = { run: service.run, exportReport: service.exportReport };
   try {
-    service.getTypes = async () => ({ marker: "types" });
-    service.getConfig = async () => ({ marker: "config" });
-    service.getOptions = async () => ({ marker: "options" });
     service.run = async () => ({ marker: "run" });
     service.exportReport = async () => ({ marker: "export" });
-    assert.equal((await handler({ action: "GET_REPORT_TYPES", data: {} })).marker, "types");
-    assert.equal((await handler({ action: "GET_REPORT_CONFIG", data: {} })).marker, "config");
-    assert.equal((await handler({ action: "GET_REPORT_OPTIONS", data: {} })).marker, "options");
+    assert.equal((await handler({ action: "GET_REPORT_TYPES", data: {} })).statusCode, 400);
+    assert.equal((await handler({ action: "GET_REPORT_CONFIG", data: {} })).statusCode, 400);
+    assert.equal((await handler({ action: "GET_REPORT_OPTIONS", data: {} })).statusCode, 400);
     assert.equal((await handler({ action: "RUN_REGISTERED_REPORT", data: {} })).marker, "run");
     assert.equal((await handler({ action: "EXPORT_REGISTERED_REPORT", data: {} })).marker, "export");
     assert.equal((await handler({ action: "GET_REPORT_SOURCES", data: {} })).statusCode, 400);
+    const controller = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../../controllers/ReportController/ReportController.js"), "utf8");
+    assert.match(controller, /ReportBuilderService\.getTypes/);
+    assert.match(controller, /ReportBuilderService\.getConfig/);
+    assert.match(controller, /ReportBuilderService\.getOptions/);
   } finally { Object.assign(service, originals); }
 });
 
