@@ -49,6 +49,14 @@ test("create rejects fields outside the simplified contract", () => {
   assert.ok(errors.some((item) => item.field === "DepartmentHODComments"));
 });
 
+test("ResolvedBy accepts a user ID and rejects display-name text", () => {
+  const invalid = validator.validateUpdate({ ID: 1, ResolvedBy: "Manager Name" });
+  assert.ok(invalid.errors.some((item) => item.field === "ResolvedBy" && /positive user ID/.test(item.message)));
+  const valid = validator.validateUpdate({ ID: 1, ResolvedBy: "5" });
+  assert.equal(valid.errors.some((item) => item.field === "ResolvedBy"), false);
+  assert.equal(valid.data.ResolvedBy, 5);
+});
+
 test("list pagination and safe sorting are validated", () => {
   const errors = validator.validateList({ page: 0, pageSize: 101, sortBy: "DROP TABLE", sortDirection: "SIDEWAYS", departmentIds: [], receivedByIds: [], informedToIds: [] });
   assert.equal(errors.length, 4);

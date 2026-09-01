@@ -148,8 +148,7 @@ const reportListDTO = (query = {}) => ({
 /*
  * LIST RESPONSE DTO
  *
- * Only fields required by the list UI
- * + fields useful for filtering/future filtering.
+ * Includes the list columns plus stored fields required to reopen the Edit form.
  */
 const listResponseDTO = (row, resolved = {}) => ({
   ID: Number(row.id),
@@ -166,12 +165,43 @@ const listResponseDTO = (row, resolved = {}) => ({
 
   RoomNumber: row.roomnumber,
   GuestName: row.guestname,
+  GuestStatus: row.gueststatus ?? null,
   Departments: resolved.departments || [],
+  ReceivedByUsers: resolved.receivedByUsers || [],
+  InformedToUsers: resolved.informedToUsers || [],
+  ResolvedBy: row.resolvedby ?? null,
 
   Complaint: row.complaint,
   Status: row.status,
 
+  ProcessLapseCategory: row.processlapsecategory ?? null,
+  ProcessLapse: row.processlapse ?? null,
+  InternalActionTakenCategory: row.internalactiontakencategory ?? null,
+  InternalActionTaken: row.internalactiontaken ?? null,
+  DetailedInvestigation: row.detailedinvestigation ?? null,
   ServiceRecovery: row.servicerecovery,
+  GMComment: row.gmcomment ?? null,
+
+  SRA_Room: row.sra_room == null ? null : Number(row.sra_room),
+  SRA_Food: row.sra_food == null ? null : Number(row.sra_food),
+  SRA_Other: row.sra_other == null ? null : Number(row.sra_other),
+
+  DepartmentHODComments: (row.departmenthodcomments || []).map((item) => ({
+    ...item,
+    departmentId: Number(item.departmentId),
+    departmentName: item.departmentName ?? (resolved.departments || []).find(
+      (department) => Number(department.ID) === Number(item.departmentId)
+    )?.Name ?? null,
+  })),
+  GetMetJson: row.getmetjson || [],
+
+  CompanyName: row.companyname ?? null,
+  Rate: row.rate == null ? null : Number(row.rate),
+  CheckInDate: formatDate(row.checkindate),
+  CheckOutDate: formatDate(row.checkoutdate),
+  ComplaintSource: row.complaintsource ?? null,
+  RaiseSource: row.raisesource ?? null,
+  AttachmentTitle: row.attachmenttitle ?? null,
 });
 
 /*

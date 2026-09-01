@@ -65,17 +65,6 @@ const validateUsers = async (client, organizationID, ids) => {
   return result.rows;
 };
 
-const findOption = async (client, organizationID, optionType, optionValue) => {
-  const result = await client.query(
-    `SELECT optionid, optiontype, optionvalue, displayname, metadata
-     FROM guest_glitch_option_master
-     WHERE organizationid = $1 AND optiontype = $2 AND optionvalue = $3
-       AND isactive = TRUE AND isdeleted = FALSE LIMIT 1;`,
-    [organizationID, optionType, optionValue]
-  );
-  return result.rows[0] || null;
-};
-
 const insert = async (client, data) => {
   const fields = Object.keys(COLUMN_MAP).filter((field) => Object.prototype.hasOwnProperty.call(data, field));
   const columns = fields.map((field) => COLUMN_MAP[field]);
@@ -406,11 +395,35 @@ const list = async (data, organizationID) => {
       gg.roomnumber,
       gg.guestname,
       gg.departmentids,
+      gg.receivedbyids,
+      gg.informedtoids,
 
       gg.complaint,
       gg.status,
+      gg.gueststatus,
+      gg.resolvedby,
 
-      gg.servicerecovery
+      gg.processlapsecategory,
+      gg.processlapse,
+      gg.internalactiontakencategory,
+      gg.internalactiontaken,
+      gg.detailedinvestigation,
+      gg.servicerecovery,
+      gg.gmcomment,
+
+      gg.sra_room,
+      gg.sra_food,
+      gg.sra_other,
+
+      gg.departmenthodcomments,
+      gg.getmetjson,
+      gg.companyname,
+      gg.rate,
+      gg.checkindate,
+      gg.checkoutdate,
+      gg.complaintsource,
+      gg.raisesource,
+      gg.attachmenttitle
 
     FROM guest_glitch_entry_master gg
 
@@ -433,18 +446,6 @@ const list = async (data, organizationID) => {
     rows: result.rows,
     total: Number(count.rows[0].total),
   };
-};
-
-const listOptions = async (organizationID, optionType = null) => {
-  const result = await pool.query(
-    `SELECT optionid, optiontype, optionvalue, displayname, metadata, sortorder
-     FROM guest_glitch_option_master
-     WHERE organizationid = $1 AND isactive = TRUE AND isdeleted = FALSE
-       AND ($2::varchar IS NULL OR optiontype = $2)
-     ORDER BY optiontype, sortorder, displayname;`,
-    [organizationID, optionType]
-  );
-  return result.rows;
 };
 
 const buildReportFilters = (data, organizationID) => {
@@ -672,24 +673,8 @@ const resolveSelections = async (client, organizationID, rows = []) => {
   }));
 };
 
-const upsertOption = async (data) => {
-  const result = await pool.query(
-    `INSERT INTO guest_glitch_option_master
-      (organizationid, optiontype, optionvalue, displayname, metadata, sortorder, isactive, createdby)
-     VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)
-     ON CONFLICT (organizationid, optiontype, optionvalue) WHERE isdeleted = FALSE
-     DO UPDATE SET displayname = EXCLUDED.displayname, metadata = EXCLUDED.metadata,
-       sortorder = EXCLUDED.sortorder, isactive = EXCLUDED.isactive,
-       modifiedby = EXCLUDED.createdby, modifieddate = CURRENT_TIMESTAMP
-     RETURNING optionid;`,
-    [data.OrganizationID, data.OptionType, data.OptionValue, data.DisplayName || data.OptionValue,
-    JSON.stringify(data.Metadata || {}), Number(data.SortOrder || 0), data.IsActive !== false, data.UserID]
-  );
-  return result.rows[0];
-};
-
 module.exports = {
-  COLUMN_MAP, getClient, resolveOrganizations, validateDepartments, validateUsers, findOption, insert,
-  findByID, updateChangedFields, softDelete, list, listOptions, upsertOption,
+  COLUMN_MAP, getClient, resolveOrganizations, validateDepartments, validateUsers, insert,
+  findByID, updateChangedFields, softDelete, list,
   reportList, countReport, findReportByID, resolveSelections,
 };

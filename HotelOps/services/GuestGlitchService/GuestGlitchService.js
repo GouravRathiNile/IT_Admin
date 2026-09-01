@@ -1,5 +1,4 @@
 const repository = require("../../repositories/GuestGlitchRepository/GuestGlitchRepository");
-const { OPTION_TYPES } = require("../../config/guestGlitchConstants");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
 // const { compactReportDTO, completeReportDTO, listResponseDTO, } = require("../../dto/GuestGlitchReportDTO");
 const {
@@ -104,6 +103,26 @@ const withSelectedOrganization = (operation) => async (data) => {
   }
 };
 
+// ID-based mutations derive the record organization from the authenticated user's
+// active mappings, so multi-organization users do not need to submit OrganizationID.
+const withRecordOrganization = (operation) => async (data) => {
+  let client;
+  try {
+    const mappings = await repository.resolveOrganizations(data.UserID);
+    if (!mappings.length) return fail("No active organization is assigned to the authenticated user.", 403);
+    const organizationIDs = mappings.map((row) => Number(row.organizationid));
+    client = await repository.getClient();
+    const record = await repository.findByID(client, data.ID, organizationIDs);
+    if (!record) return fail("Guest Glitch not found", 404);
+    return operation({ ...data, OrganizationID: Number(record.organizationid) });
+  } catch (error) {
+    console.error("Guest Glitch Record Organization Resolution Error:", error.message);
+    return fail("Unable to resolve Guest Glitch organization at this time.", 503);
+  } finally {
+    if (client) client.release();
+  }
+};
+
 const mapRow = (row) => ({
   ID: Number(row.id), OrganizationID: Number(row.organizationid), EntryDate: row.entrydate,
   Status: row.status, ResolvedBy: row.resolvedby, GuestName: row.guestname,
@@ -133,6 +152,9 @@ const ensureOwnedRecord = async (client, id, organizationID, lock = false) => {
 };
 
 const validateSelections = async (client, data, organizationID) => {
+  if (data.ResolvedBy && (!/^\d+$/.test(String(data.ResolvedBy)) || !Number.isSafeInteger(Number(data.ResolvedBy)) || Number(data.ResolvedBy) < 1)) {
+    return { error: fail("ResolvedBy must be a valid positive user ID.") };
+  }
   const departments = await repository.validateDepartments(client, organizationID, data.DepartmentIDs || []);
   if (departments.length !== (data.DepartmentIDs || []).length) {
     const valid = new Set(departments.map((item) => Number(item.departmentid)));
@@ -174,17 +196,6 @@ const validateSelections = async (client, data, organizationID) => {
   return { departments, receivedUsers, informedUsers, resolvedUsers, };
 };
 
-const validateOptions = async (client, data, organizationID) => {
-  const fields = ["Status", "GuestStatus", "ComplaintSource", "RaiseSource", "ProcessLapseCategory", "InternalActionTakenCategory"];
-  for (const field of fields) {
-    if (data[field] != null && String(data[field]).trim()) {
-      const option = await repository.findOption(client, organizationID, field, String(data[field]).trim());
-      if (!option) return fail(`The selected ${field} is invalid or inactive.`);
-    }
-  }
-  return null;
-};
-
 const applySnapshots = (data, selections) => ({
   ...data,
   Department: selections.departments.map((item) => item.departmentname).join(", "),
@@ -201,8 +212,6 @@ const create = async (data) => {
     data.EntryDate = data.EntryDate || formatDate(new Date(), "YYYY-MM-DD");
     const selections = await validateSelections(client, data, data.OrganizationID);
     if (selections.error) { await client.query("ROLLBACK"); return selections.error; }
-    const optionError = await validateOptions(client, { GuestStatus: data.GuestStatus }, data.OrganizationID);
-    if (optionError) { await client.query("ROLLBACK"); return optionError; }
     const prepared = applySnapshots(data, selections);
     const result = await repository.insert(client, prepared);
     await client.query("COMMIT");
@@ -333,8 +342,6 @@ const update = async (data) => {
     }
     const selections = await validateSelections(client, merged, data.OrganizationID);
     if (selections.error) { await client.query("ROLLBACK"); return selections.error; }
-    const optionError = await validateOptions(client, data, data.OrganizationID);
-    if (optionError) { await client.query("ROLLBACK"); return optionError; }
     const prepared = applySnapshots(data, selections);
     const changed = {};
     for (const [field, value] of Object.entries(prepared)) {
@@ -374,34 +381,6 @@ const remove = async (data) => {
     const retry = retryableDatabaseResponse(error);
     return retry || fail("Unable to delete guest glitch at this time.", 503);
   } finally { client.release(); }
-};
-
-// Return active organization-specific dropdown configuration.
-const listOptions = async (data) => {
-  try {
-    if (data.OptionType && !OPTION_TYPES.includes(data.OptionType)) return fail("Invalid Guest Glitch option type.");
-    const rows = await repository.listOptions(data.OrganizationID, data.OptionType || null);
-    return {
-      success: true, message: "Guest Glitch options retrieved successfully.", data: rows.map((row) => ({
-        OptionID: Number(row.optionid), OptionType: row.optiontype, OptionValue: row.optionvalue,
-        DisplayName: row.displayname, Metadata: row.metadata || {}, SortOrder: row.sortorder,
-      }))
-    };
-  } catch (error) {
-    console.error("List Guest Glitch Options Error:", error.message);
-    return fail("Unable to retrieve Guest Glitch options at this time.", 503);
-  }
-};
-
-const upsertOption = async (data) => {
-  try {
-    const result = await repository.upsertOption(data);
-    return { success: true, message: "Guest Glitch option saved successfully.", data: { OptionID: Number(result.optionid) } };
-  } catch (error) {
-    console.error("Save Guest Glitch Option Error:", error.message);
-    const retry = retryableDatabaseResponse(error);
-    return retry || fail("Unable to save Guest Glitch option at this time.", 503);
-  }
 };
 
 const resolveReportRows = async (client, rows) => {
@@ -538,17 +517,15 @@ module.exports = {
   create: withSelectedOrganization(create),
   list: withOrganization(list, true),
   get: withOrganization(get, true),
-  update: withOrganization(update),
-  updateStatus: withOrganization(updateStatus),
-  remove: withOrganization(remove),
-  listOptions: withOrganization(listOptions),
-  upsertOption: withOrganization(upsertOption),
+  update: withRecordOrganization(update),
+  updateStatus: withRecordOrganization(updateStatus),
+  remove: withRecordOrganization(remove),
   report: withOrganization((data) => report(data, false), true),
   masterReport: withOrganization((data) => report(data, true), true),
   reportDetail: withOrganization(reportDetail, true),
   masterReportPdf: withOrganization(masterReportPdf, true),
   gmView: withOrganization(reportDetail, true),
-  gmAction: withOrganization(gmAction),
+  gmAction: withRecordOrganization(gmAction),
   attachment: withOrganization(attachment, true),
   exportReport: withOrganization(exportReport, true),
   // Internal provider entry point. Its OrganizationIDs must come from an
