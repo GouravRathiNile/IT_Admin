@@ -96,3 +96,36 @@ test("OrganizationID remains mandatory and the controller trusts JWT UserType", 
   assert.doesNotMatch(summaryHandler, /req\.(query|body).*UserType/);
   assert.doesNotMatch(summaryHandler, /STATUS_CODES\.FORBIDDEN/);
 });
+
+test("HOD Approved list uses the completed configured flow", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "1" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await CapexService.getAllCapex({
+      OrganizationID: 20,
+      UserType: "HOD",
+      Status: "Approved",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(response.TotalCount, 1);
+    assert.equal(calls.length, 2);
+
+    for (const call of calls) {
+      const statusFilter = call.sql.slice(call.sql.lastIndexOf("AND cm.OrganizationID"));
+      assert.match(statusFilter, /approval_state\.FinalStatus/);
+      assert.doesNotMatch(statusFilter, /approval_state\.OwnerStatus/);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});

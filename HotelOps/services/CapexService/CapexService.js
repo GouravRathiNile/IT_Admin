@@ -807,25 +807,12 @@ const getAllCapex = async (data) => {
           )
         `;
       } else if (approvalStatus === "APPROVED") {
-        // All stages approved
+        // FinalStatus already represents completion of the configured flow.
+        // Do not require roles (such as OWNER) that may not be configured.
         query += `
           AND UPPER(
             COALESCE(
-              approval_state.GMStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-
-          AND UPPER(
-            COALESCE(
-              approval_state.CEOStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-
-          AND UPPER(
-            COALESCE(
-              approval_state.OwnerStatus,
+              approval_state.FinalStatus,
               'PENDING'
             )
           ) = 'APPROVED'
@@ -1034,21 +1021,7 @@ const getAllCapex = async (data) => {
         countQuery += `
           AND UPPER(
             COALESCE(
-              approval_state.GMStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-
-          AND UPPER(
-            COALESCE(
-              approval_state.CEOStatus,
-              'PENDING'
-            )
-          ) = 'APPROVED'
-
-          AND UPPER(
-            COALESCE(
-              approval_state.OwnerStatus,
+              approval_state.FinalStatus,
               'PENDING'
             )
           ) = 'APPROVED'
