@@ -23,6 +23,21 @@ const summaryRow = {
   voidamount: "600",
 };
 
+test("OPEX approval responses expose role-wise approved quantity", () => {
+  const serviceSource = fs.readFileSync(
+    path.join(__dirname, "../../services/OpexService/OpexService.js"),
+    "utf8",
+  );
+
+  assert.match(serviceSource, /WHEN 'HOD' THEN ca\.HODApprovedQuantity/);
+  assert.match(serviceSource, /WHEN 'FC' THEN ca\.FCApprovedQuantity/);
+  assert.match(serviceSource, /WHEN 'GM' THEN ca\.GMApprovedQuantity/);
+  assert.match(serviceSource, /WHEN 'RD-FC' THEN ca\.RDFCApprovedQuantity/);
+  assert.match(serviceSource, /WHEN 'CEO' THEN ca\.CEOApprovedQuantity/);
+  assert.match(serviceSource, /END AS ApprovedQuantity/);
+  assert.match(serviceSource, /ApprovedQuantity:[\s\S]*Number\(row\.approvedquantity\)/);
+});
+
 test("non-approval roles receive the organization-wide OPEX summary", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];

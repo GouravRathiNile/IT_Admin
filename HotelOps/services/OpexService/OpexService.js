@@ -601,6 +601,10 @@ const mapApproval = (row) => ({
   OpexApprovalID: Number(row.opexapprovalid),
   ApprovalRole: row.approvalrole,
   Status: row.status,
+  ApprovedQuantity:
+    row.approvedquantity === null || row.approvedquantity === undefined
+      ? null
+      : Number(row.approvedquantity),
   Remarks: row.remarks,
 });
 // Fetch documents and approvals in batches to avoid N+1 database queries.
@@ -660,6 +664,14 @@ const attachRelatedData = async (OpexRows) => {
             WHEN 'RD-FC' THEN ca.RDFCStatusApprovedBy
             WHEN 'CEO' THEN ca.CEOStatusApprovedBy
           END AS StatusApprovedBy,
+
+          CASE UPPER(cfg.ApprovalRole)
+            WHEN 'HOD' THEN ca.HODApprovedQuantity
+            WHEN 'FC' THEN ca.FCApprovedQuantity
+            WHEN 'GM' THEN ca.GMApprovedQuantity
+            WHEN 'RD-FC' THEN ca.RDFCApprovedQuantity
+            WHEN 'CEO' THEN ca.CEOApprovedQuantity
+          END AS ApprovedQuantity,
 
           CASE UPPER(cfg.ApprovalRole)
             WHEN 'HOD' THEN ca.HODRemarks
