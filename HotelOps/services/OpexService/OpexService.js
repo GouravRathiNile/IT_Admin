@@ -6,6 +6,7 @@ const generateDocumentUrl = require("../../AzurConfigration/Opex/AzureGetData");
 const { formatDate } = require("../../utils/dateFormatter");
 const PdfPrinter = require("pdfmake");
 const path = require("path");
+const { generatePdf } = require("../../utils/pdfHelper");
 
 // ==============================================================Default roles
 const DEFAULT_APPROVALS = Object.freeze([
@@ -23,6 +24,32 @@ const fail = (message, statusCode = 400) => ({
   statusCode,
   message,
 });
+
+// Resolve OPEX permissions from trusted JWT claims without changing the JWT.
+// Finance department HODs perform the FC approval stage across the organization;
+// every other HOD remains restricted to the department stored in the token.
+const resolveOpexAccess = (data = {}) => {
+  const jwtRole = String(data.UserType || "").trim().toUpperCase();
+  const departmentName = String(data.DepartmentName || "").trim();
+
+  if (jwtRole === "HOD" && !departmentName) {
+    return {
+      error: fail("Department information is required for HOD OPEX access.", 403),
+    };
+  }
+
+  const financeHod =
+    jwtRole === "HOD" && departmentName.toUpperCase() === "FINANCE";
+
+  return {
+    jwtRole,
+    effectiveRole: financeHod ? "FC" : jwtRole,
+    departmentName,
+    departmentScope: jwtRole === "HOD" && !financeHod ? departmentName : null,
+    financeHod,
+  };
+};
+
 // Merge organization overrides with the HOD -> FC -> GM -> RD-FC -> CEO defaults.
 const mergeApprovalConfiguration = (configuredRows) => {
   const approvals = new Map(
@@ -688,12 +715,11 @@ const getAllOpex = async (data) => {
     // User Type
     // =====================================================
 
-    const userType = data.UserType ? String(data.UserType).toUpperCase() : null;
-    const departmentName = String(data.DepartmentName || "").trim();
+    const access = resolveOpexAccess(data);
+    if (access.error) return access.error;
 
-    if (userType === "HOD" && !departmentName) {
-      return fail("Department information is required for HOD OPEX access.", 403);
-    }
+    const userType = access.effectiveRole;
+    const departmentName = access.departmentScope;
 
     // =====================================================
     // Status
@@ -742,7 +768,7 @@ const getAllOpex = async (data) => {
     }
 
     // HOD visibility is restricted to the department stored in the JWT.
-    if (userType === "HOD") {
+    if (departmentName) {
       params.push(departmentName);
 
       query += `
@@ -852,7 +878,7 @@ const getAllOpex = async (data) => {
       `;
     }
 
-    if (userType === "HOD") {
+    if (departmentName) {
       countParams.push(departmentName);
 
       countQuery += `
@@ -1483,9 +1509,10 @@ const processOpexApproval = async (data) => {
     // 1. NORMALIZE INPUT
     // ============================================================
 
-    const approverRole = String(data.UserType || "")
-      .trim()
-      .toUpperCase();
+    const access = resolveOpexAccess(data);
+    if (access.error) return access.error;
+
+    const approverRole = access.effectiveRole;
 
     const action = String(data.Action || "")
       .trim()
@@ -2436,15 +2463,14 @@ const opexSummaryData = (row) => ({
 const getOpexSummaryReport = async (data) => {
   try {
     const OrganizationID = Number(data?.Filters?.OrganizationID);
-    const UserType = String(data?.UserType || "").trim().toUpperCase();
-    const DepartmentName = String(data?.DepartmentName || "").trim();
+    const access = resolveOpexAccess(data);
+    if (access.error) return access.error;
+
+    const UserType = access.effectiveRole;
+    const DepartmentName = access.departmentScope;
 
     if (!Number.isSafeInteger(OrganizationID) || OrganizationID < 1) {
       return fail("OrganizationID is required.", 400);
-    }
-
-    if (UserType === "HOD" && !DepartmentName) {
-      return fail("Department information is required for HOD OPEX access.", 403);
     }
 
     if (!APPROVAL_ROLES.has(UserType)) {
@@ -3339,7 +3365,7 @@ const deleteApprovalConfig = async (data) => {
 };
 // ===================================================================Pdf Apis
 // ============================================================Generate Opex List PDF
-const generateOpexListPdf = async (Opex) => {
+const generateLegacyOpexDetailPdf = async (Opex) => {
   const fonts = {
     Roboto: {
       normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
@@ -3762,6 +3788,72 @@ const generateOpexListPdf = async (Opex) => {
       reject(error);
     }
   });
+};
+
+// Generate the OPEX list export with exactly the same JWT-derived visibility
+// and status rules as getAllOpex. Fetching in pages avoids an unbounded query.
+const generateOpexListPdf = async (data) => {
+  try {
+    const rows = [];
+    const exportPageSize = 1000;
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const response = await getAllOpex({
+        ...data,
+        page,
+        PageSize: exportPageSize,
+      });
+
+      if (!response.success) return response;
+
+      rows.push(...response.data);
+      totalPages = response.TotalPages;
+      page += 1;
+    } while (page <= totalPages);
+
+    const access = resolveOpexAccess(data);
+    if (access.error) return access.error;
+
+    const pdfBuffer = await generatePdf({
+      title: "OPEX LIST REPORT",
+      reportName: "OPEX List Report",
+      organizationId: data.OrganizationID || null,
+      orientation: "landscape",
+      metadata: [
+        {
+          label: "Filters",
+          value: `Organization: ${data.OrganizationID || "All"} | Status: ${data.Status || "All"} | Approval Role: ${access.effectiveRole || "All"}${access.departmentScope ? ` | Department: ${access.departmentScope}` : ""}`,
+        },
+        { label: "Total Records", value: rows.length },
+      ],
+      columns: [
+        { key: "OpexNumber", header: "OPEX No.", width: 55 },
+        { key: "OrganizationShortName", header: "Organization", width: 70 },
+        { key: "Department", header: "Department", width: 75 },
+        { key: "Item", header: "Item", width: "*" },
+        { key: "Qty", header: "Qty", width: 35, align: "right" },
+        { key: "Rate", header: "Rate", width: 60, align: "right" },
+        { key: "Total", header: "Total", width: 65, align: "right" },
+        { key: "CurrentStatus", header: "Status", width: 55 },
+        { key: "CreatedDate", header: "Created Date", width: 75 },
+      ],
+      rows,
+      pageMargins: [20, 25, 20, 35],
+    });
+
+    return {
+      success: true,
+      message: "OPEX list PDF generated successfully.",
+      data: pdfBuffer,
+      fileName: `OPEX_List_Report_${Date.now()}.pdf`,
+      contentType: "application/pdf",
+    };
+  } catch (error) {
+    console.error("Generate OPEX List PDF Error:", error.message);
+    return fail("Unable to generate OPEX list PDF.", 503);
+  }
 };
 
 // ============================================================ Exports

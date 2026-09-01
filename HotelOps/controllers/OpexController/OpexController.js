@@ -688,6 +688,7 @@ exports.approveOpex = async (req, res) => {
           Remarks: remarks || null,
           UserID: user.UserID,
           UserType: user.UserType,
+          DepartmentName: user.DepartmentName,
         },
       }
     );

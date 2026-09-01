@@ -97,7 +97,7 @@ test("OPEX OrganizationID remains mandatory and UserType comes from JWT", async 
   assert.doesNotMatch(handler, /Only HOD, FC, GM, RD-FC, or CEO/);
 });
 
-test("HOD OPEX summary is scoped to JWT department", { concurrency: false }, async () => {
+test("non-Finance HOD OPEX summary is scoped to JWT department", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   let call;
   pool.query = async (sql, values) => {
@@ -109,11 +109,11 @@ test("HOD OPEX summary is scoped to JWT department", { concurrency: false }, asy
     const response = await OpexService.getOpexSummaryReport({
       Filters: { OrganizationID: 20 },
       UserType: "HOD",
-      DepartmentName: "  Finance  ",
+      DepartmentName: "  Engineering  ",
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "HOD", "Finance"]);
+    assert.deepEqual(call.values, [20, "HOD", "Engineering"]);
     assert.match(
       call.sql,
       /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$3::text\)\)/,
@@ -146,7 +146,7 @@ test("HOD OPEX summary without JWT department is forbidden", { concurrency: fals
   }
 });
 
-test("HOD OPEX list scopes every status and count to JWT department", { concurrency: false }, async () => {
+test("non-Finance HOD OPEX list scopes every status and count to JWT department", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];
   pool.query = async (sql, values) => {
@@ -161,7 +161,7 @@ test("HOD OPEX list scopes every status and count to JWT department", { concurre
       const response = await OpexService.getAllOpex({
         OrganizationID: 20,
         UserType: "HOD",
-        DepartmentName: "  Finance  ",
+        DepartmentName: "  Engineering  ",
         Status,
         page: 1,
         PageSize: 10,
@@ -175,9 +175,95 @@ test("HOD OPEX list scopes every status and count to JWT department", { concurre
         call.sql,
         /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$\d+\)\)/,
       );
-      assert.equal(call.values.includes("Finance"), true);
+      assert.equal(call.values.includes("Engineering"), true);
       assert.equal(call.values[0], 20);
     }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Finance HOD receives organization-wide FC list filters", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    for (const Status of [null, "Pending", "Approved", "Rejected", "Hold", "Returned"]) {
+      const response = await OpexService.getAllOpex({
+        OrganizationID: 20,
+        UserType: "hod",
+        DepartmentName: "  finance  ",
+        Status,
+        page: 1,
+        PageSize: 10,
+      });
+      assert.equal(response.success, true);
+    }
+
+    assert.equal(calls.length, 12);
+    for (const call of calls) {
+      assert.doesNotMatch(call.sql, /AND LOWER\(TRIM\(cm\.Department\)\)/);
+      assert.equal(call.values.includes("finance"), false);
+      assert.equal(call.values.includes("HOD"), false);
+    }
+    assert.equal(calls.some((call) => call.values.includes("FC")), true);
+    assert.equal(calls.some((call) => /approval_state\.FCStatus/.test(call.sql)), true);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Finance HOD receives organization-wide FC summary", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  let call;
+  pool.query = async (sql, values) => {
+    call = { sql, values };
+    return { rows: [summaryRow] };
+  };
+
+  try {
+    const response = await OpexService.getOpexSummaryReport({
+      Filters: { OrganizationID: 20 },
+      UserType: " HOD ",
+      DepartmentName: " finance ",
+    });
+
+    assert.equal(response.success, true);
+    assert.deepEqual(call.values, [20, "FC", null]);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Finance HOD OPEX PDF reuses FC list visibility and returns a valid PDF", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.generateOpexListPdf({
+      OrganizationID: 20,
+      UserType: "HOD",
+      DepartmentName: " Finance ",
+      Status: "Pending",
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(Buffer.isBuffer(response.data), true);
+    assert.equal(response.data.subarray(0, 4).toString(), "%PDF");
+    assert.equal(calls.some((call) => call.values?.includes("FC")), true);
+    assert.equal(calls.some((call) => call.values?.includes("Finance")), false);
   } finally {
     pool.query = originalQuery;
   }
@@ -251,4 +337,10 @@ test("OPEX controller reads DepartmentName only from JWT context", () => {
   )[0];
   assert.doesNotMatch(listHandler, /req\.(query|body).*DepartmentName/);
   assert.match(listHandler, /STATUS_CODES\.FORBIDDEN/);
+
+  const approvalHandler = controllerSource.match(
+    /exports\.approveOpex[\s\S]*?\/\/ =+ Report Helpers/,
+  )[0];
+  assert.match(approvalHandler, /DepartmentName: user\.DepartmentName/);
+  assert.doesNotMatch(approvalHandler, /req\.(query|body).*DepartmentName/);
 });
