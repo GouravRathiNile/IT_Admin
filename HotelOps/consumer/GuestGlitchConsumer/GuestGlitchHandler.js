@@ -7,7 +7,6 @@ const GuestGlitchHandler = async (message) => {
     case "UPDATE_GUEST_GLITCH": return service.update(message.data);
     case "DELETE_GUEST_GLITCH": return service.remove(message.data);
     case "UPDATE_GUEST_GLITCH_STATUS": return service.updateStatus(message.data);
-    case "UPSERT_GUEST_GLITCH_OPTION": return service.upsertOption(message.data);
     case "GUEST_GLITCH_GM_ACTION": return service.gmAction(message.data);
     default: return { success: false, statusCode: 400, message: "Invalid Guest Glitch action." };
   }

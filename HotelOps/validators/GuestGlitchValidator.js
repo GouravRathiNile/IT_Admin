@@ -1,4 +1,4 @@
-const { OPTION_TYPES, SORT_COLUMNS, REPORT_SORT_COLUMNS } = require("../config/guestGlitchConstants");
+const { SORT_COLUMNS, REPORT_SORT_COLUMNS } = require("../config/guestGlitchConstants");
 const { CREATE_FIELDS, EDITABLE_FIELDS, PROTECTED_FIELDS } = require("../dto/GuestGlitchDTO");
 
 const isPositiveInteger = (value) => /^\d+$/.test(String(value)) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
@@ -63,6 +63,10 @@ const validateCommon = (data, isCreate) => {
   };
   for (const [field, max] of Object.entries(lengths)) {
     if (data[field] != null && String(data[field]).trim().length > max) errors.push(error(field, `${field} must not exceed ${max} characters.`));
+  }
+  if (data.ResolvedBy !== undefined && data.ResolvedBy !== null && String(data.ResolvedBy).trim() !== "") {
+    if (!isPositiveInteger(data.ResolvedBy)) errors.push(error("ResolvedBy", "ResolvedBy must be a valid positive user ID."));
+    else data.ResolvedBy = Number(data.ResolvedBy);
   }
   if (data.Time != null && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(data.Time))) errors.push(error("Time", "Time must use 24-hour HH:mm format."));
 
@@ -166,21 +170,6 @@ const validateStatus = (body = {}) => {
   return errors;
 };
 
-const validateOption = (body = {}) => {
-  const errors = [];
-  for (const field of PROTECTED_FIELDS) {
-    if (Object.prototype.hasOwnProperty.call(body, field)) errors.push(error(field, `${field} cannot be supplied by the client.`));
-  }
-  if (!OPTION_TYPES.includes(body.OptionType)) errors.push(error("OptionType", "Invalid Guest Glitch option type."));
-  if (!String(body.OptionValue ?? "").trim()) errors.push(error("OptionValue", "Option value is required."));
-  if (String(body.OptionValue ?? "").trim().length > 100) errors.push(error("OptionValue", "Option value must not exceed 100 characters."));
-  if (body.DisplayName !== undefined && (!String(body.DisplayName).trim() || String(body.DisplayName).trim().length > 100)) errors.push(error("DisplayName", "DisplayName must be between 1 and 100 characters."));
-  if (body.Metadata !== undefined && (body.Metadata === null || Array.isArray(body.Metadata) || typeof body.Metadata !== "object")) errors.push(error("Metadata", "Metadata must be a JSON object."));
-  if (body.SortOrder !== undefined && (!Number.isInteger(Number(body.SortOrder)) || Number(body.SortOrder) < 0)) errors.push(error("SortOrder", "SortOrder must be a non-negative integer."));
-  if (body.IsActive !== undefined && typeof body.IsActive !== "boolean") errors.push(error("IsActive", "IsActive must be true or false."));
-  return errors;
-};
-
 const validateReportList = (data) => {
   const base = { ...data, sortBy: SORT_COLUMNS[data.sortBy] ? data.sortBy : "EntryDate" };
   const errors = validateList(base);
@@ -204,4 +193,4 @@ const validateGMAction = (body = {}) => {
 const validateDisposition = (value) => ["inline", "attachment"].includes(String(value || "inline").toLowerCase())
   ? [] : [error("disposition", "Disposition must be inline or attachment.")];
 
-module.exports = { validateCreate, validateUpdate, validateID, validateList, validateReportList, validateStatus, validateOption, validateGMAction, validateDisposition, isPositiveInteger };
+module.exports = { validateCreate, validateUpdate, validateID, validateList, validateReportList, validateStatus, validateGMAction, validateDisposition, isPositiveInteger };

@@ -99,24 +99,6 @@ paths:
         '200': { $ref: '#/components/responses/Success' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '403': { $ref: '#/components/responses/Forbidden' }
-  /options/list:
-    get:
-      summary: List active organization Guest Glitch options
-      x-permission: GuestGlitch.View
-      parameters:
-        - name: OptionType
-          in: query
-          required: false
-          schema: { type: string, enum: [Status, GuestStatus, ComplaintSource, RaiseSource, ProcessLapseCategory, InternalActionTakenCategory] }
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-  /options/upsert:
-    post:
-      summary: Create or update an organization Guest Glitch option
-      x-permission: GuestGlitch.OptionManage
-      responses:
-        '200': { $ref: '#/components/responses/Success' }
-        '403': { $ref: '#/components/responses/Forbidden' }
   /report:
     get:
       summary: Compact Guest Glitch report

@@ -110,23 +110,6 @@ exports.updateStatus = (req, res) => execute(res, async () => {
   return sendResponse(res, response);
 });
 
-// Read-only option lookup calls the existing organization-aware service directly.
-exports.listOptions = (req, res) => execute(res, async () => {
-  const response = await GuestGlitchService.listOptions({ OptionType: req.query?.OptionType || null, ...requestContext(req) });
-  return sendResponse(res, response);
-});
-
-// Option configuration changes remain queued as mutation operations.
-exports.upsertOption = (req, res) => execute(res, async () => {
-  assertValid(validator.validateOption(req.body || {}));
-  const response = await callQueue("UPSERT_GUEST_GLITCH_OPTION", {
-    OptionType: req.body.OptionType, OptionValue: String(req.body.OptionValue).trim(),
-    DisplayName: req.body.DisplayName, Metadata: req.body.Metadata, SortOrder: req.body.SortOrder,
-    IsActive: req.body.IsActive, ...requestContext(req),
-  });
-  return sendResponse(res, response);
-});
-
 // Shared direct-read controllers preserve report filter and ID validation behavior.
 const reportListController = (operation) => (req, res) => execute(res, async () => {
   const data = reportListDTO(req.query || {});

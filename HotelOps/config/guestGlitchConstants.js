@@ -8,17 +8,7 @@ const PERMISSIONS = Object.freeze({
   MASTER_REPORT: "GuestGlitch.MasterReport",
   GM_ACTION: "GuestGlitch.GMAction",
   ATTACHMENT_VIEW: "GuestGlitch.AttachmentView",
-  OPTION_MANAGE: "GuestGlitch.OptionManage",
 });
-
-const OPTION_TYPES = Object.freeze([
-  "Status",
-  "GuestStatus",
-  "ComplaintSource",
-  "RaiseSource",
-  "ProcessLapseCategory",
-  "InternalActionTakenCategory",
-]);
 
 const STATUS_TRANSITIONS = Object.freeze({
   Open: ["In Progress"],
@@ -78,7 +68,6 @@ const FIELD_AUDIT_COLUMNS = Object.freeze({
 
 module.exports = {
   PERMISSIONS,
-  OPTION_TYPES,
   STATUS_TRANSITIONS,
   SORT_COLUMNS,
   FIELD_AUDIT_COLUMNS,
