@@ -65,12 +65,40 @@ test("OPEX approval roles retain their role-scoped summary", { concurrency: fals
   try {
     const response = await OpexService.getOpexSummaryReport({
       Filters: { OrganizationID: 20 },
-      UserType: "rd-fc",
+      UserType: "gm",
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "RD-FC", null]);
+    assert.deepEqual(call.values, [20, "GM", null, false]);
     assert.match(call.sql, /CurrentApprovalRole = \$2/);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("native RD-FC JWT users are forbidden", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  let queried = false;
+  pool.query = async () => {
+    queried = true;
+    return { rows: [] };
+  };
+
+  try {
+    const list = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserType: "RD-FC",
+      page: 1,
+      PageSize: 10,
+    });
+    const summary = await OpexService.getOpexSummaryReport({
+      Filters: { OrganizationID: 20 },
+      UserType: "RD-FC",
+    });
+
+    assert.equal(list.statusCode, 403);
+    assert.equal(summary.statusCode, 403);
+    assert.equal(queried, false);
   } finally {
     pool.query = originalQuery;
   }
@@ -113,7 +141,7 @@ test("non-Finance HOD OPEX summary is scoped to JWT department", { concurrency: 
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "HOD", "Engineering"]);
+    assert.deepEqual(call.values, [20, "HOD", "Engineering", false]);
     assert.match(
       call.sql,
       /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$3::text\)\)/,
@@ -235,9 +263,153 @@ test("Finance HOD receives organization-wide FC summary", { concurrency: false }
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "FC", null]);
+    assert.deepEqual(call.values, [20, "FC", null, false]);
   } finally {
     pool.query = originalQuery;
+  }
+});
+
+test("Organization 10 Finance HOD receives global RD-FC list and count", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    if (/FROM user_org_mapping/.test(sql)) return { rows: [{ "?column?": 1 }] };
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      UserID: 6,
+      OrganizationID: 10,
+      UserType: "HOD",
+      DepartmentName: " finance ",
+      Status: "Pending",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    assert.deepEqual(calls[0].values, [6, 10]);
+    for (const call of calls.slice(1)) {
+      assert.doesNotMatch(call.sql, /AND cm\.OrganizationID = \$\d+/);
+      assert.equal(call.values.includes("RD-FC"), true);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Organization 10 Finance HOD mapping cannot be spoofed", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      UserID: 99,
+      OrganizationID: 10,
+      UserType: "HOD",
+      DepartmentName: "Finance",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.statusCode, 403);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].sql, /FROM user_org_mapping/);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Organization 10 Finance HOD receives global RD-FC summary", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return /FROM user_org_mapping/.test(sql)
+      ? { rows: [{ "?column?": 1 }] }
+      : { rows: [summaryRow] };
+  };
+
+  try {
+    const response = await OpexService.getOpexSummaryReport({
+      UserID: 6,
+      Filters: { OrganizationID: 10 },
+      OrganizationID: 10,
+      UserType: "HOD",
+      DepartmentName: "Finance",
+    });
+
+    assert.equal(response.success, true);
+    assert.deepEqual(calls[1].values, [10, "RD-FC", null, true]);
+    assert.match(calls[1].sql, /\$4::boolean = TRUE OR cm\.OrganizationID = \$1/);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("central Finance HOD approves another organization's RD-FC stage", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const originalConnect = pool.connect;
+  const transactionCalls = [];
+
+  pool.query = async (sql, values) => {
+    assert.match(sql, /FROM user_org_mapping/);
+    assert.deepEqual(values, [6, 10]);
+    return { rows: [{ "?column?": 1 }] };
+  };
+
+  const client = {
+    query: async (sql, values) => {
+      transactionCalls.push({ sql, values });
+      if (/FROM Opex_Master cm/.test(sql) && /FOR UPDATE OF cm/.test(sql)) {
+        return { rows: [{ opexid: 501, opexnumber: 9, organizationid: 20, isvoid: false }] };
+      }
+      if (/FROM Opex_Approval_Config/.test(sql)) return { rows: [] };
+      if (/FROM Opex_Approval/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rows: [{
+            opexapprovalid: 701,
+            hodstatus: "Approved",
+            fcstatus: "Approved",
+            gmstatus: "Approved",
+            rdfcstatus: "Pending",
+            ceostatus: "Pending",
+            finalstatus: "Pending",
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  pool.connect = async () => client;
+
+  try {
+    const response = await OpexService.processOpexApproval({
+      OpexID: 501,
+      Action: "APPROVE",
+      UserID: 6,
+      UserType: "HOD",
+      DepartmentName: "Finance",
+    });
+
+    assert.equal(response.success, true);
+    const rdfcUpdate = transactionCalls.find((call) => /RDFCStatus = \$1/.test(call.sql));
+    assert.ok(rdfcUpdate);
+    assert.deepEqual(rdfcUpdate.values, ["Approved", 6, null, null, 701]);
+    assert.equal(transactionCalls.some((call) => /FinalStatus = NULL/.test(call.sql)), true);
+    assert.equal(transactionCalls.some((call) => /^COMMIT$/i.test(call.sql.trim())), true);
+  } finally {
+    pool.query = originalQuery;
+    pool.connect = originalConnect;
   }
 });
 
@@ -264,6 +436,36 @@ test("Finance HOD OPEX PDF reuses FC list visibility and returns a valid PDF", {
     assert.equal(response.data.subarray(0, 4).toString(), "%PDF");
     assert.equal(calls.some((call) => call.values?.includes("FC")), true);
     assert.equal(calls.some((call) => call.values?.includes("Finance")), false);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("central Finance HOD PDF uses global RD-FC visibility", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    if (/FROM user_org_mapping/.test(sql)) return { rows: [{ "?column?": 1 }] };
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.generateOpexListPdf({
+      UserID: 6,
+      OrganizationID: 10,
+      UserType: "HOD",
+      DepartmentName: "Finance",
+      Status: "Pending",
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(response.data.subarray(0, 4).toString(), "%PDF");
+    const listCalls = calls.filter((call) => /FROM Opex_Master cm/.test(call.sql));
+    assert.equal(listCalls.some((call) => call.values?.includes("RD-FC")), true);
+    assert.equal(listCalls.some((call) => /AND cm\.OrganizationID = \$\d+/.test(call.sql)), false);
   } finally {
     pool.query = originalQuery;
   }

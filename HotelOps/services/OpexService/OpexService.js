@@ -17,6 +17,7 @@ const DEFAULT_APPROVALS = Object.freeze([
   { LevelNo: 5, ApprovalRole: "CEO" },
 ]);
 const APPROVAL_ROLES = new Set(["HOD", "FC", "GM", "RD-FC", "CEO"]);
+const CENTRAL_RDFC_ORGANIZATION_ID = 10;
 
 // ============================================================ Shared Response Helpers(Create Helpers)
 const fail = (message, statusCode = 400) => ({
@@ -26,11 +27,56 @@ const fail = (message, statusCode = 400) => ({
 });
 
 // Resolve OPEX permissions from trusted JWT claims without changing the JWT.
-// Finance department HODs perform the FC approval stage across the organization;
-// every other HOD remains restricted to the department stored in the token.
-const resolveOpexAccess = (data = {}) => {
+// Organization 10 Finance HODs centrally perform RD-FC; other Finance HODs
+// retain FC behavior and every non-Finance HOD remains department restricted.
+const hasCentralRdfcMapping = async (queryable, userID) => {
+  const normalizedUserID = Number(userID);
+  if (!Number.isSafeInteger(normalizedUserID) || normalizedUserID < 1) {
+    return false;
+  }
+
+  const result = await queryable.query(
+    `
+    SELECT 1
+    FROM user_org_mapping uom
+    INNER JOIN user_master um
+      ON um.UserID = uom.UserID
+    INNER JOIN organization_master om
+      ON om.OrganizationID = uom.OrganizationID
+    WHERE uom.UserID = $1
+      AND uom.OrganizationID = $2
+      AND uom.IsActive = TRUE
+      AND uom.IsDeleted = FALSE
+      AND um.IsActive = TRUE
+      AND um.IsDeleted = FALSE
+      AND um.IsLocked = FALSE
+      AND om.IsActive = TRUE
+      AND om.ActivationStatus = TRUE
+      AND om.IsDeleted = FALSE
+    LIMIT 1;
+    `,
+    [normalizedUserID, CENTRAL_RDFC_ORGANIZATION_ID],
+  );
+
+  return result.rows.length > 0;
+};
+
+const resolveOpexAccess = async (
+  data = {},
+  queryable = pool,
+  { approvalAction = false } = {},
+) => {
   const jwtRole = String(data.UserType || "").trim().toUpperCase();
   const departmentName = String(data.DepartmentName || "").trim();
+
+  if (jwtRole === "RD-FC") {
+    return {
+      error: fail(
+        "RD-FC OPEX access is assigned to the Organization 10 Finance HOD.",
+        403,
+      ),
+    };
+  }
 
   if (jwtRole === "HOD" && !departmentName) {
     return {
@@ -41,12 +87,33 @@ const resolveOpexAccess = (data = {}) => {
   const financeHod =
     jwtRole === "HOD" && departmentName.toUpperCase() === "FINANCE";
 
+  const centralContext =
+    financeHod &&
+    (approvalAction ||
+      Number(data.OrganizationID ?? data.Filters?.OrganizationID) ===
+        CENTRAL_RDFC_ORGANIZATION_ID);
+  let centralizedRdfc = false;
+
+  if (centralContext) {
+    centralizedRdfc = await hasCentralRdfcMapping(queryable, data.UserID);
+
+    if (!centralizedRdfc && !approvalAction) {
+      return {
+        error: fail(
+          "You are not authorized as the centralized RD-FC approver.",
+          403,
+        ),
+      };
+    }
+  }
+
   return {
     jwtRole,
-    effectiveRole: financeHod ? "FC" : jwtRole,
+    effectiveRole: centralizedRdfc ? "RD-FC" : financeHod ? "FC" : jwtRole,
     departmentName,
     departmentScope: jwtRole === "HOD" && !financeHod ? departmentName : null,
     financeHod,
+    centralizedRdfc,
   };
 };
 
@@ -715,7 +782,7 @@ const getAllOpex = async (data) => {
     // User Type
     // =====================================================
 
-    const access = resolveOpexAccess(data);
+    const access = await resolveOpexAccess(data);
     if (access.error) return access.error;
 
     const userType = access.effectiveRole;
@@ -759,7 +826,11 @@ const getAllOpex = async (data) => {
     // Organization Filter
     // =====================================================
 
-    if (data.OrganizationID !== null && data.OrganizationID !== undefined) {
+    if (
+      !access.centralizedRdfc &&
+      data.OrganizationID !== null &&
+      data.OrganizationID !== undefined
+    ) {
       params.push(data.OrganizationID);
 
       query += `
@@ -870,7 +941,11 @@ const getAllOpex = async (data) => {
     // Organization Count Filter
     // =====================================================
 
-    if (data.OrganizationID !== null && data.OrganizationID !== undefined) {
+    if (
+      !access.centralizedRdfc &&
+      data.OrganizationID !== null &&
+      data.OrganizationID !== undefined
+    ) {
       countParams.push(data.OrganizationID);
 
       countQuery += `
@@ -1509,7 +1584,7 @@ const processOpexApproval = async (data) => {
     // 1. NORMALIZE INPUT
     // ============================================================
 
-    const access = resolveOpexAccess(data);
+    const access = await resolveOpexAccess(data, pool, { approvalAction: true });
     if (access.error) return access.error;
 
     const approverRole = access.effectiveRole;
@@ -2463,7 +2538,7 @@ const opexSummaryData = (row) => ({
 const getOpexSummaryReport = async (data) => {
   try {
     const OrganizationID = Number(data?.Filters?.OrganizationID);
-    const access = resolveOpexAccess(data);
+    const access = await resolveOpexAccess(data);
     if (access.error) return access.error;
 
     const UserType = access.effectiveRole;
@@ -2611,7 +2686,7 @@ const getOpexSummaryReport = async (data) => {
           LIMIT 1
         ) current_stage ON TRUE
 
-        WHERE cm.OrganizationID = $1
+        WHERE ($4::boolean = TRUE OR cm.OrganizationID = $1)
           AND cm.IsDeleted = FALSE
           AND (
             $2::text <> 'HOD'
@@ -2759,7 +2834,7 @@ const getOpexSummaryReport = async (data) => {
       FROM visible_opex
       WHERE Status IS NOT NULL;
       `,
-      [OrganizationID, UserType, DepartmentName || null],
+      [OrganizationID, UserType, DepartmentName || null, access.centralizedRdfc],
     );
 
     const row = result.rows[0];
@@ -3813,7 +3888,7 @@ const generateOpexListPdf = async (data) => {
       page += 1;
     } while (page <= totalPages);
 
-    const access = resolveOpexAccess(data);
+    const access = await resolveOpexAccess(data);
     if (access.error) return access.error;
 
     const pdfBuffer = await generatePdf({

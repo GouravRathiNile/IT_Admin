@@ -785,6 +785,7 @@ exports.getOpexSummaryReport = async (req, res) => {
       Filters: {
         OrganizationID: Number(req.query.OrganizationID),
       },
+      UserID: user.UserID,
       UserType,
       DepartmentName: user.DepartmentName,
     });
