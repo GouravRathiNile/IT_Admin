@@ -54,6 +54,7 @@ const authenticatedUser = (req) => {
   return {
     UserID: userID,
     UserType: String(req.user?.UserType || "").trim(),
+    DepartmentName: String(req.user?.DepartmentName || "").trim(),
     LoginType: String(req.user?.LoginType || "").trim(),
   };
 };
@@ -182,6 +183,13 @@ if (!Department) {
 exports.getAllOpex = async (req, res) => {
   try {
     const user = authenticatedUser(req);
+
+    if (user.UserType.toUpperCase() === "HOD" && !user.DepartmentName) {
+      throw new AppError(
+        "Department information is required for HOD OPEX access",
+        STATUS_CODES.FORBIDDEN
+      );
+    }
 
     let OrganizationID = null;
 

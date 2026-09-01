@@ -689,6 +689,11 @@ const getAllOpex = async (data) => {
     // =====================================================
 
     const userType = data.UserType ? String(data.UserType).toUpperCase() : null;
+    const departmentName = String(data.DepartmentName || "").trim();
+
+    if (userType === "HOD" && !departmentName) {
+      return fail("Department information is required for HOD OPEX access.", 403);
+    }
 
     // =====================================================
     // Status
@@ -733,6 +738,15 @@ const getAllOpex = async (data) => {
 
       query += `
         AND cm.OrganizationID = $${params.length}
+      `;
+    }
+
+    // HOD visibility is restricted to the department stored in the JWT.
+    if (userType === "HOD") {
+      params.push(departmentName);
+
+      query += `
+        AND LOWER(TRIM(cm.Department)) = LOWER(TRIM($${params.length}))
       `;
     }
 
@@ -835,6 +849,14 @@ const getAllOpex = async (data) => {
 
       countQuery += `
         AND cm.OrganizationID = $${countParams.length}
+      `;
+    }
+
+    if (userType === "HOD") {
+      countParams.push(departmentName);
+
+      countQuery += `
+        AND LOWER(TRIM(cm.Department)) = LOWER(TRIM($${countParams.length}))
       `;
     }
 

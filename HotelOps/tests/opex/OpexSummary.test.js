@@ -96,3 +96,110 @@ test("OPEX OrganizationID remains mandatory and UserType comes from JWT", async 
   assert.doesNotMatch(handler, /req\.(query|body).*UserType/);
   assert.doesNotMatch(handler, /STATUS_CODES\.FORBIDDEN/);
 });
+
+test("HOD OPEX list scopes every status and count to JWT department", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    for (const Status of [null, "Pending", "Approved", "Rejected", "Hold", "Returned"]) {
+      const response = await OpexService.getAllOpex({
+        OrganizationID: 20,
+        UserType: "HOD",
+        DepartmentName: "  Finance  ",
+        Status,
+        page: 1,
+        PageSize: 10,
+      });
+      assert.equal(response.success, true);
+    }
+
+    assert.equal(calls.length, 12);
+    for (const call of calls) {
+      assert.match(
+        call.sql,
+        /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$\d+\)\)/,
+      );
+      assert.equal(call.values.includes("Finance"), true);
+      assert.equal(call.values[0], 20);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("HOD without JWT department is forbidden before querying", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  let queried = false;
+  pool.query = async () => {
+    queried = true;
+    return { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserType: "HOD",
+      DepartmentName: " ",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, false);
+    assert.equal(response.statusCode, 403);
+    assert.equal(queried, false);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("non-HOD OPEX list behavior remains department-unrestricted", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserType: "USER",
+      DepartmentName: "Finance",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls.some((call) => /LOWER\(TRIM\(cm\.Department\)\)/.test(call.sql)), false);
+    assert.equal(calls.some((call) => call.values.includes("Finance")), false);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("OPEX controller reads DepartmentName only from JWT context", () => {
+  const controllerSource = fs.readFileSync(
+    path.join(__dirname, "../../controllers/OpexController/OpexController.js"),
+    "utf8",
+  );
+  assert.match(
+    controllerSource,
+    /DepartmentName: String\(req\.user\?\.DepartmentName \|\| ""\)\.trim\(\)/,
+  );
+
+  const listHandler = controllerSource.match(
+    /exports\.getAllOpex[\s\S]*?\/\/ =+ Get Opex By ID/,
+  )[0];
+  assert.doesNotMatch(listHandler, /req\.(query|body).*DepartmentName/);
+  assert.match(listHandler, /STATUS_CODES\.FORBIDDEN/);
+});
