@@ -239,7 +239,7 @@ CREATE TABLE user_device (
 );
 
 CREATE TABLE auth_token_blacklist (
-    authtokenblacklistid BIGSERIAL PRIMARY KEY,
+    tokenblacklistid BIGSERIAL PRIMARY KEY,
     userid BIGINT NOT NULL,
     jti VARCHAR(255) NOT NULL UNIQUE,
     tokenissuedat TIMESTAMP NOT NULL,
