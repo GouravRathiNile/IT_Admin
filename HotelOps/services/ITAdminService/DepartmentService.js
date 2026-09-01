@@ -169,7 +169,7 @@ const createDepartment = async (data) => {
         success: false,
 
         message:
-          "Department Name or Short Name already exists",
+          "Department Name or Short Name already exists in this organization",
 
       };
 
@@ -579,7 +579,7 @@ const updateDepartment = async (data) => {
         success: false,
 
         message:
-          "Department Name or Short Name already exists",
+          "Department Name or Short Name already exists in this organization",
 
       };
 
