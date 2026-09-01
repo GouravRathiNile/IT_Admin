@@ -2437,9 +2437,14 @@ const getOpexSummaryReport = async (data) => {
   try {
     const OrganizationID = Number(data?.Filters?.OrganizationID);
     const UserType = String(data?.UserType || "").trim().toUpperCase();
+    const DepartmentName = String(data?.DepartmentName || "").trim();
 
     if (!Number.isSafeInteger(OrganizationID) || OrganizationID < 1) {
       return fail("OrganizationID is required.", 400);
+    }
+
+    if (UserType === "HOD" && !DepartmentName) {
+      return fail("Department information is required for HOD OPEX access.", 403);
     }
 
     if (!APPROVAL_ROLES.has(UserType)) {
@@ -2582,6 +2587,10 @@ const getOpexSummaryReport = async (data) => {
 
         WHERE cm.OrganizationID = $1
           AND cm.IsDeleted = FALSE
+          AND (
+            $2::text <> 'HOD'
+            OR LOWER(TRIM(cm.Department)) = LOWER(TRIM($3::text))
+          )
       ),
 
       visible_opex AS
@@ -2724,7 +2733,7 @@ const getOpexSummaryReport = async (data) => {
       FROM visible_opex
       WHERE Status IS NOT NULL;
       `,
-      [OrganizationID, UserType],
+      [OrganizationID, UserType, DepartmentName || null],
     );
 
     const row = result.rows[0];

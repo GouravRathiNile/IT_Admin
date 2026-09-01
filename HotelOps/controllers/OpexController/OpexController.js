@@ -773,11 +773,19 @@ exports.getOpexSummaryReport = async (req, res) => {
     const user = authenticatedUser(req);
     const UserType = user.UserType.toUpperCase();
 
+    if (UserType === "HOD" && !user.DepartmentName) {
+      throw new AppError(
+        "Department information is required for HOD OPEX access",
+        STATUS_CODES.FORBIDDEN
+      );
+    }
+
     const response = await OpexService.getOpexSummaryReport({
       Filters: {
         OrganizationID: Number(req.query.OrganizationID),
       },
       UserType,
+      DepartmentName: user.DepartmentName,
     });
 
     if (!response.success) {

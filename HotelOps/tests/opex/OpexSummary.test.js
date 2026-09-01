@@ -69,7 +69,7 @@ test("OPEX approval roles retain their role-scoped summary", { concurrency: fals
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "RD-FC"]);
+    assert.deepEqual(call.values, [20, "RD-FC", null]);
     assert.match(call.sql, /CurrentApprovalRole = \$2/);
   } finally {
     pool.query = originalQuery;
@@ -94,7 +94,56 @@ test("OPEX OrganizationID remains mandatory and UserType comes from JWT", async 
 
   assert.match(handler, /const UserType = user\.UserType\.toUpperCase\(\)/);
   assert.doesNotMatch(handler, /req\.(query|body).*UserType/);
-  assert.doesNotMatch(handler, /STATUS_CODES\.FORBIDDEN/);
+  assert.doesNotMatch(handler, /Only HOD, FC, GM, RD-FC, or CEO/);
+});
+
+test("HOD OPEX summary is scoped to JWT department", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  let call;
+  pool.query = async (sql, values) => {
+    call = { sql, values };
+    return { rows: [summaryRow] };
+  };
+
+  try {
+    const response = await OpexService.getOpexSummaryReport({
+      Filters: { OrganizationID: 20 },
+      UserType: "HOD",
+      DepartmentName: "  Finance  ",
+    });
+
+    assert.equal(response.success, true);
+    assert.deepEqual(call.values, [20, "HOD", "Finance"]);
+    assert.match(
+      call.sql,
+      /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$3::text\)\)/,
+    );
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("HOD OPEX summary without JWT department is forbidden", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  let queried = false;
+  pool.query = async () => {
+    queried = true;
+    return { rows: [summaryRow] };
+  };
+
+  try {
+    const response = await OpexService.getOpexSummaryReport({
+      Filters: { OrganizationID: 20 },
+      UserType: "HOD",
+      DepartmentName: "",
+    });
+
+    assert.equal(response.success, false);
+    assert.equal(response.statusCode, 403);
+    assert.equal(queried, false);
+  } finally {
+    pool.query = originalQuery;
+  }
 });
 
 test("HOD OPEX list scopes every status and count to JWT department", { concurrency: false }, async () => {
