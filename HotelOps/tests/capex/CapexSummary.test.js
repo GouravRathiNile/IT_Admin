@@ -6,6 +6,19 @@ const path = require("node:path");
 const { pool } = require("../../db");
 const CapexService = require("../../services/CapexService/CapexService");
 
+test("CAPEX approval responses expose role-wise approved quantity", () => {
+  const serviceSource = fs.readFileSync(
+    path.join(__dirname, "../../services/CapexService/CapexService.js"),
+    "utf8",
+  );
+
+  assert.match(serviceSource, /WHEN 'GM' THEN ca\.GMApprovedQuantity/);
+  assert.match(serviceSource, /WHEN 'CEO' THEN ca\.CEOApprovedQuantity/);
+  assert.match(serviceSource, /WHEN 'OWNER' THEN ca\.OwnerApprovedQuantity/);
+  assert.match(serviceSource, /END AS ApprovedQuantity/);
+  assert.match(serviceSource, /ApprovedQuantity:[\s\S]*Number\(row\.approvedquantity\)/);
+});
+
 const summaryRow = {
   totalcapex: "6",
   totalamount: "2100",

@@ -421,6 +421,10 @@ const mapApproval = (row) => ({
   CapexApprovalID: Number(row.capexapprovalid),
   ApprovalRole: row.approvalrole,
   Status: row.status,
+  ApprovedQuantity:
+    row.approvedquantity === null || row.approvedquantity === undefined
+      ? null
+      : Number(row.approvedquantity),
   Remarks: row.remarks,
 });
 // Fetch documents and approvals in batches to avoid N+1 database queries.
@@ -472,6 +476,12 @@ const attachRelatedData = async (capexRows) => {
           WHEN 'CEO' THEN ca.CEOStatusApprovedBy
           WHEN 'OWNER' THEN ca.OwnerStatusApprovedBy
         END AS StatusApprovedBy,
+
+        CASE cfg.ApprovalRole
+          WHEN 'GM' THEN ca.GMApprovedQuantity
+          WHEN 'CEO' THEN ca.CEOApprovedQuantity
+          WHEN 'OWNER' THEN ca.OwnerApprovedQuantity
+        END AS ApprovedQuantity,
 
         CASE cfg.ApprovalRole
           WHEN 'GM' THEN ca.GMRemarks
