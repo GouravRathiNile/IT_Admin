@@ -4497,11 +4497,11 @@ const finalAllOrganizationAccess =
 
       if (
         !Array.isArray(Organizations) ||
-        Organizations.length !== 1
+        Organizations.length === 0
       ) {
 
         throw new Error(
-          "Organization user must have exactly one organization"
+          "At least one organization is required for Organization login"
         );
 
       }
@@ -5049,10 +5049,12 @@ const finalAllOrganizationAccess =
       LoginType === "Organization"
     ) {
 
-      const OrganizationID =
-        Number(
-          Organizations[0]?.OrganizationID
-        );
+      for (const organization of Organizations) {
+
+        const OrganizationID =
+          Number(
+            organization?.OrganizationID
+          );
 
 
       if (!OrganizationID) {
@@ -5179,6 +5181,8 @@ const finalAllOrganizationAccess =
             ModifiedBy || UserID
           ]
         );
+
+        }
 
       }
 
@@ -6664,7 +6668,7 @@ const updateUserOrganizations = async (
     else if (LoginType === "Organization") {
 
 
-      if (Organizations.length !== 1) {
+      if (Organizations.length === 0) {
 
         await client.query("ROLLBACK");
 
@@ -6672,52 +6676,8 @@ const updateUserOrganizations = async (
           success: false,
 
           message:
-            "Organization user must have exactly one organization",
+            "At least one organization is required for Organization login",
         };
-
-      }
-
-
-      const OrganizationID =
-        Organizations[0].OrganizationID;
-
-
-      if (!OrganizationID) {
-
-        throw new Error(
-          "OrganizationID is required"
-        );
-
-      }
-
-
-      // ------------------------------------------------------
-      // Validate Organization
-      // ------------------------------------------------------
-
-      const organizationCheck =
-        await client.query(
-          `
-          SELECT
-            OrganizationID
-
-          FROM Organization_Master
-
-          WHERE OrganizationID = $1
-            AND IsDeleted = FALSE
-            AND IsActive = TRUE
-
-          LIMIT 1;
-          `,
-          [OrganizationID]
-        );
-
-
-      if (organizationCheck.rows.length === 0) {
-
-        throw new Error(
-          `Invalid or inactive OrganizationID: ${OrganizationID}`
-        );
 
       }
 
@@ -6772,6 +6732,52 @@ const updateUserOrganizations = async (
           UserID,
         ]
       );
+
+
+      for (const organization of Organizations) {
+
+      const OrganizationID =
+        organization.OrganizationID;
+
+
+      if (!OrganizationID) {
+
+        throw new Error(
+          "OrganizationID is required"
+        );
+
+      }
+
+
+      // ------------------------------------------------------
+      // Validate Organization
+      // ------------------------------------------------------
+
+      const organizationCheck =
+        await client.query(
+          `
+          SELECT
+            OrganizationID
+
+          FROM Organization_Master
+
+          WHERE OrganizationID = $1
+            AND IsDeleted = FALSE
+            AND IsActive = TRUE
+
+          LIMIT 1;
+          `,
+          [OrganizationID]
+        );
+
+
+      if (organizationCheck.rows.length === 0) {
+
+        throw new Error(
+          `Invalid or inactive OrganizationID: ${OrganizationID}`
+        );
+
+      }
 
 
       // ------------------------------------------------------
@@ -6890,6 +6896,8 @@ const updateUserOrganizations = async (
             ModifiedBy || UserID,
           ]
         );
+
+        }
 
       }
 
