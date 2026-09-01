@@ -755,8 +755,28 @@ const getReport = async (req, res, action) => {
 // ============================================================ Summary Report
 exports.getOpexSummaryReport = async (req, res) => {
   try {
+    if (!isPositiveInteger(req.query.OrganizationID)) {
+      throw new AppError(
+        "Organization ID is required and must be a positive integer",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
+    const user = authenticatedUser(req);
+    const UserType = user.UserType.toUpperCase();
+
+    if (!["HOD", "FC", "GM", "RD-FC", "CEO"].includes(UserType)) {
+      throw new AppError(
+        "Only HOD, FC, GM, RD-FC, or CEO can access the OPEX summary report",
+        STATUS_CODES.FORBIDDEN
+      );
+    }
+
     const response = await OpexService.getOpexSummaryReport({
-      Filters: reportFilters(req),
+      Filters: {
+        OrganizationID: Number(req.query.OrganizationID),
+      },
+      UserType,
     });
 
     if (!response.success) {

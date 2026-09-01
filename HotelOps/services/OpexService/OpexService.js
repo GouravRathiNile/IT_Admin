@@ -2396,11 +2396,140 @@ const reportFailure = (error, reportName) => {
 // ============================================================ Summary Report
 const getOpexSummaryReport = async (data) => {
   try {
-    // console.log("Received Filters:", JSON.stringify(data.Filters));
-    // console.log("Query params:", reportParameters(data));
+    const OrganizationID = Number(data?.Filters?.OrganizationID);
+    const UserType = String(data?.UserType || "").trim().toUpperCase();
+
+    if (!Number.isSafeInteger(OrganizationID) || OrganizationID < 1) {
+      return fail("OrganizationID is required.", 400);
+    }
+
+    if (!APPROVAL_ROLES.has(UserType)) {
+      return fail(
+        "Only HOD, FC, GM, RD-FC, or CEO can access this report.",
+        403,
+      );
+    }
+
     const result = await pool.query(
       `
-      ${REPORT_DATA_CTE}
+      WITH role_opex AS
+      (
+        SELECT
+          cm.OpexID,
+          COALESCE(cm.Total, 0)::numeric AS Total,
+          cm.IsVoid,
+          UPPER(COALESCE(ca.FinalStatus, 'PENDING')) AS FinalStatus,
+
+          UPPER(COALESCE(
+            CASE $2::text
+              WHEN 'HOD' THEN ca.HODStatus
+              WHEN 'FC' THEN ca.FCStatus
+              WHEN 'GM' THEN ca.GMStatus
+              WHEN 'RD-FC' THEN ca.RDFCStatus
+              WHEN 'CEO' THEN ca.CEOStatus
+            END,
+            'PENDING'
+          )) AS RoleStatus,
+
+          UPPER(COALESCE(current_stage.ApprovalRole, '')) AS CurrentApprovalRole,
+          UPPER(COALESCE(current_stage.Status, 'PENDING')) AS CurrentStageStatus
+
+        FROM Opex_Master cm
+
+        LEFT JOIN Opex_Approval ca
+          ON ca.OpexID = cm.OpexID
+         AND ca.IsDeleted = FALSE
+
+        LEFT JOIN LATERAL
+        (
+          SELECT
+            cfg.ApprovalRole,
+            CASE UPPER(cfg.ApprovalRole)
+              WHEN 'HOD' THEN COALESCE(ca.HODStatus, 'Pending')
+              WHEN 'FC' THEN COALESCE(ca.FCStatus, 'Pending')
+              WHEN 'GM' THEN COALESCE(ca.GMStatus, 'Pending')
+              WHEN 'RD-FC' THEN COALESCE(ca.RDFCStatus, 'Pending')
+              WHEN 'CEO' THEN COALESCE(ca.CEOStatus, 'Pending')
+            END AS Status,
+            cfg.ApprovalLevel,
+            cfg.ApprovalOrder
+          FROM
+          (
+            SELECT
+              configured.ApprovalLevel,
+              configured.ApprovalRole,
+              configured.ApprovalOrder
+            FROM Opex_Approval_Config configured
+            WHERE configured.OrganizationID = cm.OrganizationID
+              AND configured.IsDeleted = FALSE
+
+            UNION ALL
+
+            SELECT
+              defaults.ApprovalLevel,
+              defaults.ApprovalRole,
+              defaults.ApprovalOrder
+            FROM
+            (
+              VALUES
+                (1, 'HOD', 1),
+                (2, 'FC', 2),
+                (3, 'GM', 3),
+                (4, 'RD-FC', 4),
+                (5, 'CEO', 5)
+            ) defaults(ApprovalLevel, ApprovalRole, ApprovalOrder)
+            WHERE NOT EXISTS
+            (
+              SELECT 1
+              FROM Opex_Approval_Config configured
+              WHERE configured.OrganizationID = cm.OrganizationID
+                AND configured.IsDeleted = FALSE
+            )
+          ) cfg
+          WHERE UPPER(
+            CASE UPPER(cfg.ApprovalRole)
+              WHEN 'HOD' THEN COALESCE(ca.HODStatus, 'Pending')
+              WHEN 'FC' THEN COALESCE(ca.FCStatus, 'Pending')
+              WHEN 'GM' THEN COALESCE(ca.GMStatus, 'Pending')
+              WHEN 'RD-FC' THEN COALESCE(ca.RDFCStatus, 'Pending')
+              WHEN 'CEO' THEN COALESCE(ca.CEOStatus, 'Pending')
+            END
+          ) NOT IN ('APPROVED', 'REJECTED')
+          ORDER BY cfg.ApprovalOrder ASC, cfg.ApprovalLevel ASC
+          LIMIT 1
+        ) current_stage ON TRUE
+
+        WHERE cm.OrganizationID = $1
+          AND cm.IsDeleted = FALSE
+      ),
+
+      visible_opex AS
+      (
+        SELECT
+          OpexID,
+          Total,
+          CASE
+            WHEN IsVoid = TRUE THEN 'Void'
+            WHEN RoleStatus = 'PENDING'
+              AND CurrentApprovalRole = $2
+              AND CurrentStageStatus = 'PENDING'
+              AND FinalStatus = 'PENDING'
+            THEN 'Pending'
+            WHEN RoleStatus = 'APPROVED' THEN 'Approved'
+            WHEN RoleStatus = 'REJECTED' THEN 'Rejected'
+            WHEN RoleStatus = 'HOLD' THEN 'Hold'
+            WHEN RoleStatus = 'RETURNED' THEN 'Returned'
+            ELSE NULL
+          END AS Status
+        FROM role_opex
+        WHERE RoleStatus IN ('APPROVED', 'REJECTED', 'HOLD', 'RETURNED')
+           OR (
+             RoleStatus = 'PENDING'
+             AND CurrentApprovalRole = $2
+             AND CurrentStageStatus = 'PENDING'
+             AND FinalStatus = 'PENDING'
+           )
+      )
 
       SELECT
 
@@ -2465,6 +2594,22 @@ const getOpexSummaryReport = async (data) => {
 
 
         -- ====================================================
+        -- HOLD
+        -- ====================================================
+
+        COUNT(*) FILTER (
+          WHERE Status = 'Hold'
+        )::bigint AS HoldCount,
+
+        COALESCE(
+          SUM(Total) FILTER (
+            WHERE Status = 'Hold'
+          ),
+          0
+        ) AS HoldAmount,
+
+
+        -- ====================================================
         -- RETURNED
         -- ====================================================
 
@@ -2495,10 +2640,10 @@ const getOpexSummaryReport = async (data) => {
           0
         ) AS VoidAmount
 
-      FROM Opex_data;
+      FROM visible_opex
+      WHERE Status IS NOT NULL;
       `,
-
-      reportParameters(data),
+      [OrganizationID, UserType],
     );
 
     const row = result.rows[0];
@@ -2520,6 +2665,9 @@ const getOpexSummaryReport = async (data) => {
 
         RejectedCount: Number(row.rejectedcount),
         RejectedAmount: Number(row.rejectedamount),
+
+        HoldCount: Number(row.holdcount),
+        HoldAmount: Number(row.holdamount),
 
         ReturnedCount: Number(row.returnedcount),
         ReturnedAmount: Number(row.returnedamount),

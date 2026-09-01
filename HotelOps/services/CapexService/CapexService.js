@@ -2568,6 +2568,23 @@ const reportFailure = (error, reportName) => {
 
   return fail(`Unable to generate ${reportName} at this time.`, 503);
 };
+// Keep both role-scoped and organization-wide summaries on the same API shape.
+const capexSummaryData = (row) => ({
+  TotalCapex: Number(row.totalcapex),
+  TotalAmount: Number(row.totalamount),
+  PendingCount: Number(row.pendingcount),
+  PendingAmount: Number(row.pendingamount),
+  ApprovedCount: Number(row.approvedcount),
+  ApprovedAmount: Number(row.approvedamount),
+  RejectedCount: Number(row.rejectedcount),
+  RejectedAmount: Number(row.rejectedamount),
+  HoldCount: Number(row.holdcount),
+  HoldAmount: Number(row.holdamount),
+  ReturnedCount: Number(row.returnedcount),
+  ReturnedAmount: Number(row.returnedamount),
+  VoidCount: Number(row.voidcount),
+  VoidAmount: Number(row.voidamount),
+});
 // ============================================================ Summary Report
 const getCapexSummaryReport = async (data) => {
   try {
@@ -2578,8 +2595,53 @@ const getCapexSummaryReport = async (data) => {
       return fail("OrganizationID is required.", 400);
     }
 
-    if (!["GM", "CEO", "OWNER"].includes(UserType)) {
-      return fail("Only GM, CEO, or OWNER can access this report.", 403);
+    if (!APPROVAL_ROLES.has(UserType)) {
+      const result = await pool.query(
+        `
+        WITH organization_capex AS
+        (
+          SELECT
+            COALESCE(cm.Total, 0)::numeric AS Total,
+            CASE
+              WHEN cm.IsVoid = TRUE THEN 'Void'
+              WHEN UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'APPROVED' THEN 'Approved'
+              WHEN UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'REJECTED' THEN 'Rejected'
+              WHEN UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'HOLD' THEN 'Hold'
+              WHEN UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'RETURNED' THEN 'Returned'
+              ELSE 'Pending'
+            END AS Status
+          FROM Capex_Master cm
+          LEFT JOIN Capex_Approval ca
+            ON ca.CapexID = cm.CapexID
+           AND ca.IsDeleted = FALSE
+          WHERE cm.OrganizationID = $1
+            AND cm.IsDeleted = FALSE
+        )
+        SELECT
+          COUNT(*)::bigint AS TotalCapex,
+          COALESCE(SUM(Total), 0) AS TotalAmount,
+          COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Pending'), 0) AS PendingAmount,
+          COUNT(*) FILTER (WHERE Status = 'Approved')::bigint AS ApprovedCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Approved'), 0) AS ApprovedAmount,
+          COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Rejected'), 0) AS RejectedAmount,
+          COUNT(*) FILTER (WHERE Status = 'Hold')::bigint AS HoldCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Hold'), 0) AS HoldAmount,
+          COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Returned'), 0) AS ReturnedAmount,
+          COUNT(*) FILTER (WHERE Status = 'Void')::bigint AS VoidCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Void'), 0) AS VoidAmount
+        FROM organization_capex;
+        `,
+        [OrganizationID],
+      );
+
+      return {
+        success: true,
+        message: "CAPEX summary report fetched successfully.",
+        data: capexSummaryData(result.rows[0]),
+      };
     }
 
     const result = await pool.query(
@@ -2723,28 +2785,7 @@ const getCapexSummaryReport = async (data) => {
 
       message: "CAPEX summary report fetched successfully.",
 
-      data: {
-        TotalCapex: Number(row.totalcapex),
-        TotalAmount: Number(row.totalamount),
-
-        PendingCount: Number(row.pendingcount),
-        PendingAmount: Number(row.pendingamount),
-
-        ApprovedCount: Number(row.approvedcount),
-        ApprovedAmount: Number(row.approvedamount),
-
-        RejectedCount: Number(row.rejectedcount),
-        RejectedAmount: Number(row.rejectedamount),
-
-        HoldCount: Number(row.holdcount),
-        HoldAmount: Number(row.holdamount),
-
-        ReturnedCount: Number(row.returnedcount),
-        ReturnedAmount: Number(row.returnedamount),
-
-        VoidCount: Number(row.voidcount),
-        VoidAmount: Number(row.voidamount),
-      },
+      data: capexSummaryData(row),
     };
   } catch (error) {
     return reportFailure(error, "CAPEX summary report");

@@ -866,13 +866,6 @@ exports.getCapexSummaryReport = async (req, res) => {
     const user = authenticatedUser(req);
     const UserType = user.UserType.toUpperCase();
 
-    if (!["GM", "CEO", "OWNER"].includes(UserType)) {
-      throw new AppError(
-        "Only GM, CEO, or OWNER can access the CAPEX summary report",
-        STATUS_CODES.FORBIDDEN
-      );
-    }
-
     const response = await CapexService.getCapexSummaryReport({
       Filters: {
         OrganizationID: Number(req.query.OrganizationID),
