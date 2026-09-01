@@ -2393,6 +2393,23 @@ const reportFailure = (error, reportName) => {
 
   return fail(`Unable to generate ${reportName} at this time.`, 503);
 };
+// Keep role-scoped and organization-wide summaries on the same response shape.
+const opexSummaryData = (row) => ({
+  TotalOpex: Number(row.totalopex),
+  TotalAmount: Number(row.totalamount),
+  PendingCount: Number(row.pendingcount),
+  PendingAmount: Number(row.pendingamount),
+  ApprovedCount: Number(row.approvedcount),
+  ApprovedAmount: Number(row.approvedamount),
+  RejectedCount: Number(row.rejectedcount),
+  RejectedAmount: Number(row.rejectedamount),
+  HoldCount: Number(row.holdcount),
+  HoldAmount: Number(row.holdamount),
+  ReturnedCount: Number(row.returnedcount),
+  ReturnedAmount: Number(row.returnedamount),
+  VoidCount: Number(row.voidcount),
+  VoidAmount: Number(row.voidamount),
+});
 // ============================================================ Summary Report
 const getOpexSummaryReport = async (data) => {
   try {
@@ -2404,10 +2421,52 @@ const getOpexSummaryReport = async (data) => {
     }
 
     if (!APPROVAL_ROLES.has(UserType)) {
-      return fail(
-        "Only HOD, FC, GM, RD-FC, or CEO can access this report.",
-        403,
+      const result = await pool.query(
+        `
+        WITH organization_opex AS
+        (
+          SELECT
+            COALESCE(cm.Total, 0)::numeric AS Total,
+            CASE
+              WHEN cm.IsVoid = TRUE THEN 'Void'
+              WHEN UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'APPROVED' THEN 'Approved'
+              WHEN UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'REJECTED' THEN 'Rejected'
+              WHEN UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'HOLD' THEN 'Hold'
+              WHEN UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'RETURNED' THEN 'Returned'
+              ELSE 'Pending'
+            END AS Status
+          FROM Opex_Master cm
+          LEFT JOIN Opex_Approval ca
+            ON ca.OpexID = cm.OpexID
+           AND ca.IsDeleted = FALSE
+          WHERE cm.OrganizationID = $1
+            AND cm.IsDeleted = FALSE
+        )
+        SELECT
+          COUNT(*)::bigint AS TotalOpex,
+          COALESCE(SUM(Total), 0) AS TotalAmount,
+          COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Pending'), 0) AS PendingAmount,
+          COUNT(*) FILTER (WHERE Status = 'Approved')::bigint AS ApprovedCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Approved'), 0) AS ApprovedAmount,
+          COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Rejected'), 0) AS RejectedAmount,
+          COUNT(*) FILTER (WHERE Status = 'Hold')::bigint AS HoldCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Hold'), 0) AS HoldAmount,
+          COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Returned'), 0) AS ReturnedAmount,
+          COUNT(*) FILTER (WHERE Status = 'Void')::bigint AS VoidCount,
+          COALESCE(SUM(Total) FILTER (WHERE Status = 'Void'), 0) AS VoidAmount
+        FROM organization_opex;
+        `,
+        [OrganizationID],
       );
+
+      return {
+        success: true,
+        message: "Opex summary report fetched successfully.",
+        data: opexSummaryData(result.rows[0]),
+      };
     }
 
     const result = await pool.query(
@@ -2653,28 +2712,7 @@ const getOpexSummaryReport = async (data) => {
 
       message: "Opex summary report fetched successfully.",
 
-      data: {
-        TotalOpex: Number(row.totalopex),
-        TotalAmount: Number(row.totalamount),
-
-        PendingCount: Number(row.pendingcount),
-        PendingAmount: Number(row.pendingamount),
-
-        ApprovedCount: Number(row.approvedcount),
-        ApprovedAmount: Number(row.approvedamount),
-
-        RejectedCount: Number(row.rejectedcount),
-        RejectedAmount: Number(row.rejectedamount),
-
-        HoldCount: Number(row.holdcount),
-        HoldAmount: Number(row.holdamount),
-
-        ReturnedCount: Number(row.returnedcount),
-        ReturnedAmount: Number(row.returnedamount),
-
-        VoidCount: Number(row.voidcount),
-        VoidAmount: Number(row.voidamount),
-      },
+      data: opexSummaryData(row),
     };
   } catch (error) {
     return reportFailure(error, "Opex summary report");

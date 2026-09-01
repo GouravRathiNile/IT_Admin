@@ -765,13 +765,6 @@ exports.getOpexSummaryReport = async (req, res) => {
     const user = authenticatedUser(req);
     const UserType = user.UserType.toUpperCase();
 
-    if (!["HOD", "FC", "GM", "RD-FC", "CEO"].includes(UserType)) {
-      throw new AppError(
-        "Only HOD, FC, GM, RD-FC, or CEO can access the OPEX summary report",
-        STATUS_CODES.FORBIDDEN
-      );
-    }
-
     const response = await OpexService.getOpexSummaryReport({
       Filters: {
         OrganizationID: Number(req.query.OrganizationID),
