@@ -4107,99 +4107,126 @@ const generateCapexListPdfDocument = async (data) => {
     // PDF COLUMNS
     // ============================================================
 
+    const approvalRoles = [];
+
+    for (const row of capexRows) {
+      for (const approval of row.Approvals || []) {
+        const role = String(approval.ApprovalRole || "").trim().toUpperCase();
+        if (role && !approvalRoles.includes(role)) approvalRoles.push(role);
+      }
+    }
+
+    const pdfRows = capexRows.map((row, index) => ({
+      ...row,
+      ExportSerialNumber: index + 1,
+    }));
+
+    const approvalValue = (row, role) => {
+      const approval = (row.Approvals || []).find(
+        (item) =>
+          String(item.ApprovalRole || "").trim().toUpperCase() === role,
+      );
+
+      if (!approval) return "-";
+
+      const details = [approval.Status || "Pending"];
+      details.push(
+        `Qty - ${
+          approval.ApprovedQuantity === null ||
+          approval.ApprovedQuantity === undefined
+            ? "-"
+            : approval.ApprovedQuantity
+        }`,
+      );
+      if (approval.Remarks) details.push(approval.Remarks);
+      return details.join("\n");
+    };
+
     const columns = [
       {
-        header: "CAPEX No.",
-        value: (row) => row.CapexNumber,
-        width: 55,
+        header: "#",
+        value: (row) => row.ExportSerialNumber,
+        width: 24,
         align: "center",
       },
       {
-        header: "Organization",
+        header: "HTL",
         value: (row) => row.OrganizationShortName,
-        width: 70,
+        width: 48,
       },
       {
-        header: "Department",
+        header: "DEPT",
         value: (row) => row.Department,
-        width: 75,
+        width: 65,
       },
       {
-        header: "Item",
-        value: (row) => row.Item,
-        width: 90,
+        header: "ITEM DETAILS",
+        value: (row) =>
+          [row.Item, row.Description].filter(Boolean).join("\n"),
+        width: "*",
       },
       {
-        header: "Description",
-        value: (row) => row.Description,
-        width: 120,
-      },
-      {
-        header: "Make",
-        value: (row) => row.Make,
-        width: 70,
-      },
-      {
-        header: "Qty",
+        header: "QTY",
         value: (row) => row.Qty,
-        width: 40,
+        width: 42,
         align: "right",
       },
       {
-        header: "Rate",
+        header: "RATE",
         value: (row) =>
           Number(row.Rate || 0).toLocaleString("en-IN", {
-            minimumFractionDigits: 2,
+            minimumFractionDigits: 0,
             maximumFractionDigits: 2,
           }),
-        width: 65,
+        width: 62,
         align: "right",
       },
       {
-        header: "Total",
+        header: "TOTAL",
         value: (row) =>
           Number(row.Total || 0).toLocaleString("en-IN", {
-            minimumFractionDigits: 2,
+            minimumFractionDigits: 0,
             maximumFractionDigits: 2,
           }),
-        width: 75,
+        width: 72,
         align: "right",
         bold: true,
       },
-      {
-        header: "Status",
-        value: (row) => row.CurrentStatus,
-        width: 60,
-        align: "center",
-      },
-      {
-        header: "Approval",
-        value: (row) => row.CurrentApprovalRole,
-        width: 60,
-        align: "center",
-      },
-      {
-        header: "Created Date",
-        value: (row) => row.CreatedDate,
-        width: 75,
-      },
+      ...approvalRoles.map((role) => ({
+        header: role,
+        value: (row) => approvalValue(row, role),
+        width: 72,
+        align: "left",
+      })),
     ];
 
     // ============================================================
     // METADATA
     // ============================================================
 
+    let organizationShortName =
+      capexRows[0]?.OrganizationShortName || data.OrganizationShortName || null;
+
+    if (!organizationShortName && organizationId) {
+      const organizationResult = await pool.query(
+        `SELECT ShortName
+         FROM Organization_Master
+         WHERE OrganizationID = $1
+           AND IsDeleted = FALSE
+         LIMIT 1`,
+        [organizationId],
+      );
+      organizationShortName = organizationResult.rows[0]?.shortname || null;
+    }
+
+    organizationShortName ||= "All Organizations";
+
     const metadata = [
-      {
-        label: "Filters",
-        value: `Organization: ${
-          data.OrganizationID ? organizationId : "All Organizations"
-        }    |    Department: ${data.Department || "All"}    |    From: ${
-          data.FromDate || "All"
-        }    |    To: ${data.ToDate || "All"}    |    Status: ${
-          approvalStatus || "All"
-        }`,
-      },
+      { label: "Organization", value: organizationShortName },
+      { label: "Department", value: data.Department || "All" },
+      { label: "From Date", value: data.FromDate || "All" },
+      { label: "To Date", value: data.ToDate || "All" },
+      { label: "Status", value: approvalStatus || "All" },
       {
         label: "Total Records",
         value: capexRows.length,
@@ -4218,7 +4245,7 @@ const generateCapexListPdfDocument = async (data) => {
       orientation: "landscape",
       metadata,
       columns,
-      rows: capexRows,
+      rows: pdfRows,
       pageMargins: [20, 25, 20, 35],
     });
 
