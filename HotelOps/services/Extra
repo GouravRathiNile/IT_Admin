@@ -974,3 +974,620 @@ const createApprovalConfig = async (data) => {
     }
   }
 };
+const getAllCapex = async (data) => {
+  try {
+    // =====================================================
+    // Pagination
+    // =====================================================
+
+    const page = Number(data.page) || 1;
+    const PageSize = Number(data.PageSize) || 10;
+
+    if (!Number.isInteger(page) || page < 1) {
+      return {
+        success: false,
+        message: "Page must be a positive integer.",
+      };
+    }
+
+    if (!Number.isInteger(PageSize) || PageSize < 1) {
+      return {
+        success: false,
+        message: "PageSize must be a positive integer.",
+      };
+    }
+
+    const offset = (page - 1) * PageSize;
+
+    // =====================================================
+    // User Type
+    // =====================================================
+
+    const userType = data.UserType ? String(data.UserType).toUpperCase() : null;
+
+    // =====================================================
+    // Status
+    // =====================================================
+
+    const approvalStatus =
+      data.Status !== undefined &&
+      data.Status !== null &&
+      String(data.Status).trim() !== ""
+        ? String(data.Status).trim().toUpperCase()
+        : null;
+
+    const validStatuses = [
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "HOLD",
+      "RETURNED",
+    ];
+
+    if (approvalStatus && !validStatuses.includes(approvalStatus)) {
+      return {
+        success: false,
+        message:
+          "Status must be Pending, Approved, Rejected, Hold, or Returned.",
+      };
+    }
+
+    // =====================================================
+    // MAIN QUERY
+    // =====================================================
+
+    let query = `
+      ${CAPEX_SELECT}
+    `;
+
+    const params = [];
+
+    // =====================================================
+    // Organization Filter
+    // =====================================================
+
+    if (data.OrganizationID !== null && data.OrganizationID !== undefined) {
+      params.push(data.OrganizationID);
+
+      query += `
+        AND cm.OrganizationID = $${params.length}
+      `;
+    }
+
+    // =====================================================
+    // Department Filter
+    // =====================================================
+
+    if (data.Department) {
+      params.push(String(data.Department).trim());
+
+      query += `
+        AND LOWER(TRIM(cm.Department)) = LOWER($${params.length})
+      `;
+    }
+
+    if (data.FromDate) {
+      params.push(data.FromDate);
+      query += ` AND cm.CreatedDate >= $${params.length}::date `;
+    }
+
+    if (data.ToDate) {
+      params.push(data.ToDate);
+      query += ` AND cm.CreatedDate < ($${params.length}::date + INTERVAL '1 day') `;
+    }
+
+    // =====================================================
+    // STATUS FILTER
+    // =====================================================
+
+    if (["GM", "CEO", "OWNER"].includes(userType)) {
+      // ---------------------------------------------------
+      // GM
+      // ---------------------------------------------------
+
+      if (userType === "GM") {
+        if (approvalStatus === "PENDING") {
+          params.push("GM");
+
+          query += `
+            AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
+            AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
+          `;
+        } else if (approvalStatus) {
+          params.push(approvalStatus);
+
+          query += `
+            AND UPPER(
+              COALESCE(
+                approval_state.GMStatus,
+                'PENDING'
+              )
+            ) = $${params.length}
+          `;
+        } else {
+          params.push("GM");
+
+          query += `
+            AND UPPER(
+              COALESCE(
+                current_stage.ApprovalRole,
+                ''
+              )
+            ) = $${params.length}
+
+            AND UPPER(
+              COALESCE(
+                current_stage.Status,
+                'PENDING'
+              )
+            ) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
+          `;
+        }
+      }
+
+      // ---------------------------------------------------
+      // CEO
+      // ---------------------------------------------------
+      else if (userType === "CEO") {
+        if (approvalStatus === "PENDING") {
+          params.push("CEO");
+
+          query += `
+            AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
+            AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
+          `;
+        } else if (approvalStatus) {
+          params.push(approvalStatus);
+
+          query += `
+            AND UPPER(
+              COALESCE(
+                approval_state.CEOStatus,
+                'PENDING'
+              )
+            ) = $${params.length}
+          `;
+        } else {
+          params.push("CEO");
+
+          query += `
+            AND UPPER(
+              COALESCE(
+                current_stage.ApprovalRole,
+                ''
+              )
+            ) = $${params.length}
+
+            AND UPPER(
+              COALESCE(
+                current_stage.Status,
+                'PENDING'
+              )
+            ) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
+          `;
+        }
+      }
+
+      // ---------------------------------------------------
+      // OWNER
+      // ---------------------------------------------------
+      else if (userType === "OWNER") {
+        if (approvalStatus === "PENDING") {
+          params.push("OWNER");
+
+          query += `
+            AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
+            AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
+          `;
+        } else if (approvalStatus) {
+          params.push(approvalStatus);
+
+          query += `
+            AND UPPER(
+              COALESCE(
+                approval_state.OwnerStatus,
+                'PENDING'
+              )
+            ) = $${params.length}
+          `;
+        } else {
+          params.push("OWNER");
+
+          query += `
+            AND UPPER(
+              COALESCE(
+                current_stage.ApprovalRole,
+                ''
+              )
+            ) = $${params.length}
+
+            AND UPPER(
+              COALESCE(
+                current_stage.Status,
+                'PENDING'
+              )
+            ) = 'PENDING'
+            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
+          `;
+        }
+      }
+    }
+
+    // =====================================================
+    // HOD
+    // =====================================================
+    else if (userType === "HOD") {
+      if (["REJECTED", "HOLD", "RETURNED"].includes(approvalStatus)) {
+        // Match the selected non-pending status at any approval stage.
+        params.push(approvalStatus);
+
+        query += `
+          AND (
+            UPPER(
+              COALESCE(
+                approval_state.GMStatus,
+                ''
+              )
+            ) = $${params.length}
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.CEOStatus,
+                ''
+              )
+            ) = $${params.length}
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.OwnerStatus,
+                ''
+              )
+            ) = $${params.length}
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.FinalStatus,
+                ''
+              )
+            ) = $${params.length}
+          )
+        `;
+      } else if (approvalStatus === "APPROVED") {
+        // FinalStatus already represents completion of the configured flow.
+        // Do not require roles (such as OWNER) that may not be configured.
+        query += `
+          AND UPPER(
+            COALESCE(
+              approval_state.FinalStatus,
+              'PENDING'
+            )
+          ) = 'APPROVED'
+        `;
+      } else if (approvalStatus === "PENDING") {
+        // Pending excludes terminal and paused/returned approval states.
+        query += `
+          AND NOT (
+            UPPER(
+              COALESCE(
+                approval_state.GMStatus,
+                ''
+              )
+            ) IN ('REJECTED', 'HOLD', 'RETURNED')
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.CEOStatus,
+                ''
+              )
+            ) IN ('REJECTED', 'HOLD', 'RETURNED')
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.OwnerStatus,
+                ''
+              )
+            ) IN ('REJECTED', 'HOLD', 'RETURNED')
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.FinalStatus,
+                ''
+              )
+            ) IN ('REJECTED', 'HOLD', 'RETURNED', 'APPROVED')
+          )
+
+          AND (
+            UPPER(
+              COALESCE(
+                approval_state.GMStatus,
+                'PENDING'
+              )
+            ) <> 'APPROVED'
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.CEOStatus,
+                'PENDING'
+              )
+            ) <> 'APPROVED'
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.OwnerStatus,
+                'PENDING'
+              )
+            ) <> 'APPROVED'
+          )
+        `;
+      }
+    }
+
+    // =====================================================
+    // LIMIT + OFFSET
+    // =====================================================
+
+    const limitParameter = params.length + 1;
+    const offsetParameter = params.length + 2;
+
+    query += `
+      ORDER BY
+        cm.CreatedDate DESC,
+        cm.CapexID DESC
+
+      LIMIT $${limitParameter}
+      OFFSET $${offsetParameter};
+    `;
+
+    params.push(PageSize);
+    params.push(offset);
+
+    // =====================================================
+    // COUNT QUERY
+    // =====================================================
+
+    let countQuery = `
+      SELECT COUNT(*) AS TotalCount
+      FROM (
+        ${CAPEX_SELECT}
+    `;
+
+    const countParams = [];
+
+    // =====================================================
+    // Organization Count Filter
+    // =====================================================
+
+    if (data.OrganizationID !== null && data.OrganizationID !== undefined) {
+      countParams.push(data.OrganizationID);
+
+      countQuery += `
+        AND cm.OrganizationID = $${countParams.length}
+      `;
+    }
+
+    if (data.Department) {
+      countParams.push(String(data.Department).trim());
+
+      countQuery += `
+        AND LOWER(TRIM(cm.Department)) = LOWER($${countParams.length})
+      `;
+    }
+
+    if (data.FromDate) {
+      countParams.push(data.FromDate);
+      countQuery += ` AND cm.CreatedDate >= $${countParams.length}::date `;
+    }
+
+    if (data.ToDate) {
+      countParams.push(data.ToDate);
+      countQuery += ` AND cm.CreatedDate < ($${countParams.length}::date + INTERVAL '1 day') `;
+    }
+
+    // =====================================================
+    // COUNT STATUS FILTER
+    // =====================================================
+
+    if (["GM", "CEO", "OWNER"].includes(userType)) {
+      let statusColumn = null;
+
+      if (userType === "GM") {
+        statusColumn = "approval_state.GMStatus";
+      } else if (userType === "CEO") {
+        statusColumn = "approval_state.CEOStatus";
+      } else if (userType === "OWNER") {
+        statusColumn = "approval_state.OwnerStatus";
+      }
+
+      if (approvalStatus === "PENDING" || !approvalStatus) {
+        countParams.push(userType);
+
+        countQuery += `
+          AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${countParams.length}
+          AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+          AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
+        `;
+      } else if (approvalStatus) {
+        countParams.push(approvalStatus);
+
+        countQuery += `
+          AND UPPER(
+            COALESCE(
+              ${statusColumn},
+              'PENDING'
+            )
+          ) = $${countParams.length}
+        `;
+      }
+    }
+
+    // =====================================================
+    // HOD COUNT
+    // =====================================================
+    else if (userType === "HOD") {
+      if (approvalStatus === "REJECTED") {
+        countQuery += `
+          AND (
+            UPPER(
+              COALESCE(
+                approval_state.GMStatus,
+                ''
+              )
+            ) = 'REJECTED'
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.CEOStatus,
+                ''
+              )
+            ) = 'REJECTED'
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.OwnerStatus,
+                ''
+              )
+            ) = 'REJECTED'
+          )
+        `;
+      } else if (approvalStatus === "APPROVED") {
+        countQuery += `
+          AND UPPER(
+            COALESCE(
+              approval_state.FinalStatus,
+              'PENDING'
+            )
+          ) = 'APPROVED'
+        `;
+      } else if (approvalStatus === "PENDING") {
+        countQuery += `
+          AND NOT (
+            UPPER(
+              COALESCE(
+                approval_state.GMStatus,
+                ''
+              )
+            ) = 'REJECTED'
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.CEOStatus,
+                ''
+              )
+            ) = 'REJECTED'
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.OwnerStatus,
+                ''
+              )
+            ) = 'REJECTED'
+          )
+
+          AND (
+            UPPER(
+              COALESCE(
+                approval_state.GMStatus,
+                'PENDING'
+              )
+            ) <> 'APPROVED'
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.CEOStatus,
+                'PENDING'
+              )
+            ) <> 'APPROVED'
+
+            OR
+
+            UPPER(
+              COALESCE(
+                approval_state.OwnerStatus,
+                'PENDING'
+              )
+            ) <> 'APPROVED'
+          )
+        `;
+      }
+    }
+
+    countQuery += `
+      ) filtered_capex
+    `;
+
+    // =====================================================
+    // Execute
+    // =====================================================
+
+    const [result, countResult] = await Promise.all([
+      pool.query(query, params),
+      pool.query(countQuery, countParams),
+    ]);
+
+    // =====================================================
+    // Attach Related Data
+    // =====================================================
+
+    const capex = await attachRelatedData(result.rows);
+
+    // =====================================================
+    // Pagination Count
+    // =====================================================
+
+    const totalCount = Number(countResult.rows[0].totalcount);
+
+    const totalPages = Math.ceil(totalCount / PageSize);
+
+    // =====================================================
+    // Response
+    // =====================================================
+
+    return {
+      success: true,
+      message: "CAPEX records fetched successfully.",
+
+      TotalCount: totalCount,
+      PageCount: capex.length,
+      CurrentPage: page,
+      PageSize: PageSize,
+      TotalPages: totalPages,
+
+      data: capex,
+    };
+  } catch (error) {
+    console.error("Get All CAPEX Error:", error.message);
+
+    return fail("Unable to fetch CAPEX records at this time.", 503);
+  }
+};

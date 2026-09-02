@@ -674,6 +674,11 @@ exports.approveOpex = async (req, res) => {
       );
     }
 
+    const Quantity =
+      req.body?.Quantity === undefined || req.body?.Quantity === null
+        ? null
+        : positiveNumber(req.body.Quantity, "Quantity");
+
     const user = authenticatedUser(req);
 
     const response = await producer.sendMessage(
@@ -686,6 +691,7 @@ exports.approveOpex = async (req, res) => {
           OpexID: Number(OpexID),
           Action: action,
           Remarks: remarks || null,
+          Quantity,
           UserID: user.UserID,
           UserType: user.UserType,
           DepartmentName: user.DepartmentName,

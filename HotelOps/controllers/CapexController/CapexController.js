@@ -713,6 +713,11 @@ exports.approveCapex = async (req, res) => {
       );
     }
 
+    const Quantity =
+      req.body?.Quantity === undefined || req.body?.Quantity === null
+        ? null
+        : positiveNumber(req.body.Quantity, "Quantity");
+
     const user = authenticatedUser(req);
 
     const response = await producer.sendMessage(
@@ -725,6 +730,7 @@ exports.approveCapex = async (req, res) => {
           CapexID: Number(CapexID),
           Action: action,
           Remarks: remarks || null,
+          Quantity,
           UserID: user.UserID,
           UserType: user.UserType,
         },

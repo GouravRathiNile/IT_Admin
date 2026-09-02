@@ -1148,15 +1148,334 @@ const OpexExists = async (client, OpexID) => {
   return result.rows.length > 0;
 };
 // ============================================================ Partial Update Opex
+// const updateOpex = async (data) => {
+//   let client;
+//   let transactionStarted = false;
+
+//   const documents = Array.isArray(data.Documents) ? data.Documents : [];
+
+//   const deleteDocumentIDs = Array.isArray(data.DeleteDocumentIDs)
+//     ? data.DeleteDocumentIDs
+//     : [];
+
+//   try {
+//     client = await pool.connect();
+
+//     await client.query("BEGIN");
+//     transactionStarted = true;
+
+//     // ============================================================
+//     // Changes
+//     // ============================================================
+
+//     const changes = data.Changes || {};
+
+//     const assignments = [];
+//     const values = [];
+
+//     const addValue = (column, value) => {
+//       values.push(value);
+//       assignments.push(`${column} = $${values.length}`);
+//     };
+
+//     // ============================================================
+//     // Opex Fields
+//     // OrganizationID and OpexNumber are NOT updated
+//     // ============================================================
+
+//     if (changes.Department !== undefined) {
+//       addValue("Department", changes.Department);
+//     }
+
+//     if (changes.Item !== undefined) {
+//       addValue("Item", changes.Item);
+//     }
+
+//     if (changes.Description !== undefined) {
+//       addValue("Description", changes.Description);
+//     }
+
+//     if (changes.Make !== undefined) {
+//       addValue("Make", changes.Make);
+//     }
+
+//     if (changes.Qty !== undefined) {
+//       addValue("Qty", changes.Qty);
+//     }
+
+//     if (changes.Rate !== undefined) {
+//       addValue("Rate", changes.Rate);
+//     }
+
+//     // ============================================================
+//     // Total comes directly from Frontend
+//     // ============================================================
+
+//     if (changes.Total !== undefined) {
+//       addValue("Total", changes.Total);
+//     }
+
+//     if (changes.IsVoid !== undefined) {
+//       addValue("IsVoid", changes.IsVoid);
+//     }
+
+//     if (changes.VoidRemarks !== undefined) {
+//       addValue("VoidRemarks", changes.VoidRemarks);
+//     }
+
+//     // ============================================================
+//     // Modified Information
+//     // ============================================================
+
+//     addValue("ModifiedBy", data.UserID);
+
+//     assignments.push("ModifiedDate = CURRENT_TIMESTAMP");
+
+//     // ============================================================
+//     // Update Opex
+//     // ============================================================
+
+//     values.push(data.OpexID);
+
+//     const OpexIDParameter = values.length;
+
+//     const updateResult = await client.query(
+//       `
+//       UPDATE Opex_Master
+//       SET ${assignments.join(", ")}
+//       WHERE OpexID = $${OpexIDParameter}
+//         AND IsDeleted = FALSE
+//       RETURNING
+//         OpexID,
+//         OrganizationID,
+//         OpexNumber,
+//         Department,
+//         Item,
+//         Description,
+//         Make,
+//         Qty,
+//         Rate,
+//         Total,
+//         IsVoid,
+//         VoidRemarks,
+//         ModifiedBy,
+//         ModifiedDate;
+//       `,
+//       values,
+//     );
+
+//     // ============================================================
+//     // Opex Not Found
+//     // ============================================================
+
+//     if (updateResult.rows.length === 0) {
+//       await client.query("ROLLBACK");
+//       transactionStarted = false;
+
+//       return fail("Opex record not found.", 404);
+//     }
+
+//     // ============================================================
+//     // DOCUMENTS
+//     //
+//     // If new documents are provided:
+//     //   1. Old documents are soft deleted
+//     //   2. New documents are inserted
+//     //
+//     // If no documents are provided:
+//     //   Old documents remain unchanged
+//     // ============================================================
+
+//     if (documents.length > 0) {
+//       // ----------------------------------------------------------
+//       // Get existing Opex number
+//       // ----------------------------------------------------------
+
+//       const OpexInfo = updateResult.rows[0];
+
+//       const OpexNumber = Number(OpexInfo.opexnumber);
+
+//       // ----------------------------------------------------------
+//       // Soft delete old documents
+//       // ----------------------------------------------------------
+
+//       await client.query(
+//         `
+//         UPDATE Opex_Documents
+//         SET
+//           IsDeleted = TRUE,
+//           DeletedBy = $1,
+//           DeletedDate = CURRENT_TIMESTAMP,
+//           ModifiedBy = $1,
+//           ModifiedDate = CURRENT_TIMESTAMP
+//         WHERE OpexID = $2
+//           AND IsDeleted = FALSE;
+//         `,
+//         [data.UserID, data.OpexID],
+//       );
+
+//       // ----------------------------------------------------------
+//       // Generate IDs for new documents
+//       // ----------------------------------------------------------
+
+//       const newDocumentIDs = await reserveNumericIDs(
+//         client,
+//         "Opex_Documents",
+//         "OpexDocumentID",
+//         documents.length,
+//       );
+
+//       // ----------------------------------------------------------
+//       // Insert new documents
+//       // ----------------------------------------------------------
+
+//       for (const [index, document] of documents.entries()) {
+//         await client.query(
+//           `
+//           INSERT INTO Opex_Documents
+//           (
+//             OpexDocumentID,
+//             OpexID,
+//             OpexNumber,
+//             FileName,
+//             FilePath,
+//             FileType,
+//             FileSize,
+//             IsDeleted,
+//             CreatedBy,
+//             CreatedDate
+//           )
+//           VALUES
+//           (
+//             $1,
+//             $2,
+//             $3,
+//             $4,
+//             $5,
+//             $6,
+//             $7,
+//             FALSE,
+//             $8,
+//             CURRENT_TIMESTAMP
+//           );
+//           `,
+//           [
+//             newDocumentIDs[index],
+//             data.OpexID,
+//             OpexNumber,
+//             document.FileName,
+//             document.FilePath,
+//             document.FileType,
+//             document.FileSize,
+//             data.UserID,
+//           ],
+//         );
+//       }
+//     }
+
+//     // ============================================================
+//     // Specific old documents delete
+//     //
+//     // Only execute when DeleteDocumentIDs are provided
+//     // ============================================================
+
+//     if (deleteDocumentIDs.length > 0) {
+//       const ownedDocuments = await client.query(
+//         `
+//         SELECT OpexDocumentID
+//         FROM Opex_Documents
+//         WHERE OpexID = $1
+//           AND OpexDocumentID = ANY($2::bigint[])
+//           AND IsDeleted = FALSE;
+//         `,
+//         [data.OpexID, deleteDocumentIDs],
+//       );
+
+//       if (ownedDocuments.rows.length !== deleteDocumentIDs.length) {
+//         await client.query("ROLLBACK");
+//         transactionStarted = false;
+
+//         return fail("One or more selected Opex documents are invalid.", 400);
+//       }
+
+//       await client.query(
+//         `
+//         UPDATE Opex_Documents
+//         SET
+//           IsDeleted = TRUE,
+//           DeletedBy = $1,
+//           DeletedDate = CURRENT_TIMESTAMP,
+//           ModifiedBy = $1,
+//           ModifiedDate = CURRENT_TIMESTAMP
+//         WHERE OpexID = $2
+//           AND OpexDocumentID = ANY($3::bigint[])
+//           AND IsDeleted = FALSE;
+//         `,
+//         [data.UserID, data.OpexID, deleteDocumentIDs],
+//       );
+//     }
+
+//     // ============================================================
+//     // COMMIT
+//     // ============================================================
+
+//     await client.query("COMMIT");
+//     transactionStarted = false;
+
+//     const updated = updateResult.rows[0];
+
+//     return {
+//       success: true,
+//       message: "Opex updated successfully.",
+
+//       // data: {
+//       //   OpexID: Number(updated.Opexid),
+//       //   OrganizationID: Number(updated.organizationid),
+//       //   OpexNumber: Number(updated.Opexnumber),
+//       //   Department: updated.department,
+//       //   Item: updated.item,
+//       //   Description: updated.description,
+//       //   Make: updated.make,
+//       //   Qty: Number(updated.qty),
+//       //   Rate: Number(updated.rate),
+//       //   Total: Number(updated.total),
+//       //   IsVoid: updated.isvoid,
+//       //   VoidRemarks: updated.voidremarks,
+//       //   DocumentsUpdated: documents.length,
+//       //   DocumentsDeleted: deleteDocumentIDs.length,
+//       // },
+//     };
+//   } catch (error) {
+//     if (client && transactionStarted) {
+//       await client.query("ROLLBACK");
+//     }
+
+//     console.error("Update Opex Error:", error.message);
+
+//     const retryResponse = retryableDatabaseResponse(error);
+
+//     if (retryResponse) {
+//       return retryResponse;
+//     }
+
+//     if (error.code === "23503") {
+//       return fail("Invalid Opex related data.", 400);
+//     }
+
+//     if (error.code === "23505") {
+//       return fail("Opex organization number already exists.", 409);
+//     }
+
+//     return fail("Unable to update Opex at this time.", 500);
+//   } finally {
+//     if (client) {
+//       client.release();
+//     }
+//   }
+// };
 const updateOpex = async (data) => {
   let client;
   let transactionStarted = false;
-
-  const documents = Array.isArray(data.Documents) ? data.Documents : [];
-
-  const deleteDocumentIDs = Array.isArray(data.DeleteDocumentIDs)
-    ? data.DeleteDocumentIDs
-    : [];
 
   try {
     client = await pool.connect();
@@ -1179,8 +1498,8 @@ const updateOpex = async (data) => {
     };
 
     // ============================================================
-    // Opex Fields
-    // OrganizationID and OpexNumber are NOT updated
+    // OPEX Fields
+    // OrganizationID and OpexNumber are not updated
     // ============================================================
 
     if (changes.Department !== undefined) {
@@ -1207,10 +1526,6 @@ const updateOpex = async (data) => {
       addValue("Rate", changes.Rate);
     }
 
-    // ============================================================
-    // Total comes directly from Frontend
-    // ============================================================
-
     if (changes.Total !== undefined) {
       addValue("Total", changes.Total);
     }
@@ -1228,22 +1543,21 @@ const updateOpex = async (data) => {
     // ============================================================
 
     addValue("ModifiedBy", data.UserID);
-
     assignments.push("ModifiedDate = CURRENT_TIMESTAMP");
 
     // ============================================================
-    // Update Opex
+    // Update OPEX
     // ============================================================
 
     values.push(data.OpexID);
 
-    const OpexIDParameter = values.length;
+    const opexIDParameter = values.length;
 
     const updateResult = await client.query(
       `
       UPDATE Opex_Master
       SET ${assignments.join(", ")}
-      WHERE OpexID = $${OpexIDParameter}
+      WHERE OpexID = $${opexIDParameter}
         AND IsDeleted = FALSE
       RETURNING
         OpexID,
@@ -1265,154 +1579,306 @@ const updateOpex = async (data) => {
     );
 
     // ============================================================
-    // Opex Not Found
+    // OPEX Not Found
     // ============================================================
 
     if (updateResult.rows.length === 0) {
       await client.query("ROLLBACK");
       transactionStarted = false;
 
-      return fail("Opex record not found.", 404);
+      return fail("OPEX record not found.", 404);
     }
 
     // ============================================================
-    // DOCUMENTS
+    // DOCUMENT UPDATE RULES
     //
-    // If new documents are provided:
-    //   1. Old documents are soft deleted
-    //   2. New documents are inserted
+    // Documents === undefined:
+    //   Documents unchanged
     //
-    // If no documents are provided:
-    //   Old documents remain unchanged
+    // Documents === null:
+    //   All existing documents soft deleted
+    //
+    // Documents === []:
+    //   All existing documents soft deleted
+    //
+    // Document with OpexDocumentID:
+    //   Existing document, so it remains unchanged
+    //
+    // Document without OpexDocumentID:
+    //   New document, so it will be inserted
+    //
+    // Existing document missing from Documents:
+    //   Soft deleted
     // ============================================================
 
-    if (documents.length > 0) {
-      // ----------------------------------------------------------
-      // Get existing Opex number
-      // ----------------------------------------------------------
-
-      const OpexInfo = updateResult.rows[0];
-
-      const OpexNumber = Number(OpexInfo.opexnumber);
-
-      // ----------------------------------------------------------
-      // Soft delete old documents
-      // ----------------------------------------------------------
-
-      await client.query(
-        `
-        UPDATE Opex_Documents
-        SET
-          IsDeleted = TRUE,
-          DeletedBy = $1,
-          DeletedDate = CURRENT_TIMESTAMP,
-          ModifiedBy = $1,
-          ModifiedDate = CURRENT_TIMESTAMP
-        WHERE OpexID = $2
-          AND IsDeleted = FALSE;
-        `,
-        [data.UserID, data.OpexID],
-      );
-
-      // ----------------------------------------------------------
-      // Generate IDs for new documents
-      // ----------------------------------------------------------
-
-      const newDocumentIDs = await reserveNumericIDs(
-        client,
-        "Opex_Documents",
-        "OpexDocumentID",
-        documents.length,
-      );
-
-      // ----------------------------------------------------------
-      // Insert new documents
-      // ----------------------------------------------------------
-
-      for (const [index, document] of documents.entries()) {
-        await client.query(
-          `
-          INSERT INTO Opex_Documents
-          (
-            OpexDocumentID,
-            OpexID,
-            OpexNumber,
-            FileName,
-            FilePath,
-            FileType,
-            FileSize,
-            IsDeleted,
-            CreatedBy,
-            CreatedDate
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7,
-            FALSE,
-            $8,
-            CURRENT_TIMESTAMP
-          );
-          `,
-          [
-            newDocumentIDs[index],
-            data.OpexID,
-            OpexNumber,
-            document.FileName,
-            document.FilePath,
-            document.FileType,
-            document.FileSize,
-            data.UserID,
-          ],
-        );
-      }
-    }
-
-    // ============================================================
-    // Specific old documents delete
-    //
-    // Only execute when DeleteDocumentIDs are provided
-    // ============================================================
-
-    if (deleteDocumentIDs.length > 0) {
-      const ownedDocuments = await client.query(
-        `
-        SELECT OpexDocumentID
-        FROM Opex_Documents
-        WHERE OpexID = $1
-          AND OpexDocumentID = ANY($2::bigint[])
-          AND IsDeleted = FALSE;
-        `,
-        [data.OpexID, deleteDocumentIDs],
-      );
-
-      if (ownedDocuments.rows.length !== deleteDocumentIDs.length) {
+    if (data.Documents !== undefined) {
+      if (
+        data.Documents !== null &&
+        !Array.isArray(data.Documents)
+      ) {
         await client.query("ROLLBACK");
         transactionStarted = false;
 
-        return fail("One or more selected Opex documents are invalid.", 400);
+        return fail("Documents must be an array or null.", 400);
       }
 
-      await client.query(
+      const incomingDocuments = Array.isArray(data.Documents)
+        ? data.Documents
+        : [];
+
+      const opexInfo = updateResult.rows[0];
+      const opexNumber = Number(opexInfo.opexnumber);
+
+      // ==========================================================
+      // Get Current Active Documents
+      // ==========================================================
+
+      const existingDocumentsResult = await client.query(
         `
-        UPDATE Opex_Documents
-        SET
-          IsDeleted = TRUE,
-          DeletedBy = $1,
-          DeletedDate = CURRENT_TIMESTAMP,
-          ModifiedBy = $1,
-          ModifiedDate = CURRENT_TIMESTAMP
-        WHERE OpexID = $2
-          AND OpexDocumentID = ANY($3::bigint[])
-          AND IsDeleted = FALSE;
+        SELECT
+          OpexDocumentID,
+          FileName,
+          FilePath,
+          FileType,
+          FileSize
+        FROM Opex_Documents
+        WHERE OpexID = $1
+          AND IsDeleted = FALSE
+        FOR UPDATE;
         `,
-        [data.UserID, data.OpexID, deleteDocumentIDs],
+        [data.OpexID],
       );
+
+      const existingDocuments = existingDocumentsResult.rows;
+
+      const existingDocumentIDs = new Set(
+        existingDocuments.map((document) =>
+          String(document.opexdocumentid),
+        ),
+      );
+
+      // ==========================================================
+      // Separate Existing and New Documents
+      // ==========================================================
+
+      const receivedExistingDocuments = [];
+      const newDocuments = [];
+
+      for (const document of incomingDocuments) {
+        if (!document || typeof document !== "object") {
+          await client.query("ROLLBACK");
+          transactionStarted = false;
+
+          return fail("Invalid OPEX document data.", 400);
+        }
+
+        const hasDocumentID =
+          document.OpexDocumentID !== undefined &&
+          document.OpexDocumentID !== null &&
+          String(document.OpexDocumentID).trim() !== "";
+
+        if (hasDocumentID) {
+          receivedExistingDocuments.push(document);
+        } else {
+          newDocuments.push(document);
+        }
+      }
+
+      // ==========================================================
+      // Validate Existing Document IDs
+      // ==========================================================
+
+      const receivedExistingDocumentIDs = [
+        ...new Set(
+          receivedExistingDocuments.map((document) =>
+            String(document.OpexDocumentID),
+          ),
+        ),
+      ];
+
+      const invalidDocumentID = receivedExistingDocumentIDs.find(
+        (documentID) => !existingDocumentIDs.has(documentID),
+      );
+
+      if (invalidDocumentID) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+
+        return fail(
+          "One or more existing OPEX documents are invalid.",
+          400,
+        );
+      }
+
+      // ==========================================================
+      // Soft Delete Missing Existing Documents
+      //
+      // Documents null or []:
+      // All current documents will be deleted.
+      // ==========================================================
+
+      const receivedDocumentIDSet = new Set(
+        receivedExistingDocumentIDs,
+      );
+
+      const documentIDsToDelete = existingDocuments
+        .filter(
+          (document) =>
+            !receivedDocumentIDSet.has(
+              String(document.opexdocumentid),
+            ),
+        )
+        .map((document) => document.opexdocumentid);
+
+      if (documentIDsToDelete.length > 0) {
+        await client.query(
+          `
+          UPDATE Opex_Documents
+          SET
+            IsDeleted = TRUE,
+            DeletedBy = $1,
+            DeletedDate = CURRENT_TIMESTAMP,
+            ModifiedBy = $1,
+            ModifiedDate = CURRENT_TIMESTAMP
+          WHERE OpexID = $2
+            AND OpexDocumentID = ANY($3::bigint[])
+            AND IsDeleted = FALSE;
+          `,
+          [
+            data.UserID,
+            data.OpexID,
+            documentIDsToDelete,
+          ],
+        );
+      }
+
+      // ==========================================================
+      // Existing FilePaths That Will Remain Active
+      // ==========================================================
+
+      const activeFilePaths = new Set(
+        existingDocuments
+          .filter((document) =>
+            receivedDocumentIDSet.has(
+              String(document.opexdocumentid),
+            ),
+          )
+          .map((document) => document.filepath)
+          .filter(Boolean),
+      );
+
+      // ==========================================================
+      // Validate and Remove Duplicate New Documents
+      // ==========================================================
+
+      const uniqueNewDocuments = [];
+
+      for (const document of newDocuments) {
+        if (
+          document.FileName === undefined ||
+          document.FileName === null ||
+          String(document.FileName).trim() === ""
+        ) {
+          await client.query("ROLLBACK");
+          transactionStarted = false;
+
+          return fail(
+            "FileName is required for new OPEX documents.",
+            400,
+          );
+        }
+
+        if (
+          document.FilePath === undefined ||
+          document.FilePath === null ||
+          String(document.FilePath).trim() === ""
+        ) {
+          await client.query("ROLLBACK");
+          transactionStarted = false;
+
+          return fail(
+            "FilePath is required for new OPEX documents.",
+            400,
+          );
+        }
+
+        const filePath = String(document.FilePath).trim();
+
+        // Do not insert the same file path again
+        if (activeFilePaths.has(filePath)) {
+          continue;
+        }
+
+        activeFilePaths.add(filePath);
+
+        uniqueNewDocuments.push({
+          ...document,
+          FileName: String(document.FileName).trim(),
+          FilePath: filePath,
+        });
+      }
+
+      // ==========================================================
+      // Insert Only New Unique Documents
+      // ==========================================================
+
+      if (uniqueNewDocuments.length > 0) {
+        const newDocumentIDs = await reserveNumericIDs(
+          client,
+          "Opex_Documents",
+          "OpexDocumentID",
+          uniqueNewDocuments.length,
+        );
+
+        for (
+          let index = 0;
+          index < uniqueNewDocuments.length;
+          index += 1
+        ) {
+          const document = uniqueNewDocuments[index];
+
+          await client.query(
+            `
+            INSERT INTO Opex_Documents
+            (
+              OpexDocumentID,
+              OpexID,
+              OpexNumber,
+              FileName,
+              FilePath,
+              FileType,
+              FileSize,
+              IsDeleted,
+              CreatedBy,
+              CreatedDate
+            )
+            VALUES
+            (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              $7,
+              FALSE,
+              $8,
+              CURRENT_TIMESTAMP
+            );
+            `,
+            [
+              newDocumentIDs[index],
+              data.OpexID,
+              opexNumber,
+              document.FileName,
+              document.FilePath,
+              document.FileType || null,
+              document.FileSize ?? null,
+              data.UserID,
+            ],
+          );
+        }
+      }
     }
 
     // ============================================================
@@ -1422,35 +1888,17 @@ const updateOpex = async (data) => {
     await client.query("COMMIT");
     transactionStarted = false;
 
-    const updated = updateResult.rows[0];
-
     return {
       success: true,
-      message: "Opex updated successfully.",
-
-      // data: {
-      //   OpexID: Number(updated.Opexid),
-      //   OrganizationID: Number(updated.organizationid),
-      //   OpexNumber: Number(updated.Opexnumber),
-      //   Department: updated.department,
-      //   Item: updated.item,
-      //   Description: updated.description,
-      //   Make: updated.make,
-      //   Qty: Number(updated.qty),
-      //   Rate: Number(updated.rate),
-      //   Total: Number(updated.total),
-      //   IsVoid: updated.isvoid,
-      //   VoidRemarks: updated.voidremarks,
-      //   DocumentsUpdated: documents.length,
-      //   DocumentsDeleted: deleteDocumentIDs.length,
-      // },
+      message: "OPEX updated successfully.",
     };
   } catch (error) {
     if (client && transactionStarted) {
       await client.query("ROLLBACK");
+      transactionStarted = false;
     }
 
-    console.error("Update Opex Error:", error.message);
+    console.error("Update OPEX Error:", error.message);
 
     const retryResponse = retryableDatabaseResponse(error);
 
@@ -1459,14 +1907,21 @@ const updateOpex = async (data) => {
     }
 
     if (error.code === "23503") {
-      return fail("Invalid Opex related data.", 400);
+      return fail("Invalid OPEX related data.", 400);
     }
 
     if (error.code === "23505") {
-      return fail("Opex organization number already exists.", 409);
+      return fail(
+        "OPEX organization number or document already exists.",
+        409,
+      );
     }
 
-    return fail("Unable to update Opex at this time.", 500);
+    if (error.code === "22P02") {
+      return fail("Invalid OPEX or document ID.", 400);
+    }
+
+    return fail("Unable to update OPEX at this time.", 500);
   } finally {
     if (client) {
       client.release();
@@ -1606,6 +2061,10 @@ const processOpexApproval = async (data) => {
       .toUpperCase();
 
     const remarks = String(data.Remarks || "").trim();
+    const approvedQuantity =
+      data.Quantity === undefined || data.Quantity === null
+        ? null
+        : Number(data.Quantity);
 
     // ============================================================
     // 2. VALIDATE ACTION
@@ -1621,6 +2080,13 @@ const processOpexApproval = async (data) => {
 
     if (["REJECT", "RETURN", "HOLD"].includes(action) && !remarks) {
       return fail(`Remarks are required when the action is ${action}.`, 400);
+    }
+
+    if (
+      approvedQuantity !== null &&
+      (!Number.isFinite(approvedQuantity) || approvedQuantity <= 0)
+    ) {
+      return fail("Quantity must be a number greater than zero.", 400);
     }
 
     // ============================================================
@@ -2159,7 +2625,13 @@ CEORemarks,
       // Update current role
       // ----------------------------------------------------------
 
-      await updateRoleApproval(approverRole, "Approved", data.UserID, remarks,data.Quantity ?? null,);
+      await updateRoleApproval(
+        approverRole,
+        "Approved",
+        data.UserID,
+        remarks,
+        approvedQuantity,
+      );
 
       // ----------------------------------------------------------
       // Find next stage
@@ -2272,7 +2744,13 @@ CEORemarks,
     // ============================================================
 
     if (action === "REJECT") {
-      await updateRoleApproval(approverRole, "Rejected", data.UserID, remarks, data.Quantity ?? null,);
+      await updateRoleApproval(
+        approverRole,
+        "Rejected",
+        data.UserID,
+        remarks,
+        approvedQuantity,
+      );
 
       await client.query(
         `
@@ -2330,7 +2808,13 @@ CEORemarks,
       // GM becomes current stage
       // ----------------------------------------------------------
 
-      await updateRoleApproval(approverRole, "Returned", data.UserID, remarks,data.Quantity ?? null,);
+      await updateRoleApproval(
+        approverRole,
+        "Returned",
+        data.UserID,
+        remarks,
+        approvedQuantity,
+      );
 
       await client.query(
         `
@@ -2385,7 +2869,13 @@ CEORemarks,
         );
       }
 
-      await updateRoleApproval(approverRole, "Hold", data.UserID, remarks,data.Quantity ?? null,);
+      await updateRoleApproval(
+        approverRole,
+        "Hold",
+        data.UserID,
+        remarks,
+        approvedQuantity,
+      );
 
       await client.query(
         `

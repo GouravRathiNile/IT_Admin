@@ -565,9 +565,12 @@ const getAllCapex = async (data) => {
     // Status
     // =====================================================
 
-    const approvalStatus = data.Status
-      ? String(data.Status).toUpperCase()
-      : null;
+    const approvalStatus =
+      data.Status !== undefined &&
+      data.Status !== null &&
+      String(data.Status).trim() !== ""
+        ? String(data.Status).trim().toUpperCase()
+        : null;
 
     const validStatuses = [
       "PENDING",
@@ -658,26 +661,8 @@ const getAllCapex = async (data) => {
               )
             ) = $${params.length}
           `;
-        } else {
-          params.push("GM");
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
-          `;
         }
+        
       }
 
       // ---------------------------------------------------
@@ -703,26 +688,8 @@ const getAllCapex = async (data) => {
               )
             ) = $${params.length}
           `;
-        } else {
-          params.push("CEO");
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
-          `;
-        }
+        } 
+       
       }
 
       // ---------------------------------------------------
@@ -748,26 +715,8 @@ const getAllCapex = async (data) => {
               )
             ) = $${params.length}
           `;
-        } else {
-          params.push("OWNER");
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
-          `;
-        }
+        } 
+       
       }
     }
 
@@ -972,7 +921,7 @@ const getAllCapex = async (data) => {
         statusColumn = "approval_state.OwnerStatus";
       }
 
-      if (approvalStatus === "PENDING" || !approvalStatus) {
+      if (approvalStatus === "PENDING" ) {
         countParams.push(userType);
 
         countQuery += `
@@ -1125,7 +1074,6 @@ const getAllCapex = async (data) => {
     // =====================================================
     // Response
     // =====================================================
-
     return {
       success: true,
       message: "CAPEX records fetched successfully.",
@@ -1225,15 +1173,334 @@ const capexExists = async (client, capexID) => {
   return result.rows.length > 0;
 };
 // ============================================================ Partial Update CAPEX
+// const updateCapex = async (data) => {
+//   let client;
+//   let transactionStarted = false;
+
+//   const documents = Array.isArray(data.Documents) ? data.Documents : [];
+
+//   const deleteDocumentIDs = Array.isArray(data.DeleteDocumentIDs)
+//     ? data.DeleteDocumentIDs
+//     : [];
+
+//   try {
+//     client = await pool.connect();
+
+//     await client.query("BEGIN");
+//     transactionStarted = true;
+
+//     // ============================================================
+//     // Changes
+//     // ============================================================
+
+//     const changes = data.Changes || {};
+
+//     const assignments = [];
+//     const values = [];
+
+//     const addValue = (column, value) => {
+//       values.push(value);
+//       assignments.push(`${column} = $${values.length}`);
+//     };
+
+//     // ============================================================
+//     // CAPEX Fields
+//     // OrganizationID and CapexNumber are NOT updated
+//     // ============================================================
+
+//     if (changes.Department !== undefined) {
+//       addValue("Department", changes.Department);
+//     }
+
+//     if (changes.Item !== undefined) {
+//       addValue("Item", changes.Item);
+//     }
+
+//     if (changes.Description !== undefined) {
+//       addValue("Description", changes.Description);
+//     }
+
+//     if (changes.Make !== undefined) {
+//       addValue("Make", changes.Make);
+//     }
+
+//     if (changes.Qty !== undefined) {
+//       addValue("Qty", changes.Qty);
+//     }
+
+//     if (changes.Rate !== undefined) {
+//       addValue("Rate", changes.Rate);
+//     }
+
+//     // ============================================================
+//     // Total comes directly from Frontend
+//     // ============================================================
+
+//     if (changes.Total !== undefined) {
+//       addValue("Total", changes.Total);
+//     }
+
+//     if (changes.IsVoid !== undefined) {
+//       addValue("IsVoid", changes.IsVoid);
+//     }
+
+//     if (changes.VoidRemarks !== undefined) {
+//       addValue("VoidRemarks", changes.VoidRemarks);
+//     }
+
+//     // ============================================================
+//     // Modified Information
+//     // ============================================================
+
+//     addValue("ModifiedBy", data.UserID);
+
+//     assignments.push("ModifiedDate = CURRENT_TIMESTAMP");
+
+//     // ============================================================
+//     // Update CAPEX
+//     // ============================================================
+
+//     values.push(data.CapexID);
+
+//     const capexIDParameter = values.length;
+
+//     const updateResult = await client.query(
+//       `
+//       UPDATE Capex_Master
+//       SET ${assignments.join(", ")}
+//       WHERE CapexID = $${capexIDParameter}
+//         AND IsDeleted = FALSE
+//       RETURNING
+//         CapexID,
+//         OrganizationID,
+//         CapexNumber,
+//         Department,
+//         Item,
+//         Description,
+//         Make,
+//         Qty,
+//         Rate,
+//         Total,
+//         IsVoid,
+//         VoidRemarks,
+//         ModifiedBy,
+//         ModifiedDate;
+//       `,
+//       values,
+//     );
+
+//     // ============================================================
+//     // CAPEX Not Found
+//     // ============================================================
+
+//     if (updateResult.rows.length === 0) {
+//       await client.query("ROLLBACK");
+//       transactionStarted = false;
+
+//       return fail("CAPEX record not found.", 404);
+//     }
+
+//     // ============================================================
+//     // DOCUMENTS
+//     //
+//     // If new documents are provided:
+//     //   1. Old documents are soft deleted
+//     //   2. New documents are inserted
+//     //
+//     // If no documents are provided:
+//     //   Old documents remain unchanged
+//     // ============================================================
+
+//     if (documents.length > 0) {
+//       // ----------------------------------------------------------
+//       // Get existing CAPEX number
+//       // ----------------------------------------------------------
+
+//       const capexInfo = updateResult.rows[0];
+
+//       const capexNumber = Number(capexInfo.capexnumber);
+
+//       // ----------------------------------------------------------
+//       // Soft delete old documents
+//       // ----------------------------------------------------------
+
+//       await client.query(
+//         `
+//         UPDATE Capex_Documents
+//         SET
+//           IsDeleted = TRUE,
+//           DeletedBy = $1,
+//           DeletedDate = CURRENT_TIMESTAMP,
+//           ModifiedBy = $1,
+//           ModifiedDate = CURRENT_TIMESTAMP
+//         WHERE CapexID = $2
+//           AND IsDeleted = FALSE;
+//         `,
+//         [data.UserID, data.CapexID],
+//       );
+
+//       // ----------------------------------------------------------
+//       // Generate IDs for new documents
+//       // ----------------------------------------------------------
+
+//       const newDocumentIDs = await reserveNumericIDs(
+//         client,
+//         "Capex_Documents",
+//         "CapexDocumentID",
+//         documents.length,
+//       );
+
+//       // ----------------------------------------------------------
+//       // Insert new documents
+//       // ----------------------------------------------------------
+
+//       for (const [index, document] of documents.entries()) {
+//         await client.query(
+//           `
+//           INSERT INTO Capex_Documents
+//           (
+//             CapexDocumentID,
+//             CapexID,
+//             CapexNumber,
+//             FileName,
+//             FilePath,
+//             FileType,
+//             FileSize,
+//             IsDeleted,
+//             CreatedBy,
+//             CreatedDate
+//           )
+//           VALUES
+//           (
+//             $1,
+//             $2,
+//             $3,
+//             $4,
+//             $5,
+//             $6,
+//             $7,
+//             FALSE,
+//             $8,
+//             CURRENT_TIMESTAMP
+//           );
+//           `,
+//           [
+//             newDocumentIDs[index],
+//             data.CapexID,
+//             capexNumber,
+//             document.FileName,
+//             document.FilePath,
+//             document.FileType,
+//             document.FileSize,
+//             data.UserID,
+//           ],
+//         );
+//       }
+//     }
+
+//     // ============================================================
+//     // Specific old documents delete
+//     //
+//     // Only execute when DeleteDocumentIDs are provided
+//     // ============================================================
+
+//     if (deleteDocumentIDs.length > 0) {
+//       const ownedDocuments = await client.query(
+//         `
+//         SELECT CapexDocumentID
+//         FROM Capex_Documents
+//         WHERE CapexID = $1
+//           AND CapexDocumentID = ANY($2::bigint[])
+//           AND IsDeleted = FALSE;
+//         `,
+//         [data.CapexID, deleteDocumentIDs],
+//       );
+
+//       if (ownedDocuments.rows.length !== deleteDocumentIDs.length) {
+//         await client.query("ROLLBACK");
+//         transactionStarted = false;
+
+//         return fail("One or more selected CAPEX documents are invalid.", 400);
+//       }
+
+//       await client.query(
+//         `
+//         UPDATE Capex_Documents
+//         SET
+//           IsDeleted = TRUE,
+//           DeletedBy = $1,
+//           DeletedDate = CURRENT_TIMESTAMP,
+//           ModifiedBy = $1,
+//           ModifiedDate = CURRENT_TIMESTAMP
+//         WHERE CapexID = $2
+//           AND CapexDocumentID = ANY($3::bigint[])
+//           AND IsDeleted = FALSE;
+//         `,
+//         [data.UserID, data.CapexID, deleteDocumentIDs],
+//       );
+//     }
+
+//     // ============================================================
+//     // COMMIT
+//     // ============================================================
+
+//     await client.query("COMMIT");
+//     transactionStarted = false;
+
+//     const updated = updateResult.rows[0];
+
+//     return {
+//       success: true,
+//       message: "CAPEX updated successfully.",
+
+//       // data: {
+//       //   CapexID: Number(updated.capexid),
+//       //   OrganizationID: Number(updated.organizationid),
+//       //   CapexNumber: Number(updated.capexnumber),
+//       //   Department: updated.department,
+//       //   Item: updated.item,
+//       //   Description: updated.description,
+//       //   Make: updated.make,
+//       //   Qty: Number(updated.qty),
+//       //   Rate: Number(updated.rate),
+//       //   Total: Number(updated.total),
+//       //   IsVoid: updated.isvoid,
+//       //   VoidRemarks: updated.voidremarks,
+//       //   DocumentsUpdated: documents.length,
+//       //   DocumentsDeleted: deleteDocumentIDs.length,
+//       // },
+//     };
+//   } catch (error) {
+//     if (client && transactionStarted) {
+//       await client.query("ROLLBACK");
+//     }
+
+//     console.error("Update CAPEX Error:", error.message);
+
+//     const retryResponse = retryableDatabaseResponse(error);
+
+//     if (retryResponse) {
+//       return retryResponse;
+//     }
+
+//     if (error.code === "23503") {
+//       return fail("Invalid CAPEX related data.", 400);
+//     }
+
+//     if (error.code === "23505") {
+//       return fail("CAPEX organization number already exists.", 409);
+//     }
+
+//     return fail("Unable to update CAPEX at this time.", 500);
+//   } finally {
+//     if (client) {
+//       client.release();
+//     }
+//   }
+// };
 const updateCapex = async (data) => {
   let client;
   let transactionStarted = false;
-
-  const documents = Array.isArray(data.Documents) ? data.Documents : [];
-
-  const deleteDocumentIDs = Array.isArray(data.DeleteDocumentIDs)
-    ? data.DeleteDocumentIDs
-    : [];
 
   try {
     client = await pool.connect();
@@ -1257,7 +1524,7 @@ const updateCapex = async (data) => {
 
     // ============================================================
     // CAPEX Fields
-    // OrganizationID and CapexNumber are NOT updated
+    // OrganizationID and CapexNumber are not updated
     // ============================================================
 
     if (changes.Department !== undefined) {
@@ -1284,10 +1551,6 @@ const updateCapex = async (data) => {
       addValue("Rate", changes.Rate);
     }
 
-    // ============================================================
-    // Total comes directly from Frontend
-    // ============================================================
-
     if (changes.Total !== undefined) {
       addValue("Total", changes.Total);
     }
@@ -1305,7 +1568,6 @@ const updateCapex = async (data) => {
     // ============================================================
 
     addValue("ModifiedBy", data.UserID);
-
     assignments.push("ModifiedDate = CURRENT_TIMESTAMP");
 
     // ============================================================
@@ -1313,7 +1575,6 @@ const updateCapex = async (data) => {
     // ============================================================
 
     values.push(data.CapexID);
-
     const capexIDParameter = values.length;
 
     const updateResult = await client.query(
@@ -1353,143 +1614,268 @@ const updateCapex = async (data) => {
     }
 
     // ============================================================
-    // DOCUMENTS
+    // DOCUMENT UPDATE RULES
     //
-    // If new documents are provided:
-    //   1. Old documents are soft deleted
-    //   2. New documents are inserted
+    // Documents === undefined:
+    //   Documents unchanged
     //
-    // If no documents are provided:
-    //   Old documents remain unchanged
+    // Documents === null:
+    //   All existing documents soft deleted
+    //
+    // Documents === []:
+    //   All existing documents soft deleted
+    //
+    // Existing document containing CapexDocumentID:
+    //   Remains unchanged and is not inserted again
+    //
+    // New document without CapexDocumentID:
+    //   Inserted as a new document
+    //
+    // Existing document missing from received Documents array:
+    //   Soft deleted
     // ============================================================
 
-    if (documents.length > 0) {
-      // ----------------------------------------------------------
-      // Get existing CAPEX number
-      // ----------------------------------------------------------
-
-      const capexInfo = updateResult.rows[0];
-
-      const capexNumber = Number(capexInfo.capexnumber);
-
-      // ----------------------------------------------------------
-      // Soft delete old documents
-      // ----------------------------------------------------------
-
-      await client.query(
-        `
-        UPDATE Capex_Documents
-        SET
-          IsDeleted = TRUE,
-          DeletedBy = $1,
-          DeletedDate = CURRENT_TIMESTAMP,
-          ModifiedBy = $1,
-          ModifiedDate = CURRENT_TIMESTAMP
-        WHERE CapexID = $2
-          AND IsDeleted = FALSE;
-        `,
-        [data.UserID, data.CapexID],
-      );
-
-      // ----------------------------------------------------------
-      // Generate IDs for new documents
-      // ----------------------------------------------------------
-
-      const newDocumentIDs = await reserveNumericIDs(
-        client,
-        "Capex_Documents",
-        "CapexDocumentID",
-        documents.length,
-      );
-
-      // ----------------------------------------------------------
-      // Insert new documents
-      // ----------------------------------------------------------
-
-      for (const [index, document] of documents.entries()) {
-        await client.query(
-          `
-          INSERT INTO Capex_Documents
-          (
-            CapexDocumentID,
-            CapexID,
-            CapexNumber,
-            FileName,
-            FilePath,
-            FileType,
-            FileSize,
-            IsDeleted,
-            CreatedBy,
-            CreatedDate
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7,
-            FALSE,
-            $8,
-            CURRENT_TIMESTAMP
-          );
-          `,
-          [
-            newDocumentIDs[index],
-            data.CapexID,
-            capexNumber,
-            document.FileName,
-            document.FilePath,
-            document.FileType,
-            document.FileSize,
-            data.UserID,
-          ],
-        );
-      }
-    }
-
-    // ============================================================
-    // Specific old documents delete
-    //
-    // Only execute when DeleteDocumentIDs are provided
-    // ============================================================
-
-    if (deleteDocumentIDs.length > 0) {
-      const ownedDocuments = await client.query(
-        `
-        SELECT CapexDocumentID
-        FROM Capex_Documents
-        WHERE CapexID = $1
-          AND CapexDocumentID = ANY($2::bigint[])
-          AND IsDeleted = FALSE;
-        `,
-        [data.CapexID, deleteDocumentIDs],
-      );
-
-      if (ownedDocuments.rows.length !== deleteDocumentIDs.length) {
+    if (data.Documents !== undefined) {
+      if (data.Documents !== null && !Array.isArray(data.Documents)) {
         await client.query("ROLLBACK");
         transactionStarted = false;
 
-        return fail("One or more selected CAPEX documents are invalid.", 400);
+        return fail("Documents must be an array or null.", 400);
       }
 
-      await client.query(
+      const incomingDocuments = Array.isArray(data.Documents)
+        ? data.Documents
+        : [];
+
+      const capexInfo = updateResult.rows[0];
+      const capexNumber = Number(capexInfo.capexnumber);
+
+      // ==========================================================
+      // Get Current Active Documents
+      // ==========================================================
+
+      const existingDocumentsResult = await client.query(
         `
-        UPDATE Capex_Documents
-        SET
-          IsDeleted = TRUE,
-          DeletedBy = $1,
-          DeletedDate = CURRENT_TIMESTAMP,
-          ModifiedBy = $1,
-          ModifiedDate = CURRENT_TIMESTAMP
-        WHERE CapexID = $2
-          AND CapexDocumentID = ANY($3::bigint[])
-          AND IsDeleted = FALSE;
+        SELECT
+          CapexDocumentID,
+          FileName,
+          FilePath,
+          FileType,
+          FileSize
+        FROM Capex_Documents
+        WHERE CapexID = $1
+          AND IsDeleted = FALSE
+        FOR UPDATE;
         `,
-        [data.UserID, data.CapexID, deleteDocumentIDs],
+        [data.CapexID],
       );
+
+      const existingDocuments = existingDocumentsResult.rows;
+
+      const existingDocumentIDs = new Set(
+        existingDocuments.map((document) => String(document.capexdocumentid)),
+      );
+
+      // ==========================================================
+      // Separate Existing and New Documents
+      // ==========================================================
+
+      const receivedExistingDocuments = [];
+      const newDocuments = [];
+
+      for (const document of incomingDocuments) {
+        if (!document || typeof document !== "object") {
+          await client.query("ROLLBACK");
+          transactionStarted = false;
+
+          return fail("Invalid CAPEX document data.", 400);
+        }
+
+        const hasDocumentID =
+          document.CapexDocumentID !== undefined &&
+          document.CapexDocumentID !== null &&
+          String(document.CapexDocumentID).trim() !== "";
+
+        if (hasDocumentID) {
+          receivedExistingDocuments.push(document);
+        } else {
+          newDocuments.push(document);
+        }
+      }
+
+      // ==========================================================
+      // Validate Existing Document IDs
+      // ==========================================================
+
+      const receivedExistingDocumentIDs = [
+        ...new Set(
+          receivedExistingDocuments.map((document) =>
+            String(document.CapexDocumentID),
+          ),
+        ),
+      ];
+
+      const invalidDocumentID = receivedExistingDocumentIDs.find(
+        (documentID) => !existingDocumentIDs.has(documentID),
+      );
+
+      if (invalidDocumentID) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+
+        return fail("One or more existing CAPEX documents are invalid.", 400);
+      }
+
+      // ==========================================================
+      // Soft Delete Missing Existing Documents
+      //
+      // Documents null or []:
+      // receivedExistingDocumentIDs will be empty, therefore every
+      // existing document will be soft deleted.
+      // ==========================================================
+
+      const receivedDocumentIDSet = new Set(receivedExistingDocumentIDs);
+
+      const documentIDsToDelete = existingDocuments
+        .filter(
+          (document) =>
+            !receivedDocumentIDSet.has(String(document.capexdocumentid)),
+        )
+        .map((document) => document.capexdocumentid);
+
+      if (documentIDsToDelete.length > 0) {
+        await client.query(
+          `
+          UPDATE Capex_Documents
+          SET
+            IsDeleted = TRUE,
+            DeletedBy = $1,
+            DeletedDate = CURRENT_TIMESTAMP,
+            ModifiedBy = $1,
+            ModifiedDate = CURRENT_TIMESTAMP
+          WHERE CapexID = $2
+            AND CapexDocumentID = ANY($3::bigint[])
+            AND IsDeleted = FALSE;
+          `,
+          [data.UserID, data.CapexID, documentIDsToDelete],
+        );
+      }
+
+      // ==========================================================
+      // Create Set of FilePaths That Will Remain Active
+      // Used to prevent duplicate documents
+      // ==========================================================
+
+      const activeFilePaths = new Set(
+        existingDocuments
+          .filter((document) =>
+            receivedDocumentIDSet.has(String(document.capexdocumentid)),
+          )
+          .map((document) => document.filepath)
+          .filter(Boolean),
+      );
+
+      // ==========================================================
+      // Validate and Remove Duplicate New Documents
+      // ==========================================================
+
+      const uniqueNewDocuments = [];
+
+      for (const document of newDocuments) {
+        if (
+          document.FileName === undefined ||
+          document.FileName === null ||
+          String(document.FileName).trim() === ""
+        ) {
+          await client.query("ROLLBACK");
+          transactionStarted = false;
+
+          return fail("FileName is required for new CAPEX documents.", 400);
+        }
+
+        if (
+          document.FilePath === undefined ||
+          document.FilePath === null ||
+          String(document.FilePath).trim() === ""
+        ) {
+          await client.query("ROLLBACK");
+          transactionStarted = false;
+
+          return fail("FilePath is required for new CAPEX documents.", 400);
+        }
+
+        const filePath = String(document.FilePath).trim();
+
+        // Existing or incoming duplicate FilePath is not inserted again
+        if (activeFilePaths.has(filePath)) {
+          continue;
+        }
+
+        activeFilePaths.add(filePath);
+        uniqueNewDocuments.push({
+          ...document,
+          FileName: String(document.FileName).trim(),
+          FilePath: filePath,
+        });
+      }
+
+      // ==========================================================
+      // Insert Only New Unique Documents
+      // ==========================================================
+
+      if (uniqueNewDocuments.length > 0) {
+        const newDocumentIDs = await reserveNumericIDs(
+          client,
+          "Capex_Documents",
+          "CapexDocumentID",
+          uniqueNewDocuments.length,
+        );
+
+        for (let index = 0; index < uniqueNewDocuments.length; index += 1) {
+          const document = uniqueNewDocuments[index];
+
+          await client.query(
+            `
+            INSERT INTO Capex_Documents
+            (
+              CapexDocumentID,
+              CapexID,
+              CapexNumber,
+              FileName,
+              FilePath,
+              FileType,
+              FileSize,
+              IsDeleted,
+              CreatedBy,
+              CreatedDate
+            )
+            VALUES
+            (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              $7,
+              FALSE,
+              $8,
+              CURRENT_TIMESTAMP
+            );
+            `,
+            [
+              newDocumentIDs[index],
+              data.CapexID,
+              capexNumber,
+              document.FileName,
+              document.FilePath,
+              document.FileType || null,
+              document.FileSize ?? null,
+              data.UserID,
+            ],
+          );
+        }
+      }
     }
 
     // ============================================================
@@ -1499,32 +1885,14 @@ const updateCapex = async (data) => {
     await client.query("COMMIT");
     transactionStarted = false;
 
-    const updated = updateResult.rows[0];
-
     return {
       success: true,
       message: "CAPEX updated successfully.",
-
-      // data: {
-      //   CapexID: Number(updated.capexid),
-      //   OrganizationID: Number(updated.organizationid),
-      //   CapexNumber: Number(updated.capexnumber),
-      //   Department: updated.department,
-      //   Item: updated.item,
-      //   Description: updated.description,
-      //   Make: updated.make,
-      //   Qty: Number(updated.qty),
-      //   Rate: Number(updated.rate),
-      //   Total: Number(updated.total),
-      //   IsVoid: updated.isvoid,
-      //   VoidRemarks: updated.voidremarks,
-      //   DocumentsUpdated: documents.length,
-      //   DocumentsDeleted: deleteDocumentIDs.length,
-      // },
     };
   } catch (error) {
     if (client && transactionStarted) {
       await client.query("ROLLBACK");
+      transactionStarted = false;
     }
 
     console.error("Update CAPEX Error:", error.message);
@@ -1540,7 +1908,11 @@ const updateCapex = async (data) => {
     }
 
     if (error.code === "23505") {
-      return fail("CAPEX organization number already exists.", 409);
+      return fail("CAPEX organization number or document already exists.", 409);
+    }
+
+    if (error.code === "22P02") {
+      return fail("Invalid CAPEX or document ID.", 400);
     }
 
     return fail("Unable to update CAPEX at this time.", 500);
@@ -1666,7 +2038,7 @@ const processCapexApproval = async (data) => {
   let client;
   let transactionStarted = false;
 
-  // console.log("PROCESS CAPEX APPROVAL DATA:", JSON.stringify(data));
+  console.log("PROCESS CAPEX APPROVAL DATA:", JSON.stringify(data));
 
   try {
     // ============================================================
@@ -1682,6 +2054,10 @@ const processCapexApproval = async (data) => {
       .toUpperCase();
 
     const remarks = String(data.Remarks || "").trim();
+    const approvedQuantity =
+      data.Quantity === undefined || data.Quantity === null
+        ? null
+        : Number(data.Quantity);
 
     // ============================================================
     // 2. VALIDATE ACTION
@@ -1697,6 +2073,13 @@ const processCapexApproval = async (data) => {
 
     if (["REJECT", "RETURN", "HOLD"].includes(action) && !remarks) {
       return fail(`Remarks are required when the action is ${action}.`, 400);
+    }
+
+    if (
+      approvedQuantity !== null &&
+      (!Number.isFinite(approvedQuantity) || approvedQuantity <= 0)
+    ) {
+      return fail("Quantity must be a number greater than zero.", 400);
     }
 
     // ============================================================
@@ -2066,28 +2449,28 @@ const processCapexApproval = async (data) => {
     // 18. UPDATE ROLE APPROVAL HELPER
     // ============================================================
 
-   const updateRoleApproval = async (
-  role,
-  status,
-  userId,
-  roleRemarks,
-  approvedQuantity = null,
-) => {
-  let query = "";
+    const updateRoleApproval = async (
+      role,
+      status,
+      userId,
+      roleRemarks,
+      approvedQuantity = null,
+    ) => {
+      let query = "";
 
-  const params = [
-    status,
-    userId,
-    roleRemarks || null,
-    approvedQuantity !== undefined && approvedQuantity !== null
-      ? Number(approvedQuantity)
-      : null,
-    approval.capexapprovalid,
-  ];
+      const params = [
+        status,
+        userId,
+        roleRemarks || null,
+        approvedQuantity !== undefined && approvedQuantity !== null
+          ? Number(approvedQuantity)
+          : null,
+        approval.capexapprovalid,
+      ];
 
-  switch (role) {
-    case "GM":
-      query = `
+      switch (role) {
+        case "GM":
+          query = `
         UPDATE Capex_Approval
         SET
           GMStatus = $1,
@@ -2100,10 +2483,10 @@ const processCapexApproval = async (data) => {
         WHERE CapexApprovalID = $5
           AND IsDeleted = FALSE;
       `;
-      break;
+          break;
 
-    case "CEO":
-      query = `
+        case "CEO":
+          query = `
         UPDATE Capex_Approval
         SET
           CEOStatus = $1,
@@ -2116,10 +2499,10 @@ const processCapexApproval = async (data) => {
         WHERE CapexApprovalID = $5
           AND IsDeleted = FALSE;
       `;
-      break;
+          break;
 
-    case "OWNER":
-      query = `
+        case "OWNER":
+          query = `
         UPDATE Capex_Approval
         SET
           OwnerStatus = $1,
@@ -2132,14 +2515,14 @@ const processCapexApproval = async (data) => {
         WHERE CapexApprovalID = $5
           AND IsDeleted = FALSE;
       `;
-      break;
+          break;
 
-    default:
-      throw new Error(`Unsupported approval role: ${role}`);
-  }
+        default:
+          throw new Error(`Unsupported approval role: ${role}`);
+      }
 
-  await client.query(query, params);
-};
+      await client.query(query, params);
+    };
 
     // ============================================================
     // 19. APPROVE
@@ -2163,7 +2546,13 @@ const processCapexApproval = async (data) => {
       // Update current role
       // ----------------------------------------------------------
 
-      await updateRoleApproval(approverRole, "Approved", data.UserID, remarks);
+      await updateRoleApproval(
+        approverRole,
+        "Approved",
+        data.UserID,
+        remarks,
+        approvedQuantity,
+      );
 
       // ----------------------------------------------------------
       // Find next stage
@@ -2276,7 +2665,13 @@ const processCapexApproval = async (data) => {
     // ============================================================
 
     if (action === "REJECT") {
-      await updateRoleApproval(approverRole, "Rejected", data.UserID, remarks);
+      await updateRoleApproval(
+        approverRole,
+        "Rejected",
+        data.UserID,
+        remarks,
+        approvedQuantity,
+      );
 
       await client.query(
         `
@@ -2334,7 +2729,13 @@ const processCapexApproval = async (data) => {
       // GM becomes current stage
       // ----------------------------------------------------------
 
-      await updateRoleApproval(approverRole, "Returned", data.UserID, remarks);
+      await updateRoleApproval(
+        approverRole,
+        "Returned",
+        data.UserID,
+        remarks,
+        approvedQuantity,
+      );
 
       await client.query(
         `
@@ -2389,7 +2790,13 @@ const processCapexApproval = async (data) => {
         );
       }
 
-      await updateRoleApproval(approverRole, "Hold", data.UserID, remarks);
+      await updateRoleApproval(
+        approverRole,
+        "Hold",
+        data.UserID,
+        remarks,
+        approvedQuantity,
+      );
 
       await client.query(
         `
@@ -2572,7 +2979,9 @@ const capexSummaryData = (row) => ({
 const getCapexSummaryReport = async (data) => {
   try {
     const OrganizationID = Number(data?.Filters?.OrganizationID);
-    const UserType = String(data.UserType || "").trim().toUpperCase();
+    const UserType = String(data.UserType || "")
+      .trim()
+      .toUpperCase();
 
     if (!Number.isSafeInteger(OrganizationID) || OrganizationID < 1) {
       return fail("OrganizationID is required.", 400);
@@ -3363,9 +3772,7 @@ const deleteApprovalConfig = async (data) => {
 // ============================================================Generate CAPEX List PDF
 const generateCapexListPdf = async (data) => {
   try {
-    const userType = data.UserType
-      ? String(data.UserType).toUpperCase()
-      : null;
+    const userType = data.UserType ? String(data.UserType).toUpperCase() : null;
 
     const approvalStatus = data.Status
       ? String(data.Status).toUpperCase()
@@ -3404,10 +3811,7 @@ const generateCapexListPdf = async (data) => {
     // ORGANIZATION FILTER
     // ============================================================
 
-    if (
-      data.OrganizationID !== null &&
-      data.OrganizationID !== undefined
-    ) {
+    if (data.OrganizationID !== null && data.OrganizationID !== undefined) {
       params.push(data.OrganizationID);
 
       query += `
@@ -3484,7 +3888,6 @@ const generateCapexListPdf = async (data) => {
       // ----------------------------------------------------------
       // CEO
       // ----------------------------------------------------------
-
       else if (userType === "CEO") {
         if (approvalStatus === "PENDING") {
           params.push("CEO");
@@ -3528,7 +3931,6 @@ const generateCapexListPdf = async (data) => {
       // ----------------------------------------------------------
       // OWNER
       // ----------------------------------------------------------
-
       else if (userType === "OWNER") {
         if (approvalStatus === "PENDING") {
           params.push("OWNER");
@@ -3573,13 +3975,8 @@ const generateCapexListPdf = async (data) => {
     // ============================================================
     // HOD
     // ============================================================
-
     else if (userType === "HOD") {
-      if (
-        ["REJECTED", "HOLD", "RETURNED"].includes(
-          approvalStatus
-        )
-      ) {
+      if (["REJECTED", "HOLD", "RETURNED"].includes(approvalStatus)) {
         params.push(approvalStatus);
 
         query += `
@@ -3593,9 +3990,7 @@ const generateCapexListPdf = async (data) => {
             UPPER(COALESCE(approval_state.FinalStatus, '')) = $${params.length}
           )
         `;
-      }
-
-      else if (approvalStatus === "APPROVED") {
+      } else if (approvalStatus === "APPROVED") {
         query += `
           AND UPPER(
             COALESCE(approval_state.GMStatus, 'PENDING')
@@ -3609,9 +4004,7 @@ const generateCapexListPdf = async (data) => {
             COALESCE(approval_state.OwnerStatus, 'PENDING')
           ) = 'APPROVED'
         `;
-      }
-
-      else if (approvalStatus === "PENDING") {
+      } else if (approvalStatus === "PENDING") {
         query += `
           AND NOT (
             UPPER(COALESCE(approval_state.GMStatus, ''))
@@ -3678,9 +4071,7 @@ const generateCapexListPdf = async (data) => {
     // ============================================================
 
     const organizationId =
-      data.OrganizationID ||
-      capexRows[0]?.OrganizationID ||
-      null;
+      data.OrganizationID || capexRows[0]?.OrganizationID || null;
 
     // ============================================================
     // PDF COLUMNS
@@ -3768,22 +4159,22 @@ const generateCapexListPdf = async (data) => {
     // METADATA
     // ============================================================
 
-   const metadata = [
-  {
-    label: "Filters",
-    value: `Organization: ${
-      data.OrganizationID ? organizationId : "All Organizations"
-    }    |    Department: ${data.Department || "All"}    |    From: ${
-      data.FromDate || "All"
-    }    |    To: ${data.ToDate || "All"}    |    Status: ${
-      approvalStatus || "All"
-    }`,
-  },
-  {
-    label: "Total Records",
-    value: capexRows.length,
-  },
-];
+    const metadata = [
+      {
+        label: "Filters",
+        value: `Organization: ${
+          data.OrganizationID ? organizationId : "All Organizations"
+        }    |    Department: ${data.Department || "All"}    |    From: ${
+          data.FromDate || "All"
+        }    |    To: ${data.ToDate || "All"}    |    Status: ${
+          approvalStatus || "All"
+        }`,
+      },
+      {
+        label: "Total Records",
+        value: capexRows.length,
+      },
+    ];
 
     // ============================================================
     // GENERATE PDF
@@ -3889,7 +4280,7 @@ const getCapexDepartmentReportPdf = async (data) => {
           width: 60,
           align: "center",
         },
-       
+
         {
           header: "Approved",
           key: "approvedcount",
@@ -3988,8 +4379,7 @@ const getCapexOrganizationReportPdf = async (data) => {
       title: "CAPEX Organization Report",
       reportName: "CAPEX Organization Report",
 
-      organizationId:
-        data?.Filters?.OrganizationID || null,
+      organizationId: data?.Filters?.OrganizationID || null,
 
       orientation: "landscape",
 
@@ -4014,7 +4404,7 @@ const getCapexOrganizationReportPdf = async (data) => {
           width: 60,
           align: "center",
         },
-       
+
         {
           header: "Approved",
           key: "approvedcount",
@@ -4051,10 +4441,7 @@ const getCapexOrganizationReportPdf = async (data) => {
       fileName: "CAPEX_Organization_Report.pdf",
     };
   } catch (error) {
-    console.error(
-      "CAPEX Organization Report PDF Error:",
-      error.message
-    );
+    console.error("CAPEX Organization Report PDF Error:", error.message);
 
     return {
       success: false,
@@ -4079,5 +4466,5 @@ module.exports = {
   deleteApprovalConfig,
   generateCapexListPdf,
   getCapexDepartmentReportPdf,
-  getCapexOrganizationReportPdf
+  getCapexOrganizationReportPdf,
 };
