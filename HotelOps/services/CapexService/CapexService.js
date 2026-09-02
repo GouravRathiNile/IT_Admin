@@ -4224,8 +4224,14 @@ const generateCapexListPdfDocument = async (data) => {
     const metadata = [
       { label: "Organization", value: organizationShortName },
       { label: "Department", value: data.Department || "All" },
-      { label: "From Date", value: data.FromDate || "All" },
-      { label: "To Date", value: data.ToDate || "All" },
+      {
+        label: "From Date",
+        value: data.FromDate ? formatDate(data.FromDate) : "All",
+      },
+      {
+        label: "To Date",
+        value: data.ToDate ? formatDate(data.ToDate) : "All",
+      },
       { label: "Status", value: approvalStatus || "All" },
       {
         label: "Total Records",
