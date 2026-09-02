@@ -23,8 +23,10 @@ const completeReportDTO = (row, resolved = {}) => ({
   ReceivedByIDs: row.receivedbyids || [], ReceivedByUsers: resolved.receivedByUsers || [],
   InformedToIDs: row.informedtoids || [], InformedToUsers: resolved.informedToUsers || [],
   DepartmentHODComments: (row.departmenthodcomments || []).map((comment) => ({
-    ...comment,
-    departmentName: name((resolved.departments || []).find((item) => Number(item.id) === Number(comment.departmentId)) || {}),
+    departmentName: comment.departmentName || name((resolved.departments || []).find(
+      (item) => Number(item.id) === Number(comment.departmentId)
+    ) || {}),
+    HODComment: String(comment.HODComment ?? comment.comment ?? ""),
   })),
   ProcessLapse: row.processlapse, ProcessLapseCategory: row.processlapsecategory,
   ServiceRecovery: row.servicerecovery, DetailedInvestigation: row.detailedinvestigation,

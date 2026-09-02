@@ -44,9 +44,9 @@ const fail = (message, statusCode = 400, errors) => ({ success: false, statusCod
 const cleanText = (value) => value == null ? null : String(value).trim();
 const canonical = (value) => {
   if (Array.isArray(value)) return JSON.stringify([...value].sort((a, b) => {
-    const left = typeof a === "object" ? Number(a.departmentId) : Number(a);
-    const right = typeof b === "object" ? Number(b.departmentId) : Number(b);
-    return left - right;
+    const left = typeof a === "object" ? String(a.departmentName || a.departmentId || "") : String(a);
+    const right = typeof b === "object" ? String(b.departmentName || b.departmentId || "") : String(b);
+    return left.localeCompare(right);
   }));
   if (value && typeof value === "object") return JSON.stringify(value);
   if (value == null || value === "") return null;
@@ -54,17 +54,29 @@ const canonical = (value) => {
 };
 
 const mergeDepartmentComments = (existing = [], supplied = [], user = {}) => {
-  const comments = new Map(existing.map((item) => [Number(item.departmentId), {
-    ...item, departmentId: Number(item.departmentId), comment: String(item.comment || "").trim(),
-  }]));
-  for (const item of supplied) {
-    comments.set(Number(item.departmentId), {
-      departmentId: Number(item.departmentId), comment: String(item.comment || "").trim(),
-      commentedBy: user.Username || null, commentedByUserID: user.UserID || null,
-    });
-  }
-  return [...comments.values()].filter((item) => item.comment);
+  return [...existing, ...supplied.map((item) => ({
+    ...item,
+    HODComment: String(item.HODComment ?? item.comment ?? "").trim(),
+    commentedBy: user.Username || null,
+    commentedByUserID: user.UserID || null,
+  }))];
 };
+
+// Persist one HOD-comment slot per selected department. Department names are
+// always taken from the validated department master, never trusted from input.
+const reconcileDepartmentComments = (departments = [], comments = []) => departments.map((department) => {
+  const departmentID = Number(department.departmentid);
+  const departmentName = String(department.departmentname || "").trim();
+  const match = [...comments].reverse().find((item) =>
+    (item.departmentId != null && Number(item.departmentId) === departmentID) ||
+    String(item.departmentName || "").trim().toLowerCase() === departmentName.toLowerCase()
+  ) || {};
+
+  return {
+    departmentName,
+    HODComment: String(match.HODComment ?? match.comment ?? "").trim(),
+  };
+});
 
 // Resolve active organization mappings; read/report operations may span all mapped hotels.
 const resolveOrganization = async (userID, allowMultiple = false) => {
@@ -189,8 +201,10 @@ const validateSelections = async (client, data, organizationID) => {
       ),
     };
   }
-  const selected = new Set((data.DepartmentIDs || []).map(Number));
-  if ((data.DepartmentHODComments || []).some((item) => !selected.has(Number(item.departmentId)))) {
+  const selectedNames = new Set(departments.map((item) => String(item.departmentname).trim().toLowerCase()));
+  if ((data.DepartmentHODComments || []).some((item) =>
+    item.departmentName && !selectedNames.has(String(item.departmentName).trim().toLowerCase())
+  )) {
     return { error: fail("Department HOD comment can only be added for a selected department") };
   }
   return { departments, receivedUsers, informedUsers, resolvedUsers, };
@@ -202,6 +216,10 @@ const applySnapshots = (data, selections) => ({
   ReceivedBy: selections.receivedUsers.map((item) => item.fullname).join(", "),
   InformedTo: selections.informedUsers.map((item) => item.fullname).join(", "),
   ResolvedBy: selections.resolvedUsers.map((item) => item.fullname).join(", "),
+  DepartmentHODComments: reconcileDepartmentComments(
+    selections.departments,
+    data.DepartmentHODComments || []
+  ),
 });
 
 const create = async (data) => {
@@ -309,10 +327,7 @@ const get = async (data) => {
     return {
       success: true, message: "Guest glitch retrieved successfully.", data: {
       ...formatGuestGlitchDates(mapRow(row)),
-        DepartmentHODComments: (row.departmenthodcomments || []).map((item) => ({ ...item,
-          departmentId: Number(item.departmentId),
-          departmentName: departments.find((department) => Number(department.departmentid) === Number(item.departmentId))?.departmentname || null,
-        })),
+        DepartmentHODComments: reconcileDepartmentComments(departments, row.departmenthodcomments || []),
         departments: departments.map((item) => ({ id: Number(item.departmentid), name: item.departmentname })),
         receivedByUsers: receivedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
         informedToUsers: informedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
@@ -335,14 +350,12 @@ const update = async (data) => {
       data.DepartmentHODComments = mergeDepartmentComments(current.DepartmentHODComments, data.DepartmentHODComments, data);
     }
     const merged = { ...current, ...data };
-    if (Object.prototype.hasOwnProperty.call(data, "DepartmentIDs") && !Object.prototype.hasOwnProperty.call(data, "DepartmentHODComments")) {
-      const selected = new Set(data.DepartmentIDs.map(Number));
-      merged.DepartmentHODComments = (current.DepartmentHODComments || []).filter((item) => selected.has(Number(item.departmentId)));
-      data.DepartmentHODComments = merged.DepartmentHODComments;
-    }
     const selections = await validateSelections(client, merged, data.OrganizationID);
     if (selections.error) { await client.query("ROLLBACK"); return selections.error; }
-    const prepared = applySnapshots(data, selections);
+    const prepared = applySnapshots({
+      ...data,
+      DepartmentHODComments: merged.DepartmentHODComments || [],
+    }, selections);
     const changed = {};
     for (const [field, value] of Object.entries(prepared)) {
       if (repository.COLUMN_MAP[field] && canonical(value) !== canonical(current[field])) changed[field] = value;

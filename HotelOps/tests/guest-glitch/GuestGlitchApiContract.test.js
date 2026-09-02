@@ -251,6 +251,10 @@ test("create uses the selected mapped organization without workflow configuratio
     assert.equal(inserted.OrganizationID, 30);
     assert.equal(inserted.Status, "Open");
     assert.equal(inserted.CurrentWorkflowStage, undefined);
+    assert.deepEqual(inserted.DepartmentHODComments, [{
+      departmentName: "Engineering",
+      HODComment: "",
+    }]);
   } finally { Object.assign(repository, originals); }
 });
 
@@ -279,7 +283,7 @@ test("create rejects an organization not mapped to the authenticated user", asyn
 test("complete detail preserves review attribution and resolves department names", () => {
   const result = completeReportDTO({ id: 1, departmenthodcomments: [{ departmentId: 10, comment: "Corrected", commentedBy: "hod" }] },
     { departments: [{ ID: 10, Name: "Engineering" }] });
-  assert.deepEqual(result.DepartmentHODComments, [{ departmentId: 10, departmentName: "Engineering", comment: "Corrected", commentedBy: "hod" }]);
+  assert.deepEqual(result.DepartmentHODComments, [{ departmentName: "Engineering", HODComment: "Corrected" }]);
 });
 
 test("report query accepts dedicated filters and safe sorting", () => {

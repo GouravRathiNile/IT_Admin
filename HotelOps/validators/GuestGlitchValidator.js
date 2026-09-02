@@ -105,14 +105,19 @@ const validateCommon = (data, isCreate) => {
       const selectedDepartments = new Set((data.DepartmentIDs || []).map(Number));
       data.DepartmentHODComments = [];
       comments.forEach((item) => {
-        if (!item || !isPositiveInteger(item.departmentId)) errors.push(error("DepartmentHODComments", "Each HOD comment requires a valid departmentId."));
-        else if (seen.has(Number(item.departmentId))) errors.push(error("DepartmentHODComments", "Duplicate department HOD comments are not allowed."));
-        else if (shouldValidateSelection && !selectedDepartments.has(Number(item.departmentId))) errors.push(error("DepartmentHODComments", "Department HOD comment can only be added for a selected department"));
-        else if (String(item.comment ?? "").trim().length > 500) errors.push(error("DepartmentHODComments", "HOD comments must not exceed 500 characters."));
+        const departmentName = String(item?.departmentName ?? "").trim();
+        const legacyDepartmentID = item?.departmentId;
+        const key = departmentName.toLowerCase() || String(legacyDepartmentID || "");
+        const hodComment = String(item?.HODComment ?? item?.comment ?? "").trim();
+        if (!item || (!departmentName && !isPositiveInteger(legacyDepartmentID))) errors.push(error("DepartmentHODComments", "Each HOD comment requires a valid departmentName."));
+        else if (seen.has(key)) errors.push(error("DepartmentHODComments", "Duplicate department HOD comments are not allowed."));
+        else if (shouldValidateSelection && legacyDepartmentID != null && !selectedDepartments.has(Number(legacyDepartmentID))) errors.push(error("DepartmentHODComments", "Department HOD comment can only be added for a selected department"));
+        else if (hodComment.length > 500) errors.push(error("DepartmentHODComments", "HOD comments must not exceed 500 characters."));
         else {
-          seen.add(Number(item.departmentId));
-          const comment = String(item.comment ?? "").trim();
-          if (comment) data.DepartmentHODComments.push({ departmentId: Number(item.departmentId), comment });
+          seen.add(key);
+          data.DepartmentHODComments.push(departmentName
+            ? { departmentName, HODComment: hodComment }
+            : { departmentId: Number(legacyDepartmentID), HODComment: hodComment });
         }
       });
     }

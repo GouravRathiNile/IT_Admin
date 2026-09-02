@@ -1,5 +1,14 @@
 const { formatDate } = require("../utils/dateFormatter");
 
+const mapHODComments = (comments = [], departments = []) => comments.map((item) => ({
+  departmentName: item.departmentName ?? departments.find((department) =>
+    Number(department.ID ?? department.id) === Number(item.departmentId)
+  )?.Name ?? departments.find((department) =>
+    Number(department.ID ?? department.id) === Number(item.departmentId)
+  )?.name ?? null,
+  HODComment: String(item.HODComment ?? item.comment ?? ""),
+}));
+
 const EDITABLE_FIELDS = Object.freeze([
   "EntryDate",
   "Status",
@@ -186,13 +195,7 @@ const listResponseDTO = (row, resolved = {}) => ({
   SRA_Food: row.sra_food == null ? null : Number(row.sra_food),
   SRA_Other: row.sra_other == null ? null : Number(row.sra_other),
 
-  DepartmentHODComments: (row.departmenthodcomments || []).map((item) => ({
-    ...item,
-    departmentId: Number(item.departmentId),
-    departmentName: item.departmentName ?? (resolved.departments || []).find(
-      (department) => Number(department.ID) === Number(item.departmentId)
-    )?.Name ?? null,
-  })),
+  DepartmentHODComments: mapHODComments(row.departmenthodcomments || [], resolved.departments || []),
   GetMetJson: row.getmetjson || [],
 
   CompanyName: row.companyname ?? null,
@@ -316,13 +319,10 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
   InformedToIDs:
     row.informedtoids ?? row.InformedToIDs ?? [],
 
-  DepartmentHODComments: (row.departmenthodcomments ?? row.DepartmentHODComments ?? []).map((item) => ({
-    ...item,
-    departmentId: Number(item.departmentId),
-    departmentName: item.departmentName ?? (resolved.departments || []).find((department) =>
-      Number(department.ID ?? department.id) === Number(item.departmentId))?.Name ??
-      (resolved.departments || []).find((department) => Number(department.ID ?? department.id) === Number(item.departmentId))?.name ?? null,
-  })),
+  DepartmentHODComments: mapHODComments(
+    row.departmenthodcomments ?? row.DepartmentHODComments ?? [],
+    resolved.departments || []
+  ),
 
   CreatedBy:
     row.createdby ?? row.CreatedBy ?? null,
