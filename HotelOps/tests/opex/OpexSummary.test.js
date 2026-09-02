@@ -38,6 +38,25 @@ test("OPEX approval responses expose role-wise approved quantity", () => {
   assert.match(serviceSource, /ApprovedQuantity:[\s\S]*Number\(row\.approvedquantity\)/);
 });
 
+test("OPEX approval forwards and persists request Quantity", () => {
+  const controllerSource = fs.readFileSync(
+    path.join(__dirname, "../../controllers/OpexController/OpexController.js"),
+    "utf8",
+  );
+  const serviceSource = fs.readFileSync(
+    path.join(__dirname, "../../services/OpexService/OpexService.js"),
+    "utf8",
+  );
+
+  const approvalController = controllerSource.match(
+    /exports\.approveOpex[\s\S]*?\/\/ =+ Report Helpers/,
+  )[0];
+  assert.match(approvalController, /positiveNumber\(req\.body\.Quantity, "Quantity"\)/);
+  assert.match(approvalController, /Remarks: remarks \|\| null,[\s\S]*Quantity,/);
+  assert.match(serviceSource, /const approvedQuantity =[\s\S]*Number\(data\.Quantity\)/);
+  assert.match(serviceSource, /"Approved",[\s\S]*approvedQuantity,/);
+});
+
 test("non-approval roles receive the organization-wide OPEX summary", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];

@@ -19,6 +19,25 @@ test("CAPEX approval responses expose role-wise approved quantity", () => {
   assert.match(serviceSource, /ApprovedQuantity:[\s\S]*Number\(row\.approvedquantity\)/);
 });
 
+test("CAPEX approval forwards and persists request Quantity", () => {
+  const controllerSource = fs.readFileSync(
+    path.join(__dirname, "../../controllers/CapexController/CapexController.js"),
+    "utf8",
+  );
+  const serviceSource = fs.readFileSync(
+    path.join(__dirname, "../../services/CapexService/CapexService.js"),
+    "utf8",
+  );
+
+  const approvalController = controllerSource.match(
+    /exports\.approveCapex[\s\S]*?\/\/ =+ Report Helpers/,
+  )[0];
+  assert.match(approvalController, /positiveNumber\(req\.body\.Quantity, "Quantity"\)/);
+  assert.match(approvalController, /Remarks: remarks \|\| null,[\s\S]*Quantity,/);
+  assert.match(serviceSource, /const approvedQuantity =[\s\S]*Number\(data\.Quantity\)/);
+  assert.match(serviceSource, /"Approved",[\s\S]*approvedQuantity,/);
+});
+
 const summaryRow = {
   totalcapex: "6",
   totalamount: "2100",
