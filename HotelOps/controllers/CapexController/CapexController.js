@@ -1208,3 +1208,80 @@ exports.getCapexOrganizationReportPdf = async (req, res) => {
     return handleControllerError(error, res);
   }
 };
+// ============================================================ Single Capex Report PDF
+exports.generateCapexByIdPdf = async (req, res) => {
+  try {
+    const capexID = Number(req.params.id);
+
+    if (!Number.isInteger(capexID) || capexID <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid CAPEX ID is required.",
+      });
+    }
+
+    const result =
+      await CapexService.generateCapexByIdPdf({
+        CapexID: capexID,
+        UserID:
+          req.user?.UserID ||
+          req.user?.userid ||
+          null,
+      });
+
+    if (!result.success) {
+      return res
+        .status(
+          result.statusCode ||
+            result.StatusCode ||
+            result.status ||
+            500,
+        )
+        .json({
+          success: false,
+          message:
+            result.message ||
+            "Unable to generate CAPEX PDF.",
+        });
+    }
+
+    if (!Buffer.isBuffer(result.PdfBuffer)) {
+      return res.status(500).json({
+        success: false,
+        message: "Invalid PDF response generated.",
+      });
+    }
+
+    res.setHeader(
+      "Content-Type",
+      result.ContentType || "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${result.FileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.PdfBuffer.length,
+    );
+
+    res.setHeader(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate",
+    );
+
+    return res.end(result.PdfBuffer);
+  } catch (error) {
+    console.error(
+      "Generate CAPEX PDF Controller Error:",
+      error.message,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to generate CAPEX PDF.",
+    });
+  }
+};

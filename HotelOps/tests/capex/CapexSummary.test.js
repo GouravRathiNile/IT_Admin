@@ -161,3 +161,37 @@ test("HOD Approved list uses the completed configured flow", { concurrency: fals
     pool.query = originalQuery;
   }
 });
+
+test("CEO CAPEX list and count require GM approval for every status view", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    for (const Status of [null, "Pending", "Approved", "Rejected", "Hold", "Returned"]) {
+      const response = await CapexService.getAllCapex({
+        OrganizationID: 20,
+        UserType: "CEO",
+        Status,
+        page: 1,
+        PageSize: 10,
+      });
+      assert.equal(response.success, true);
+    }
+
+    assert.equal(calls.length, 12);
+    for (const call of calls) {
+      assert.match(
+        call.sql,
+        /UPPER\(COALESCE\(approval_state\.GMStatus, 'PENDING'\)\) = 'APPROVED'/,
+      );
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});

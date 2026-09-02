@@ -1,11 +1,8 @@
 const { pool } = require("../../db");
-const {
-  retryableDatabaseResponse,
-} = require("../../utils/retryableDatabaseError");
+const {retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
 const generateDocumentUrl = require("../../AzurConfigration/Capex/AzureGetData");
 const { formatDate } = require("../../utils/dateFormatter");
 const { generatePdf } = require("../../utils/pdfHelper");
-
 // ==============================================================Default roles
 const DEFAULT_APPROVALS = Object.freeze([
   { LevelNo: 1, ApprovalRole: "GM" },
@@ -637,6 +634,20 @@ const getAllCapex = async (data) => {
     // =====================================================
 
     if (["GM", "CEO", "OWNER"].includes(userType)) {
+      // A later approver must never see a CAPEX that is paused or sent back
+      // at an earlier stage. This gate also applies to the default/all-status
+      // list, where approvalStatus is null.
+      if (userType === "CEO") {
+        query += `
+          AND UPPER(COALESCE(approval_state.GMStatus, 'PENDING')) = 'APPROVED'
+        `;
+      } else if (userType === "OWNER") {
+        query += `
+          AND UPPER(COALESCE(approval_state.GMStatus, 'PENDING')) = 'APPROVED'
+          AND UPPER(COALESCE(approval_state.CEOStatus, 'PENDING')) = 'APPROVED'
+        `;
+      }
+
       // ---------------------------------------------------
       // GM
       // ---------------------------------------------------
@@ -911,6 +922,19 @@ const getAllCapex = async (data) => {
     // =====================================================
 
     if (["GM", "CEO", "OWNER"].includes(userType)) {
+      // Keep pagination totals under the same predecessor-stage visibility
+      // rules as the main list.
+      if (userType === "CEO") {
+        countQuery += `
+          AND UPPER(COALESCE(approval_state.GMStatus, 'PENDING')) = 'APPROVED'
+        `;
+      } else if (userType === "OWNER") {
+        countQuery += `
+          AND UPPER(COALESCE(approval_state.GMStatus, 'PENDING')) = 'APPROVED'
+          AND UPPER(COALESCE(approval_state.CEOStatus, 'PENDING')) = 'APPROVED'
+        `;
+      }
+
       let statusColumn = null;
 
       if (userType === "GM") {
@@ -4450,6 +4474,312 @@ const getCapexOrganizationReportPdf = async (data) => {
     };
   }
 };
+// ============================================================== Single Capex Report PDF
+// ========================Helper
+const formatCapexAmount = (value) => {
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount)) {
+    return "0.00";
+  }
+
+  return amount.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+const formatCapexFileSize = (value) => {
+  const bytes = Number(value);
+
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "-";
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} Bytes`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(2)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+};
+const capexPdfValue = (value) => {
+  if (
+    value === undefined ||
+    value === null ||
+    String(value).trim() === ""
+  ) {
+    return "-";
+  }
+
+  return String(value);
+};
+// ========================Api
+const generateCapexByIdPdf = async (data) => {
+  try {
+    // ==========================================================
+    // Validate CAPEX ID
+    // ==========================================================
+
+    const capexID = Number(data.CapexID);
+
+    if (!Number.isInteger(capexID) || capexID <= 0) {
+      return fail("Valid CAPEX ID is required.", 400);
+    }
+
+    // ==========================================================
+    // Fetch CAPEX
+    // ==========================================================
+
+    const result = await pool.query(
+      `
+      ${CAPEX_SELECT}
+      AND cm.CapexID = $1
+      LIMIT 1;
+      `,
+      [capexID],
+    );
+
+    if (result.rows.length === 0) {
+      return fail("CAPEX record not found.", 404);
+    }
+
+    // ==========================================================
+    // Attach Related Data
+    // Approvals API data will be received from this function
+    // ==========================================================
+
+    const [capex] = await attachRelatedData(result.rows);
+
+    const approvals = Array.isArray(capex.Approvals)
+      ? capex.Approvals
+      : [];
+
+    // ==========================================================
+    // Dynamic Approval Items
+    //
+    // No static roles are defined.
+    // Only roles available inside capex.Approvals will be shown.
+    // ==========================================================
+
+    const approvalItems = [];
+
+    approvals.forEach((approval) => {
+      if (
+        approval.ApprovalRole === undefined ||
+        approval.ApprovalRole === null ||
+        String(approval.ApprovalRole).trim() === ""
+      ) {
+        return;
+      }
+
+      const approvalRole = String(
+        approval.ApprovalRole,
+      ).trim();
+
+      const approvedQuantity =
+        approval.ApprovedQuantity !== null &&
+        approval.ApprovedQuantity !== undefined &&
+        String(approval.ApprovedQuantity).trim() !== ""
+          ? formatCapexAmount(
+              approval.ApprovedQuantity,
+            )
+          : "-";
+
+      approvalItems.push(
+        {
+          label: `${approvalRole} Status`,
+          value: capexPdfValue(approval.Status),
+        },
+        {
+          label: `${approvalRole} Approved Qty`,
+          value: approvedQuantity,
+        },
+        {
+          label: `${approvalRole} Remarks`,
+          value: capexPdfValue(approval.Remarks),
+        },
+      );
+    });
+
+    if (approvalItems.length === 0) {
+      approvalItems.push({
+        label: "Approval",
+        value: "No approval details available",
+      });
+    }
+
+    // ==========================================================
+    // Generate PDF
+    // Existing pdfGenerator.js is used without any changes
+    // ==========================================================
+
+    const pdfBuffer = await generatePdf({
+      title: "CAPEX Detail Report",
+
+      reportName: `CAPEX #${capex.CapexNumber}`,
+
+      organizationId: capex.OrganizationID,
+
+      orientation: "portrait",
+
+      pageMargins: [40, 30, 40, 38],
+
+      // ========================================================
+      // Main Information
+      // ========================================================
+
+      metadata: [
+        {
+          label: "Organization",
+          value:
+            capex.OrganizationShortName ||
+            capex.OrganizationID,
+        },
+        {
+          label: "CAPEX No.",
+          value: capex.CapexNumber,
+        },
+        {
+          label: "Created Date",
+          value: capex.CreatedDate,
+        },
+        {
+          label: "Department",
+          value: capex.Department,
+        },
+        {
+          label: "Status",
+          value: capex.CurrentStatus,
+        },
+      ],
+
+      // Main data table is not required
+      columns: null,
+
+      rows: [],
+
+      // ========================================================
+      // PDF Sections
+      // ========================================================
+
+      sections: [
+        {
+          title: "CAPEX Information",
+
+          items: [
+            {
+              label: "Item",
+              value: capex.Item,
+            },
+            {
+              label: "Make",
+              value: capex.Make,
+            },
+            {
+              label: "Quantity",
+              value: formatCapexAmount(capex.Qty),
+            },
+            {
+              label: "Rate",
+              value: `INR ${formatCapexAmount(
+                capex.Rate,
+              )}`,
+            },
+            {
+              label: "Total",
+              value: `INR ${formatCapexAmount(
+                capex.Total,
+              )}`,
+            },
+          ],
+        },
+
+        {
+          title: "Description",
+
+          items: [
+            {
+              label: "Description",
+              value: capex.Description,
+            },
+          ],
+        },
+
+        {
+          title: "Approval Workflow",
+
+          // Dynamic approval details
+          items: approvalItems,
+        },
+      ],
+
+      // ========================================================
+      // PDF Styles
+      // ========================================================
+
+      styles: {
+        pdfTitle: {
+          fontSize: 18,
+          bold: true,
+          color: "#082B5C",
+        },
+
+        pdfSection: {
+          fontSize: 11,
+          bold: true,
+          color: "#082B5C",
+        },
+
+        pdfLabel: {
+          fontSize: 8,
+          bold: true,
+          color: "#082B5C",
+        },
+
+        pdfValue: {
+          fontSize: 8.5,
+          color: "#172033",
+        },
+      },
+    });
+
+    // ==========================================================
+    // Success Response
+    // ==========================================================
+
+    return {
+      success: true,
+      message: "CAPEX PDF generated successfully.",
+
+      FileName: `CAPEX-${capex.CapexNumber}.pdf`,
+
+      ContentType: "application/pdf",
+
+      PdfBuffer: pdfBuffer,
+    };
+  } catch (error) {
+    console.error(
+      "Generate CAPEX PDF Service Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return fail(
+      "Unable to generate CAPEX PDF at this time.",
+      500,
+    );
+  }
+};
+
 // ============================================================ Exports
 module.exports = {
   createCapex,
@@ -4467,4 +4797,5 @@ module.exports = {
   generateCapexListPdf,
   getCapexDepartmentReportPdf,
   getCapexOrganizationReportPdf,
+  generateCapexByIdPdf
 };
