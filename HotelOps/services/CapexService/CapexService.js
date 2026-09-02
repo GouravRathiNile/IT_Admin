@@ -3794,7 +3794,7 @@ const deleteApprovalConfig = async (data) => {
 };
 // ===================================================================Pdf Apis
 // ============================================================Generate CAPEX List PDF
-const generateCapexListPdf = async (data) => {
+const generateCapexListPdfDocument = async (data) => {
   try {
     const userType = data.UserType ? String(data.UserType).toUpperCase() : null;
 
@@ -4082,13 +4082,19 @@ const generateCapexListPdf = async (data) => {
     // GET DATA
     // ============================================================
 
-    const result = await pool.query(query, params);
+    let capexRows;
 
-    // ============================================================
-    // ATTACH DOCUMENTS / APPROVALS
-    // ============================================================
+    if (Array.isArray(data.PreparedRows)) {
+      capexRows = data.PreparedRows;
+    } else {
+      const result = await pool.query(query, params);
 
-    const capexRows = await attachRelatedData(result.rows);
+      // ============================================================
+      // ATTACH DOCUMENTS / APPROVALS
+      // ============================================================
+
+      capexRows = await attachRelatedData(result.rows);
+    }
 
     // ============================================================
     // ORGANIZATION
@@ -4231,6 +4237,40 @@ const generateCapexListPdf = async (data) => {
       message: "Unable to generate CAPEX list PDF.",
       statusCode: 503,
     };
+  }
+};
+
+// Export the exact same records as getAllCapex. Keeping list visibility in one
+// place prevents configured-flow differences (for example, a flow without
+// OWNER) from making the screen and PDF disagree.
+const generateCapexListPdf = async (data) => {
+  try {
+    const rows = [];
+    const exportPageSize = 1000;
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const response = await getAllCapex({
+        ...data,
+        page,
+        PageSize: exportPageSize,
+      });
+
+      if (!response.success) return response;
+
+      rows.push(...response.data);
+      totalPages = response.TotalPages;
+      page += 1;
+    } while (page <= totalPages);
+
+    return generateCapexListPdfDocument({
+      ...data,
+      PreparedRows: rows,
+    });
+  } catch (error) {
+    console.error("Generate CAPEX List PDF Error:", error.message);
+    return fail("Unable to generate CAPEX list PDF.", 503);
   }
 };
 // ===============================================================Department Report PDF

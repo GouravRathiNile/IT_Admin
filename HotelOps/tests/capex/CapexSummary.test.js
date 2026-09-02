@@ -195,3 +195,40 @@ test("CEO CAPEX list and count require GM approval for every status view", { con
     pool.query = originalQuery;
   }
 });
+
+test("CAPEX list PDF reuses getAllCapex configured-flow visibility", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await CapexService.generateCapexListPdf({
+      OrganizationID: 20,
+      UserType: "HOD",
+      Status: "Approved",
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(Buffer.isBuffer(response.data), true);
+    assert.equal(response.data.subarray(0, 4).toString(), "%PDF");
+
+    const executedCapexQueries = calls.filter((call) =>
+      /FROM Capex_Master cm/.test(call.sql),
+    );
+    assert.equal(executedCapexQueries.length, 2);
+    for (const call of executedCapexQueries) {
+      assert.match(call.sql, /approval_state\.FinalStatus/);
+      assert.match(
+        call.sql,
+        /COALESCE\(\s*approval_state\.FinalStatus,\s*'PENDING'\s*\)\s*\) = 'APPROVED'/,
+      );
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
