@@ -565,9 +565,12 @@ const getAllCapex = async (data) => {
     // Status
     // =====================================================
 
-    const approvalStatus = data.Status
-      ? String(data.Status).toUpperCase()
-      : null;
+    const approvalStatus =
+      data.Status !== undefined &&
+      data.Status !== null &&
+      String(data.Status).trim() !== ""
+        ? String(data.Status).trim().toUpperCase()
+        : null;
 
     const validStatuses = [
       "PENDING",
@@ -658,26 +661,8 @@ const getAllCapex = async (data) => {
               )
             ) = $${params.length}
           `;
-        } else {
-          params.push("GM");
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
-          `;
         }
+        
       }
 
       // ---------------------------------------------------
@@ -703,26 +688,8 @@ const getAllCapex = async (data) => {
               )
             ) = $${params.length}
           `;
-        } else {
-          params.push("CEO");
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
-          `;
-        }
+        } 
+       
       }
 
       // ---------------------------------------------------
@@ -748,26 +715,8 @@ const getAllCapex = async (data) => {
               )
             ) = $${params.length}
           `;
-        } else {
-          params.push("OWNER");
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-            AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
-          `;
-        }
+        } 
+       
       }
     }
 
@@ -972,7 +921,7 @@ const getAllCapex = async (data) => {
         statusColumn = "approval_state.OwnerStatus";
       }
 
-      if (approvalStatus === "PENDING" || !approvalStatus) {
+      if (approvalStatus === "PENDING" ) {
         countParams.push(userType);
 
         countQuery += `
@@ -1125,7 +1074,6 @@ const getAllCapex = async (data) => {
     // =====================================================
     // Response
     // =====================================================
-
     return {
       success: true,
       message: "CAPEX records fetched successfully.",
@@ -1725,9 +1673,7 @@ const updateCapex = async (data) => {
       const existingDocuments = existingDocumentsResult.rows;
 
       const existingDocumentIDs = new Set(
-        existingDocuments.map((document) =>
-          String(document.capexdocumentid),
-        ),
+        existingDocuments.map((document) => String(document.capexdocumentid)),
       );
 
       // ==========================================================
@@ -1777,10 +1723,7 @@ const updateCapex = async (data) => {
         await client.query("ROLLBACK");
         transactionStarted = false;
 
-        return fail(
-          "One or more existing CAPEX documents are invalid.",
-          400,
-        );
+        return fail("One or more existing CAPEX documents are invalid.", 400);
       }
 
       // ==========================================================
@@ -1791,16 +1734,12 @@ const updateCapex = async (data) => {
       // existing document will be soft deleted.
       // ==========================================================
 
-      const receivedDocumentIDSet = new Set(
-        receivedExistingDocumentIDs,
-      );
+      const receivedDocumentIDSet = new Set(receivedExistingDocumentIDs);
 
       const documentIDsToDelete = existingDocuments
         .filter(
           (document) =>
-            !receivedDocumentIDSet.has(
-              String(document.capexdocumentid),
-            ),
+            !receivedDocumentIDSet.has(String(document.capexdocumentid)),
         )
         .map((document) => document.capexdocumentid);
 
@@ -1818,11 +1757,7 @@ const updateCapex = async (data) => {
             AND CapexDocumentID = ANY($3::bigint[])
             AND IsDeleted = FALSE;
           `,
-          [
-            data.UserID,
-            data.CapexID,
-            documentIDsToDelete,
-          ],
+          [data.UserID, data.CapexID, documentIDsToDelete],
         );
       }
 
@@ -1834,9 +1769,7 @@ const updateCapex = async (data) => {
       const activeFilePaths = new Set(
         existingDocuments
           .filter((document) =>
-            receivedDocumentIDSet.has(
-              String(document.capexdocumentid),
-            ),
+            receivedDocumentIDSet.has(String(document.capexdocumentid)),
           )
           .map((document) => document.filepath)
           .filter(Boolean),
@@ -1857,10 +1790,7 @@ const updateCapex = async (data) => {
           await client.query("ROLLBACK");
           transactionStarted = false;
 
-          return fail(
-            "FileName is required for new CAPEX documents.",
-            400,
-          );
+          return fail("FileName is required for new CAPEX documents.", 400);
         }
 
         if (
@@ -1871,10 +1801,7 @@ const updateCapex = async (data) => {
           await client.query("ROLLBACK");
           transactionStarted = false;
 
-          return fail(
-            "FilePath is required for new CAPEX documents.",
-            400,
-          );
+          return fail("FilePath is required for new CAPEX documents.", 400);
         }
 
         const filePath = String(document.FilePath).trim();
@@ -1904,11 +1831,7 @@ const updateCapex = async (data) => {
           uniqueNewDocuments.length,
         );
 
-        for (
-          let index = 0;
-          index < uniqueNewDocuments.length;
-          index += 1
-        ) {
+        for (let index = 0; index < uniqueNewDocuments.length; index += 1) {
           const document = uniqueNewDocuments[index];
 
           await client.query(
@@ -1985,10 +1908,7 @@ const updateCapex = async (data) => {
     }
 
     if (error.code === "23505") {
-      return fail(
-        "CAPEX organization number or document already exists.",
-        409,
-      );
+      return fail("CAPEX organization number or document already exists.", 409);
     }
 
     if (error.code === "22P02") {
@@ -2529,28 +2449,28 @@ const processCapexApproval = async (data) => {
     // 18. UPDATE ROLE APPROVAL HELPER
     // ============================================================
 
-   const updateRoleApproval = async (
-  role,
-  status,
-  userId,
-  roleRemarks,
-  approvedQuantity = null,
-) => {
-  let query = "";
+    const updateRoleApproval = async (
+      role,
+      status,
+      userId,
+      roleRemarks,
+      approvedQuantity = null,
+    ) => {
+      let query = "";
 
-  const params = [
-    status,
-    userId,
-    roleRemarks || null,
-    approvedQuantity !== undefined && approvedQuantity !== null
-      ? Number(approvedQuantity)
-      : null,
-    approval.capexapprovalid,
-  ];
+      const params = [
+        status,
+        userId,
+        roleRemarks || null,
+        approvedQuantity !== undefined && approvedQuantity !== null
+          ? Number(approvedQuantity)
+          : null,
+        approval.capexapprovalid,
+      ];
 
-  switch (role) {
-    case "GM":
-      query = `
+      switch (role) {
+        case "GM":
+          query = `
         UPDATE Capex_Approval
         SET
           GMStatus = $1,
@@ -2563,10 +2483,10 @@ const processCapexApproval = async (data) => {
         WHERE CapexApprovalID = $5
           AND IsDeleted = FALSE;
       `;
-      break;
+          break;
 
-    case "CEO":
-      query = `
+        case "CEO":
+          query = `
         UPDATE Capex_Approval
         SET
           CEOStatus = $1,
@@ -2579,10 +2499,10 @@ const processCapexApproval = async (data) => {
         WHERE CapexApprovalID = $5
           AND IsDeleted = FALSE;
       `;
-      break;
+          break;
 
-    case "OWNER":
-      query = `
+        case "OWNER":
+          query = `
         UPDATE Capex_Approval
         SET
           OwnerStatus = $1,
@@ -2595,14 +2515,14 @@ const processCapexApproval = async (data) => {
         WHERE CapexApprovalID = $5
           AND IsDeleted = FALSE;
       `;
-      break;
+          break;
 
-    default:
-      throw new Error(`Unsupported approval role: ${role}`);
-  }
+        default:
+          throw new Error(`Unsupported approval role: ${role}`);
+      }
 
-  await client.query(query, params);
-};
+      await client.query(query, params);
+    };
 
     // ============================================================
     // 19. APPROVE
@@ -3059,7 +2979,9 @@ const capexSummaryData = (row) => ({
 const getCapexSummaryReport = async (data) => {
   try {
     const OrganizationID = Number(data?.Filters?.OrganizationID);
-    const UserType = String(data.UserType || "").trim().toUpperCase();
+    const UserType = String(data.UserType || "")
+      .trim()
+      .toUpperCase();
 
     if (!Number.isSafeInteger(OrganizationID) || OrganizationID < 1) {
       return fail("OrganizationID is required.", 400);
@@ -3850,9 +3772,7 @@ const deleteApprovalConfig = async (data) => {
 // ============================================================Generate CAPEX List PDF
 const generateCapexListPdf = async (data) => {
   try {
-    const userType = data.UserType
-      ? String(data.UserType).toUpperCase()
-      : null;
+    const userType = data.UserType ? String(data.UserType).toUpperCase() : null;
 
     const approvalStatus = data.Status
       ? String(data.Status).toUpperCase()
@@ -3891,10 +3811,7 @@ const generateCapexListPdf = async (data) => {
     // ORGANIZATION FILTER
     // ============================================================
 
-    if (
-      data.OrganizationID !== null &&
-      data.OrganizationID !== undefined
-    ) {
+    if (data.OrganizationID !== null && data.OrganizationID !== undefined) {
       params.push(data.OrganizationID);
 
       query += `
@@ -3971,7 +3888,6 @@ const generateCapexListPdf = async (data) => {
       // ----------------------------------------------------------
       // CEO
       // ----------------------------------------------------------
-
       else if (userType === "CEO") {
         if (approvalStatus === "PENDING") {
           params.push("CEO");
@@ -4015,7 +3931,6 @@ const generateCapexListPdf = async (data) => {
       // ----------------------------------------------------------
       // OWNER
       // ----------------------------------------------------------
-
       else if (userType === "OWNER") {
         if (approvalStatus === "PENDING") {
           params.push("OWNER");
@@ -4060,13 +3975,8 @@ const generateCapexListPdf = async (data) => {
     // ============================================================
     // HOD
     // ============================================================
-
     else if (userType === "HOD") {
-      if (
-        ["REJECTED", "HOLD", "RETURNED"].includes(
-          approvalStatus
-        )
-      ) {
+      if (["REJECTED", "HOLD", "RETURNED"].includes(approvalStatus)) {
         params.push(approvalStatus);
 
         query += `
@@ -4080,9 +3990,7 @@ const generateCapexListPdf = async (data) => {
             UPPER(COALESCE(approval_state.FinalStatus, '')) = $${params.length}
           )
         `;
-      }
-
-      else if (approvalStatus === "APPROVED") {
+      } else if (approvalStatus === "APPROVED") {
         query += `
           AND UPPER(
             COALESCE(approval_state.GMStatus, 'PENDING')
@@ -4096,9 +4004,7 @@ const generateCapexListPdf = async (data) => {
             COALESCE(approval_state.OwnerStatus, 'PENDING')
           ) = 'APPROVED'
         `;
-      }
-
-      else if (approvalStatus === "PENDING") {
+      } else if (approvalStatus === "PENDING") {
         query += `
           AND NOT (
             UPPER(COALESCE(approval_state.GMStatus, ''))
@@ -4165,9 +4071,7 @@ const generateCapexListPdf = async (data) => {
     // ============================================================
 
     const organizationId =
-      data.OrganizationID ||
-      capexRows[0]?.OrganizationID ||
-      null;
+      data.OrganizationID || capexRows[0]?.OrganizationID || null;
 
     // ============================================================
     // PDF COLUMNS
@@ -4255,22 +4159,22 @@ const generateCapexListPdf = async (data) => {
     // METADATA
     // ============================================================
 
-   const metadata = [
-  {
-    label: "Filters",
-    value: `Organization: ${
-      data.OrganizationID ? organizationId : "All Organizations"
-    }    |    Department: ${data.Department || "All"}    |    From: ${
-      data.FromDate || "All"
-    }    |    To: ${data.ToDate || "All"}    |    Status: ${
-      approvalStatus || "All"
-    }`,
-  },
-  {
-    label: "Total Records",
-    value: capexRows.length,
-  },
-];
+    const metadata = [
+      {
+        label: "Filters",
+        value: `Organization: ${
+          data.OrganizationID ? organizationId : "All Organizations"
+        }    |    Department: ${data.Department || "All"}    |    From: ${
+          data.FromDate || "All"
+        }    |    To: ${data.ToDate || "All"}    |    Status: ${
+          approvalStatus || "All"
+        }`,
+      },
+      {
+        label: "Total Records",
+        value: capexRows.length,
+      },
+    ];
 
     // ============================================================
     // GENERATE PDF
@@ -4376,7 +4280,7 @@ const getCapexDepartmentReportPdf = async (data) => {
           width: 60,
           align: "center",
         },
-       
+
         {
           header: "Approved",
           key: "approvedcount",
@@ -4475,8 +4379,7 @@ const getCapexOrganizationReportPdf = async (data) => {
       title: "CAPEX Organization Report",
       reportName: "CAPEX Organization Report",
 
-      organizationId:
-        data?.Filters?.OrganizationID || null,
+      organizationId: data?.Filters?.OrganizationID || null,
 
       orientation: "landscape",
 
@@ -4501,7 +4404,7 @@ const getCapexOrganizationReportPdf = async (data) => {
           width: 60,
           align: "center",
         },
-       
+
         {
           header: "Approved",
           key: "approvedcount",
@@ -4538,10 +4441,7 @@ const getCapexOrganizationReportPdf = async (data) => {
       fileName: "CAPEX_Organization_Report.pdf",
     };
   } catch (error) {
-    console.error(
-      "CAPEX Organization Report PDF Error:",
-      error.message
-    );
+    console.error("CAPEX Organization Report PDF Error:", error.message);
 
     return {
       success: false,
@@ -4566,5 +4466,5 @@ module.exports = {
   deleteApprovalConfig,
   generateCapexListPdf,
   getCapexDepartmentReportPdf,
-  getCapexOrganizationReportPdf
+  getCapexOrganizationReportPdf,
 };
