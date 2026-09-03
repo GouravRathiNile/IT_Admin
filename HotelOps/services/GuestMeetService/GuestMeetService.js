@@ -570,8 +570,8 @@ const getFeedbackReport = async (data) => {
          ShortName,
          JSON_AGG(
            JSON_BUILD_OBJECT(
-             'FeedbackType', FeedbackType,
-             'TotalGuests', TotalGuests
+             FeedbackType || ' Feedback',
+             TotalGuests
            )
            ORDER BY TotalGuests DESC, FeedbackType
          ) AS FeedbackData

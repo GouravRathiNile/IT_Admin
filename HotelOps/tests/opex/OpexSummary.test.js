@@ -245,6 +245,53 @@ test("non-Finance HOD OPEX list scopes every status and count to JWT department"
   }
 });
 
+test("OPEX no-status list includes every status visible to the effective approval role", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  const cases = [
+    { UserType: "HOD", DepartmentName: "Engineering", role: "HOD", column: "HODStatus" },
+    { UserType: "HOD", DepartmentName: "Finance", role: "FC", column: "FCStatus" },
+    { UserType: "GM", role: "GM", column: "GMStatus" },
+    { UserType: "CEO", role: "CEO", column: "CEOStatus" },
+  ];
+
+  try {
+    for (const item of cases) {
+      const response = await OpexService.getAllOpex({
+        OrganizationID: 20,
+        UserType: item.UserType,
+        DepartmentName: item.DepartmentName,
+        Status: null,
+        page: 1,
+        PageSize: 10,
+      });
+      assert.equal(response.success, true);
+    }
+
+    assert.equal(calls.length, cases.length * 2);
+    for (let index = 0; index < cases.length; index += 1) {
+      for (const call of calls.slice(index * 2, index * 2 + 2)) {
+        assert.equal(call.values.includes(cases[index].role), true);
+        assert.match(
+          call.sql,
+          new RegExp(
+            `current_stage\\.ApprovalRole[\\s\\S]*OR UPPER\\(COALESCE\\(approval_state\\.${cases[index].column}, ''\\)\\)[\\s\\S]*IN \\('APPROVED', 'REJECTED', 'HOLD', 'RETURNED'\\)`,
+          ),
+        );
+      }
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
 test("Finance HOD receives organization-wide FC list filters", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];

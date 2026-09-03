@@ -95,3 +95,39 @@ test("Guest detail PDF controller sends standard and legacy service payloads", {
     GuestMeetService.generateGuestDetailPdf = originalGenerate;
   }
 });
+
+test("Guest feedback report returns feedback labels as JSON keys", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  let reportQuery;
+  pool.query = async (sql) => {
+    reportQuery = sql;
+    return {
+      rows: [{
+        organizationid: "20",
+        shortname: "HTL",
+        feedbackdata: [
+          { "Negative Feedback": 1 },
+          { "Positive Feedback": 1 },
+        ],
+      }],
+    };
+  };
+
+  try {
+    const response = await GuestMeetService.getFeedbackReport({
+      OrganizationID: 20,
+    });
+    assert.equal(response.success, true);
+    assert.deepEqual(response.data[0].FeedbackData, [
+      { "Negative Feedback": 1 },
+      { "Positive Feedback": 1 },
+    ]);
+    assert.match(
+      reportQuery,
+      /JSON_BUILD_OBJECT\(\s*FeedbackType \|\| ' Feedback',\s*TotalGuests/,
+    );
+    assert.doesNotMatch(reportQuery, /'FeedbackType',\s*FeedbackType/);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
