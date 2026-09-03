@@ -1,6 +1,6 @@
 const express = require("express");
 const authenticateToken = require("../../middleware/authMiddleware");
-const { createDailyEntry,getAllDailyEntries,deleteDailyEntry,createGuestDetail,updateGuestDetail,deleteGuestDetail,getGuestDetailById,getDateRangeReport,getFeedbackReport,getMetByReport,getDateRangeReportPdf,getFeedbackReportPdf,getMetByReportPdf } = require("../../controllers/GuestMeetController/GuestMeetController");
+const { createDailyEntry,getAllDailyEntries,deleteDailyEntry,createGuestDetail,updateGuestDetail,deleteGuestDetail,getGuestDetailById,getDateRangeReport,getFeedbackReport,getMetByReport,getDateRangeReportPdf,getFeedbackReportPdf,getMetByReportPdf,generateGuestDetailPdf } = require("../../controllers/GuestMeetController/GuestMeetController");
 
 const router = express.Router();
 
@@ -27,5 +27,5 @@ router.get("/GuestMetByReport", authenticateToken, getMetByReport);
 router.get("/GuestsDetailsReportPdf", authenticateToken, getDateRangeReportPdf);
 router.get("/GuestsFeedbackReportPdf", authenticateToken, getFeedbackReportPdf);
 router.get("/GuestMetByReportPdf", authenticateToken, getMetByReportPdf);
-
+router.get("/GuestDetailsPdf/:id",authenticateToken,generateGuestDetailPdf,);
 module.exports = router;

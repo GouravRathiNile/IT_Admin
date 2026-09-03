@@ -1691,44 +1691,79 @@ const updateCapex = async (data) => {
 
     // ============================================================
     // DOCUMENT UPDATE RULES
-    //
-    // Documents === undefined:
-    //   Documents unchanged
-    //
-    // Documents === null:
-    //   All existing documents soft deleted
-    //
-    // Documents === []:
-    //   All existing documents soft deleted
-    //
-    // Existing document containing CapexDocumentID:
-    //   Remains unchanged and is not inserted again
-    //
-    // New document without CapexDocumentID:
-    //   Inserted as a new document
-    //
-    // Existing document missing from received Documents array:
-    //   Soft deleted
+    // Documents contains only newly uploaded files. Existing documents remain
+    // active unless their IDs are explicitly supplied in DeleteDocumentIDs.
     // ============================================================
 
-    if (data.Documents !== undefined) {
-      if (data.Documents !== null && !Array.isArray(data.Documents)) {
-        await client.query("ROLLBACK");
-        transactionStarted = false;
+    if (data.Documents !== undefined && data.Documents !== null && !Array.isArray(data.Documents)) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
 
-        return fail("Documents must be an array or null.", 400);
+      return fail("Documents must be an array or null.", 400);
+    }
+
+    if (
+      data.DeleteDocumentIDs !== undefined &&
+      data.DeleteDocumentIDs !== null &&
+      !Array.isArray(data.DeleteDocumentIDs)
+    ) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+
+      return fail("DeleteDocumentIDs must be an array.", 400);
+    }
+
+    const incomingDocuments = Array.isArray(data.Documents)
+      ? data.Documents
+      : [];
+    const deleteDocumentIDs = [
+      ...new Set(
+        (Array.isArray(data.DeleteDocumentIDs)
+          ? data.DeleteDocumentIDs
+          : []
+        ).map(Number),
+      ),
+    ];
+
+    if (
+      deleteDocumentIDs.some(
+        (documentID) => !Number.isSafeInteger(documentID) || documentID < 1,
+      )
+    ) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+
+      return fail(
+        "DeleteDocumentIDs must contain only positive integers.",
+        400,
+      );
+    }
+
+    if (incomingDocuments.length > 0 || deleteDocumentIDs.length > 0) {
+      for (const document of incomingDocuments) {
+        if (!document || typeof document !== "object") {
+          await client.query("ROLLBACK");
+          transactionStarted = false;
+
+          return fail("Invalid CAPEX document data.", 400);
+        }
+
+        if (
+          document.CapexDocumentID !== undefined &&
+          document.CapexDocumentID !== null
+        ) {
+          await client.query("ROLLBACK");
+          transactionStarted = false;
+
+          return fail(
+            "Documents must contain only newly uploaded CAPEX documents.",
+            400,
+          );
+        }
       }
-
-      const incomingDocuments = Array.isArray(data.Documents)
-        ? data.Documents
-        : [];
 
       const capexInfo = updateResult.rows[0];
       const capexNumber = Number(capexInfo.capexnumber);
-
-      // ==========================================================
-      // Get Current Active Documents
-      // ==========================================================
 
       const existingDocumentsResult = await client.query(
         `
@@ -1747,79 +1782,24 @@ const updateCapex = async (data) => {
       );
 
       const existingDocuments = existingDocumentsResult.rows;
-
       const existingDocumentIDs = new Set(
-        existingDocuments.map((document) => String(document.capexdocumentid)),
+        existingDocuments.map((document) => Number(document.capexdocumentid)),
       );
-
-      // ==========================================================
-      // Separate Existing and New Documents
-      // ==========================================================
-
-      const receivedExistingDocuments = [];
-      const newDocuments = [];
-
-      for (const document of incomingDocuments) {
-        if (!document || typeof document !== "object") {
-          await client.query("ROLLBACK");
-          transactionStarted = false;
-
-          return fail("Invalid CAPEX document data.", 400);
-        }
-
-        const hasDocumentID =
-          document.CapexDocumentID !== undefined &&
-          document.CapexDocumentID !== null &&
-          String(document.CapexDocumentID).trim() !== "";
-
-        if (hasDocumentID) {
-          receivedExistingDocuments.push(document);
-        } else {
-          newDocuments.push(document);
-        }
-      }
-
-      // ==========================================================
-      // Validate Existing Document IDs
-      // ==========================================================
-
-      const receivedExistingDocumentIDs = [
-        ...new Set(
-          receivedExistingDocuments.map((document) =>
-            String(document.CapexDocumentID),
-          ),
-        ),
-      ];
-
-      const invalidDocumentID = receivedExistingDocumentIDs.find(
+      const invalidDeleteDocumentID = deleteDocumentIDs.find(
         (documentID) => !existingDocumentIDs.has(documentID),
       );
 
-      if (invalidDocumentID) {
+      if (invalidDeleteDocumentID !== undefined) {
         await client.query("ROLLBACK");
         transactionStarted = false;
 
-        return fail("One or more existing CAPEX documents are invalid.", 400);
+        return fail(
+          "One or more CAPEX documents selected for deletion are invalid.",
+          400,
+        );
       }
 
-      // ==========================================================
-      // Soft Delete Missing Existing Documents
-      //
-      // Documents null or []:
-      // receivedExistingDocumentIDs will be empty, therefore every
-      // existing document will be soft deleted.
-      // ==========================================================
-
-      const receivedDocumentIDSet = new Set(receivedExistingDocumentIDs);
-
-      const documentIDsToDelete = existingDocuments
-        .filter(
-          (document) =>
-            !receivedDocumentIDSet.has(String(document.capexdocumentid)),
-        )
-        .map((document) => document.capexdocumentid);
-
-      if (documentIDsToDelete.length > 0) {
+      if (deleteDocumentIDs.length > 0) {
         await client.query(
           `
           UPDATE Capex_Documents
@@ -1833,7 +1813,7 @@ const updateCapex = async (data) => {
             AND CapexDocumentID = ANY($3::bigint[])
             AND IsDeleted = FALSE;
           `,
-          [data.UserID, data.CapexID, documentIDsToDelete],
+          [data.UserID, data.CapexID, deleteDocumentIDs],
         );
       }
 
@@ -1844,8 +1824,9 @@ const updateCapex = async (data) => {
 
       const activeFilePaths = new Set(
         existingDocuments
-          .filter((document) =>
-            receivedDocumentIDSet.has(String(document.capexdocumentid)),
+          .filter(
+            (document) =>
+              !deleteDocumentIDs.includes(Number(document.capexdocumentid)),
           )
           .map((document) => document.filepath)
           .filter(Boolean),
@@ -1857,7 +1838,7 @@ const updateCapex = async (data) => {
 
       const uniqueNewDocuments = [];
 
-      for (const document of newDocuments) {
+      for (const document of incomingDocuments) {
         if (
           document.FileName === undefined ||
           document.FileName === null ||
