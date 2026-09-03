@@ -4752,7 +4752,7 @@ const generateCapexByIdPdf = async (data) => {
           value: capexPdfValue(approval.Status),
         },
         {
-          label: `${approvalRole} Approved Qty`,
+          label: `${approvalRole}  Qty`,
           value: approvedQuantity,
         },
         {
