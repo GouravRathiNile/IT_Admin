@@ -232,3 +232,176 @@ test("CAPEX list PDF reuses getAllCapex configured-flow visibility", { concurren
     pool.query = originalQuery;
   }
 });
+
+test("CAPEX organization API and PDF include Hold count", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql) => {
+    calls.push(sql);
+    return {
+      rows: [
+        {
+          organizationid: "20",
+          shortname: "HJU",
+          count: "6",
+          totalamount: "1000",
+          approvedcount: "1",
+          pendingcount: "1",
+          rejectedcount: "1",
+          holdcount: "2",
+          returnedcount: "1",
+        },
+      ],
+    };
+  };
+
+  try {
+    const report = await CapexService.getCapexOrganizationReport({
+      Filters: { OrganizationID: 20 },
+    });
+    assert.equal(report.success, true);
+    assert.equal(report.data[0].HoldCount, 2);
+
+    const pdf = await CapexService.getCapexOrganizationReportPdf({
+      Filters: { OrganizationID: 20 },
+    });
+    assert.equal(pdf.success, true);
+    assert.equal(Buffer.isBuffer(pdf.pdfBuffer), true);
+    assert.equal(pdf.pdfBuffer.subarray(0, 4).toString(), "%PDF");
+
+    const reportQueries = calls.filter((sql) => /FROM capex_data cm/.test(sql));
+    assert.equal(reportQueries.length, 2);
+    for (const sql of reportQueries) {
+      assert.match(sql, /cm\.Status = 'Hold'[\s\S]*AS HoldCount/);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("CAPEX department API and PDF include Hold count", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql) => {
+    calls.push(sql);
+    return {
+      rows: [
+        {
+          department: "Finance",
+          count: "6",
+          totalamount: "1000",
+          approvedcount: "1",
+          pendingcount: "1",
+          rejectedcount: "1",
+          holdcount: "2",
+          returnedcount: "1",
+        },
+      ],
+    };
+  };
+
+  try {
+    const report = await CapexService.getCapexDepartmentReport({
+      Filters: { OrganizationID: 20, Department: "Finance" },
+    });
+    assert.equal(report.success, true);
+    assert.equal(report.data[0].HoldCount, 2);
+
+    const pdf = await CapexService.getCapexDepartmentReportPdf({
+      Filters: { OrganizationID: 20, Department: "Finance" },
+    });
+    assert.equal(pdf.success, true);
+    assert.equal(Buffer.isBuffer(pdf.pdfBuffer), true);
+    assert.equal(pdf.pdfBuffer.subarray(0, 4).toString(), "%PDF");
+
+    const reportQueries = calls.filter((sql) => /FROM capex_data/.test(sql));
+    assert.equal(reportQueries.length, 2);
+    for (const sql of reportQueries) {
+      assert.match(sql, /Status = 'Hold'[\s\S]*AS HoldCount/);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("non-approval CAPEX list applies every requested status to rows and count", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const statuses = ["Approved", "Rejected", "Hold", "Returned", "Pending", null];
+    for (const Status of statuses) {
+      const response = await CapexService.getAllCapex({
+        OrganizationID: 20,
+        UserType: "User",
+        Status,
+        page: 1,
+        PageSize: 10,
+      });
+      assert.equal(response.success, true);
+    }
+
+    const capexQueries = calls.filter((call) => /FROM Capex_Master cm/.test(call.sql));
+    assert.equal(capexQueries.length, statuses.length * 2);
+
+    for (let index = 0; index < statuses.length; index += 1) {
+      const pair = capexQueries.slice(index * 2, index * 2 + 2);
+      const status = statuses[index];
+      for (const call of pair) {
+        const appliedFilters = call.sql.slice(call.sql.lastIndexOf("AND cm.OrganizationID"));
+        if (status === "Approved") {
+          assert.match(appliedFilters, /approval_state\.FinalStatus[\s\S]*= \$\d+/);
+        } else if (["Rejected", "Hold", "Returned"].includes(status)) {
+          assert.match(appliedFilters, /approval_state\.GMStatus/);
+          assert.match(appliedFilters, /approval_state\.FinalStatus/);
+          assert.ok(call.values.includes(status.toUpperCase()));
+        } else if (status === "Pending") {
+          assert.match(appliedFilters, /approval_state\.FinalStatus[\s\S]*= 'PENDING'/);
+          assert.match(appliedFilters, /NOT IN \('REJECTED', 'HOLD', 'RETURNED'\)/);
+        } else {
+          assert.doesNotMatch(appliedFilters, /UPPER\(TRIM\(COALESCE/);
+        }
+      }
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("non-approval CAPEX PDF reuses the corrected status visibility", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await CapexService.generateCapexListPdf({
+      OrganizationID: 20,
+      UserType: "User",
+      Status: "Approved",
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(response.data.subarray(0, 4).toString(), "%PDF");
+
+    const capexQueries = calls.filter((call) => /FROM Capex_Master cm/.test(call.sql));
+    assert.equal(capexQueries.length, 2);
+    for (const call of capexQueries) {
+      const appliedFilters = call.sql.slice(call.sql.lastIndexOf("AND cm.OrganizationID"));
+      assert.match(appliedFilters, /approval_state\.FinalStatus[\s\S]*= \$\d+/);
+      assert.ok(call.values.includes("APPROVED"));
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});

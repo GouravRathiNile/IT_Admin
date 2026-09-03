@@ -526,6 +526,44 @@ const attachRelatedData = async (capexRows) => {
 
   return capexRows.map((row) => byID.get(Number(row.capexid)));
 };
+
+// Apply organization-wide status visibility for roles that do not own an
+// approval stage. The same helper is used by the list and count queries so
+// pagination cannot disagree with the returned rows.
+const appendOverallCapexStatusFilter = (query, params, approvalStatus) => {
+  if (!approvalStatus) return query;
+
+  if (approvalStatus === "APPROVED") {
+    params.push(approvalStatus);
+    return `${query}
+      AND UPPER(TRIM(COALESCE(approval_state.FinalStatus, 'PENDING')))
+          = $${params.length}
+    `;
+  }
+
+  if (["REJECTED", "HOLD", "RETURNED"].includes(approvalStatus)) {
+    params.push(approvalStatus);
+    return `${query}
+      AND (
+        UPPER(TRIM(COALESCE(approval_state.GMStatus, ''))) = $${params.length}
+        OR UPPER(TRIM(COALESCE(approval_state.CEOStatus, ''))) = $${params.length}
+        OR UPPER(TRIM(COALESCE(approval_state.OwnerStatus, ''))) = $${params.length}
+        OR UPPER(TRIM(COALESCE(approval_state.FinalStatus, ''))) = $${params.length}
+      )
+    `;
+  }
+
+  return `${query}
+    AND UPPER(TRIM(COALESCE(approval_state.FinalStatus, 'PENDING')))
+        = 'PENDING'
+    AND UPPER(TRIM(COALESCE(approval_state.GMStatus, 'PENDING')))
+        NOT IN ('REJECTED', 'HOLD', 'RETURNED')
+    AND UPPER(TRIM(COALESCE(approval_state.CEOStatus, 'PENDING')))
+        NOT IN ('REJECTED', 'HOLD', 'RETURNED')
+    AND UPPER(TRIM(COALESCE(approval_state.OwnerStatus, 'PENDING')))
+        NOT IN ('REJECTED', 'HOLD', 'RETURNED')
+  `;
+};
 // ============================================================ Get All CAPEX
 const getAllCapex = async (data) => {
   try {
@@ -856,6 +894,12 @@ const getAllCapex = async (data) => {
       }
     }
 
+    // Non-approval roles see organization-wide CAPEX, but a requested status
+    // must still constrain the result set.
+    else {
+      query = appendOverallCapexStatusFilter(query, params, approvalStatus);
+    }
+
     // =====================================================
     // LIMIT + OFFSET
     // =====================================================
@@ -1066,6 +1110,14 @@ const getAllCapex = async (data) => {
           )
         `;
       }
+    }
+
+    else {
+      countQuery = appendOverallCapexStatusFilter(
+        countQuery,
+        countParams,
+        approvalStatus,
+      );
     }
 
     countQuery += `
@@ -3220,6 +3272,7 @@ const groupedReportRows = (rows, groupField) =>
     ApprovedCount: Number(row.approvedcount),
     PendingCount: Number(row.pendingcount),
     RejectedCount: Number(row.rejectedcount),
+    HoldCount: Number(row.holdcount),
     ReturnedCount: Number(row.returnedcount),
   }));
 // ============================================================ Department Report
@@ -3234,6 +3287,7 @@ const getCapexDepartmentReport = async (data) => {
          COUNT(*) FILTER (WHERE Status = 'Approved')::bigint AS ApprovedCount,
          COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
          COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
+         COUNT(*) FILTER (WHERE Status = 'Hold')::bigint AS HoldCount,
          COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount
        FROM capex_data
        WHERE ($2::text IS NULL OR LOWER(TRIM(COALESCE(Department, 'Unspecified'))) = LOWER(TRIM($2::text)))
@@ -3279,6 +3333,10 @@ const getCapexOrganizationReport = async (data) => {
          )::bigint AS RejectedCount,
 
          COUNT(*) FILTER (
+           WHERE cm.Status = 'Hold'
+         )::bigint AS HoldCount,
+
+         COUNT(*) FILTER (
            WHERE cm.Status = 'Returned'
          )::bigint AS ReturnedCount
 
@@ -3311,6 +3369,7 @@ const getCapexOrganizationReport = async (data) => {
         ApprovedCount: Number(row.approvedcount),
         PendingCount: Number(row.pendingcount),
         RejectedCount: Number(row.rejectedcount),
+        HoldCount: Number(row.holdcount),
         ReturnedCount: Number(row.returnedcount),
       })),
     };
@@ -4272,7 +4331,6 @@ const generateCapexListPdfDocument = async (data) => {
     };
   }
 };
-
 // Export the exact same records as getAllCapex. Keeping list visibility in one
 // place prevents configured-flow differences (for example, a flow without
 // OWNER) from making the screen and PDF disagree.
@@ -4326,6 +4384,9 @@ const getCapexDepartmentReportPdf = async (data) => {
            WHERE Status = 'Rejected'
          )::bigint AS RejectedCount,
          COUNT(*) FILTER (
+           WHERE Status = 'Hold'
+         )::bigint AS HoldCount,
+         COUNT(*) FILTER (
            WHERE Status = 'Returned'
          )::bigint AS ReturnedCount
        FROM capex_data
@@ -4350,18 +4411,20 @@ const getCapexDepartmentReportPdf = async (data) => {
 
       metadata: [
         {
-          label: "Report",
-          value: "CAPEX Department Report",
+          label: "Department",
+          value: data?.Filters?.Department || "All",
         },
         {
-          label: "Generated Date",
-          value: formatDate(new Date()),
+          label: "From Date",
+          value: data?.Filters?.FromDate
+            ? formatDate(data.Filters.FromDate)
+            : "All",
         },
         {
-          label: "Filters",
-          value: `Department: ${data?.Filters?.Department || "All"} | From: ${
-            data?.Filters?.FromDate || "All"
-          } | To: ${data?.Filters?.ToDate || "All"}`,
+          label: "To Date",
+          value: data?.Filters?.ToDate
+            ? formatDate(data.Filters.ToDate)
+            : "All",
         },
       ],
 
@@ -4393,6 +4456,12 @@ const getCapexDepartmentReportPdf = async (data) => {
         {
           header: "Rejected",
           key: "rejectedcount",
+          width: 70,
+          align: "center",
+        },
+        {
+          header: "Hold",
+          key: "holdcount",
           width: 70,
           align: "center",
         },
@@ -4449,6 +4518,10 @@ const getCapexOrganizationReportPdf = async (data) => {
          )::bigint AS RejectedCount,
 
          COUNT(*) FILTER (
+           WHERE cm.Status = 'Hold'
+         )::bigint AS HoldCount,
+
+         COUNT(*) FILTER (
            WHERE cm.Status = 'Returned'
          )::bigint AS ReturnedCount
 
@@ -4482,10 +4555,16 @@ const getCapexOrganizationReportPdf = async (data) => {
 
       metadata: [
         {
-          label: "Filters",
-          value: `From: ${data?.Filters?.FromDate || "All"} | To: ${
-            data?.Filters?.ToDate || "All"
-          }`,
+          label: "From Date",
+          value: data?.Filters?.FromDate
+            ? formatDate(data.Filters.FromDate)
+            : "All",
+        },
+        {
+          label: "To Date",
+          value: data?.Filters?.ToDate
+            ? formatDate(data.Filters.ToDate)
+            : "All",
         },
       ],
 
@@ -4517,6 +4596,12 @@ const getCapexOrganizationReportPdf = async (data) => {
         {
           header: "Rejected",
           key: "rejectedcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Hold",
+          key: "holdcount",
           width: 75,
           align: "center",
         },
