@@ -2,6 +2,9 @@ const { pool } = require("../../db");
 const { formatDate } = require("../../utils/dateFormatter");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
 const { generatePdf } = require("../../utils/pdfHelper");
+const { generateCSV, generateExcel } = require("../../utils/exportHelper");
+const ExcelJS = require("exceljs");
+const { Readable } = require("stream");
 const generateOrganizationLogoUrl = require("../../AzurConfigration/ITAdmin/OrganizationMaster/AzureGetData");
 // Missing logo configuration must not prevent an otherwise valid PDF.
 const safeOrganizationLogoUrl = (blobName) => {
@@ -51,19 +54,30 @@ const validateOrganization = async (client, userID, organizationID) => {
 };
 
 // Reports may include inactive historical fields; entry screens request active fields.
-const getMasterRows = (client, activeOnly = true) => client.query(
+const getMasterRows = (client, organizationID, activeOnly = true) => client.query(
   `SELECT id AS "ID", title AS "Title", orderby AS "OrderBy"
           ${activeOnly ? "" : ', isactive AS "IsActive"'}
      FROM hlpreport_master_list
-    ${activeOnly ? "WHERE isactive = TRUE" : ""}
-    ORDER BY orderby NULLS LAST, id`
+    WHERE organizationid = $1 ${activeOnly ? "AND isactive = TRUE" : ""}
+    ORDER BY orderby NULLS LAST, id`,
+  [Number(organizationID)]
 );
 
 // Master-page list exposes only active field configuration in display order.
-const getMasterList = async () => {
+const getMasterList = async ({ UserID, OrganizationID } = {}) => {
   const client = await pool.connect();
   try {
-    const result = await getMasterRows(client);
+    if (OrganizationID === undefined || OrganizationID === null || String(OrganizationID).trim() === "") {
+      const organizationIDs = await getAccessibleOrganizationIDs(client, UserID);
+      if (!organizationIDs.length) return fail("No active organization is assigned to the authenticated user.", 403);
+      if (organizationIDs.length > 1) return fail("Please select an organization to view HLP master fields.", 400);
+      [OrganizationID] = organizationIDs;
+    } else if (!positiveInteger(OrganizationID)) {
+      return fail("Organization ID must be a positive integer");
+    }
+    const denied = await validateOrganization(client, UserID, OrganizationID);
+    if (denied) return denied;
+    const result = await getMasterRows(client, OrganizationID);
     return {
       success: true,
       message: "HLP report master list fetched successfully",
@@ -73,6 +87,19 @@ const getMasterList = async () => {
     console.error("Get HLP Master List Error:", error.message);
     return fail("Unable to fetch HLP master list at this time.", 503);
   } finally { client.release(); }
+};
+
+const getAccessibleOrganizationIDs = async (client, userID) => {
+  const result = await client.query(
+    `SELECT uom.organizationid
+       FROM user_org_mapping uom
+       JOIN organization_master om ON om.organizationid = uom.organizationid
+      WHERE uom.userid = $1 AND uom.isactive = TRUE AND uom.isdeleted = FALSE
+        AND om.isactive = TRUE AND om.activationstatus = TRUE AND om.isdeleted = FALSE
+      ORDER BY uom.organizationid`,
+    [userID]
+  );
+  return result.rows.map((row) => Number(row.organizationid));
 };
 
 // Entry-page list overlays exact-date YOD/LYOD values on active master fields.
@@ -96,7 +123,7 @@ const getHLPList = async ({ UserID, OrganizationID, EntryDate } = {}) => {
             WHERE d.entryid = em.id AND d.masterid = ml.id
             ORDER BY d.id DESC LIMIT 1
          ) detail ON TRUE
-        WHERE ml.isactive = TRUE
+        WHERE ml.organizationid = $1 AND ml.isactive = TRUE
         ORDER BY ml.orderby NULLS LAST, ml.id`,
       [Number(OrganizationID), EntryDate]
     );
@@ -115,26 +142,74 @@ const masterAuditFields = ["CreatedBy", "CreatedDateTime", "ModifyBy", "ModifyDa
 const hasUnexpectedFields = (data, allowed) => Object.keys(data).some((field) => !allowed.includes(field));
 
 // Add a new field at the end of the active master-list ordering.
-const createMasterField = async (data) => {
-  const title = typeof data.Title === "string" ? data.Title.trim() : "";
-  if (!title) return fail("Title is required");
+const normalizeMasterFields = (data) => {
+  const source = Array.isArray(data.Fields) ? data.Fields : [{ Title: data.Title }];
+  if (!source.length) return { error: fail("Fields must be a non-empty array") };
+  const fields = []; const titles = new Set();
+  for (const item of source) {
+    if (!item || hasUnexpectedFields(item, ["Title"])) return { error: fail("Each master field must contain only Title") };
+    const title = typeof item.Title === "string" ? item.Title.trim() : "";
+    if (!title) return { error: fail("Each master field Title is required") };
+    if (title.length > 250) return { error: fail("Master field Title must not exceed 250 characters") };
+    const key = title.toLowerCase();
+    if (titles.has(key)) return { error: fail(`Duplicate master field Title is not allowed: ${title}`) };
+    titles.add(key); fields.push({ Title: title });
+  }
+  return { fields };
+};
+
+const createMasterField = async (data, options = {}) => {
+  if (!positiveInteger(data.OrganizationID)) return fail("Organization ID must be a positive integer");
   if (masterAuditFields.some((field) => Object.prototype.hasOwnProperty.call(data, field))) return fail("Audit fields cannot be supplied by the client");
-  if (hasUnexpectedFields(data, ["Title", "UserID"])) return fail("Only Title can be supplied when creating an HLP master field");
+  if (hasUnexpectedFields(data, ["OrganizationID", "Title", "Fields", "UserID"])) return fail("Only OrganizationID and Title or Fields can be supplied when creating HLP master fields");
+  if (data.Title !== undefined && data.Fields !== undefined) return fail("Supply either Title or Fields, not both");
+  const normalized = normalizeMasterFields(data);
+  if (normalized.error) return normalized.error;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_master_list_order'))");
-    await client.query("UPDATE hlpreport_master_list SET orderby = NULL WHERE isactive = FALSE AND orderby IS NOT NULL");
-    const id = Number((await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM hlpreport_master_list")).rows[0].id);
-    const orderBy = Number((await client.query("SELECT COALESCE(MAX(orderby), 0) + 1 AS orderby FROM hlpreport_master_list WHERE isactive = TRUE")).rows[0].orderby);
-    const result = await client.query(
-      `INSERT INTO hlpreport_master_list (id, title, orderby, isactive, createdby, createddatetime)
-       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
-       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy"`,
-      [id, title, orderBy, true, data.UserID]
+    const denied = await validateOrganization(client, data.UserID, data.OrganizationID);
+    if (denied) { await client.query("ROLLBACK"); return denied; }
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`hlpreport_master_list_order:${Number(data.OrganizationID)}`]);
+    await client.query("UPDATE hlpreport_master_list SET orderby = NULL WHERE organizationid = $1 AND isactive = FALSE AND orderby IS NOT NULL", [Number(data.OrganizationID)]);
+    const duplicate = await client.query(
+      `SELECT title FROM hlpreport_master_list
+        WHERE organizationid = $1 AND isactive = TRUE AND LOWER(title) = ANY($2::text[])`,
+      [Number(data.OrganizationID), normalized.fields.map((item) => item.Title.toLowerCase())]
     );
+    if (duplicate.rowCount && !options.skipExisting) {
+      await client.query("ROLLBACK");
+      return fail(`Master field already exists: ${duplicate.rows[0].title}`, 409);
+    }
+    const existingTitles = new Set(duplicate.rows.map((row) => String(row.title).trim().toLowerCase()));
+    const fieldsToCreate = options.skipExisting
+      ? normalized.fields.filter((item) => !existingTitles.has(item.Title.toLowerCase()))
+      : normalized.fields;
+    if (!fieldsToCreate.length) {
+      await client.query("COMMIT");
+      return {
+        success: true,
+        message: "All imported HLP master fields already exist. No new fields were added.",
+        data: [],
+      };
+    }
+    let orderBy = Number((await client.query("SELECT COALESCE(MAX(orderby), 0) + 1 AS orderby FROM hlpreport_master_list WHERE organizationid = $1 AND isactive = TRUE", [Number(data.OrganizationID)])).rows[0].orderby);
+    const created = [];
+    for (const field of fieldsToCreate) {
+      const result = await client.query(
+        `INSERT INTO hlpreport_master_list (organizationid, title, orderby, isactive, createdby, createddatetime)
+         VALUES ($1, $2, $3, TRUE, $4, CURRENT_TIMESTAMP)
+         RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy"`,
+        [Number(data.OrganizationID), field.Title, orderBy++, data.UserID]
+      );
+      created.push(result.rows[0]);
+    }
     await client.query("COMMIT");
-    return { success: true, message: "HLP master field created successfully", data: result.rows[0] };
+    const skippedCount = normalized.fields.length - fieldsToCreate.length;
+    const message = options.skipExisting
+      ? `HLP master fields imported successfully. ${created.length} added, ${skippedCount} skipped.`
+      : (created.length === 1 ? "HLP master field created successfully" : "HLP master fields created successfully");
+    return { success: true, message, data: created.length === 1 && !Array.isArray(data.Fields) ? created[0] : created };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("Create HLP Master Field Error:", error.message);
@@ -144,18 +219,27 @@ const createMasterField = async (data) => {
 
 // Rename one active master field while deriving modification audit server-side.
 const updateMasterField = async (data) => {
+  if (!positiveInteger(data.OrganizationID)) return fail("Organization ID must be a positive integer");
   if (!positiveInteger(data.ID)) return fail("HLP master field ID must be a positive integer");
   if (masterAuditFields.some((field) => Object.prototype.hasOwnProperty.call(data, field))) return fail("Audit fields cannot be supplied by the client");
-  if (hasUnexpectedFields(data, ["ID", "Title", "UserID"])) return fail("Only ID and Title can be supplied when updating an HLP master field");
+  if (hasUnexpectedFields(data, ["ID", "OrganizationID", "Title", "UserID"])) return fail("Only OrganizationID, ID and Title can be supplied when updating an HLP master field");
   const title = typeof data.Title === "string" ? data.Title.trim() : "";
   if (!title) return fail("Title is required");
   const client = await pool.connect();
   try {
+    const denied = await validateOrganization(client, data.UserID, data.OrganizationID);
+    if (denied) return denied;
+    const duplicate = await client.query(
+      `SELECT 1 FROM hlpreport_master_list
+        WHERE organizationid = $1 AND isactive = TRUE AND LOWER(title) = LOWER($2) AND id <> $3 LIMIT 1`,
+      [Number(data.OrganizationID), title, Number(data.ID)]
+    );
+    if (duplicate.rowCount) return fail(`Master field already exists: ${title}`, 409);
     const result = await client.query(
       `UPDATE hlpreport_master_list
        SET title = $1, modifyby = $2, modifydatetime = CURRENT_TIMESTAMP
-       WHERE id = $3 AND isactive = TRUE
-       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy"`, [title, data.UserID, Number(data.ID)]
+       WHERE id = $3 AND organizationid = $4 AND isactive = TRUE
+       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy"`, [title, data.UserID, Number(data.ID), Number(data.OrganizationID)]
     );
     if (!result.rowCount) return fail("HLP master field not found", 404);
     return { success: true, message: "HLP master field updated successfully", data: result.rows[0] };
@@ -167,24 +251,27 @@ const updateMasterField = async (data) => {
 
 // Soft-deactivate a field and compact the remaining active display order.
 const deleteMasterField = async (data) => {
+  if (!positiveInteger(data.OrganizationID)) return fail("Organization ID must be a positive integer");
   if (!positiveInteger(data.ID)) return fail("HLP master field ID must be a positive integer");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_master_list_order'))");
+    const denied = await validateOrganization(client, data.UserID, data.OrganizationID);
+    if (denied) { await client.query("ROLLBACK"); return denied; }
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`hlpreport_master_list_order:${Number(data.OrganizationID)}`]);
     const result = await client.query(
       `UPDATE hlpreport_master_list SET isactive = FALSE, orderby = NULL, modifyby = $1, modifydatetime = CURRENT_TIMESTAMP
-        WHERE id = $2 RETURNING id AS "ID"`, [data.UserID, Number(data.ID)]
+        WHERE id = $2 AND organizationid = $3 AND isactive = TRUE RETURNING id AS "ID"`, [data.UserID, Number(data.ID), Number(data.OrganizationID)]
     );
     if (!result.rowCount) { await client.query("ROLLBACK"); return fail("HLP master field not found", 404); }
-    await client.query("UPDATE hlpreport_master_list SET orderby = -orderby WHERE isactive = TRUE");
+    await client.query("UPDATE hlpreport_master_list SET orderby = -orderby WHERE organizationid = $1 AND isactive = TRUE", [Number(data.OrganizationID)]);
     await client.query(
       `WITH ordered AS (
          SELECT id, ROW_NUMBER() OVER (ORDER BY orderby DESC NULLS LAST, id)::integer AS new_order
-         FROM hlpreport_master_list WHERE isactive = TRUE
+         FROM hlpreport_master_list WHERE organizationid = $1 AND isactive = TRUE
        )
        UPDATE hlpreport_master_list ml SET orderby = ordered.new_order
-       FROM ordered WHERE ml.id = ordered.id`
+       FROM ordered WHERE ml.id = ordered.id`, [Number(data.OrganizationID)]
     );
     await client.query("COMMIT");
     return { success: true, message: "HLP master field deactivated successfully", data: result.rows[0] };
@@ -235,8 +322,9 @@ const createReport = async (data) => {
     );
 
     const masterResult = await client.query(
-      `SELECT id, title FROM hlpreport_master_list WHERE id = ANY($1::bigint[]) AND isactive = TRUE`,
-      [[...ids]]
+      `SELECT id, title FROM hlpreport_master_list
+        WHERE id = ANY($1::bigint[]) AND organizationid = $2 AND isactive = TRUE`,
+      [[...ids], Number(OrganizationID)]
     );
     const titleByID = new Map(masterResult.rows.map((row) => [Number(row.id), row.title]));
     const invalidID = [...ids].find((id) => !titleByID.has(id));
@@ -339,8 +427,8 @@ const updateReport = async (data) => {
     if (denied) { await client.query("ROLLBACK"); return denied; }
 
     const masterResult = await client.query(
-      "SELECT id, title FROM hlpreport_master_list WHERE id = ANY($1::bigint[]) AND isactive = TRUE",
-      [[...ids]]
+      "SELECT id, title FROM hlpreport_master_list WHERE id = ANY($1::bigint[]) AND organizationid = $2 AND isactive = TRUE",
+      [[...ids], Number(entry.rows[0].organizationid)]
     );
     const titleByID = new Map(masterResult.rows.map((row) => [Number(row.id), row.title]));
     const invalidID = [...ids].find((masterID) => !titleByID.has(masterID));
@@ -385,14 +473,22 @@ const hasMonthlyReportData = (rows) => (rows || []).some((row) => Object.entries
   !["ID", "Title", "Total"].includes(key) && value !== null && value !== undefined && String(value).trim() !== ""
 ));
 // Pivot stored daily YOD values into one row per title and one column per month day.
-const getMonthlyReport = async ({ OrganizationID, OrganizationIDs, Year, Month }) => {
+const getMonthlyReport = async ({ UserID, OrganizationID, OrganizationIDs, Year, Month }, valueField = "YOD") => {
+  // valueField is internal-only and restricted to stored HLP day-value columns.
+  const reportValueField = valueField === "LYOD" ? "lyod" : "yod";
   const year = Number(Year); const month = Number(Month);
   if (!Number.isInteger(year) || year < 1 || year > 9999) return fail("Year must be between 1 and 9999");
   if (!Number.isInteger(month) || month < 1 || month > 12) return fail("Month must be between 1 and 12");
   const client = await pool.connect();
   try {
     if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "" && !positiveInteger(OrganizationID)) return fail("Organization ID must be a positive integer");
-    const masters = (await getMasterRows(client, false)).rows;
+    if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "") {
+      const denied = await validateOrganization(client, UserID, OrganizationID);
+      if (denied) return denied;
+    } else if (!Array.isArray(OrganizationIDs)) {
+      OrganizationIDs = await getAccessibleOrganizationIDs(client, UserID);
+      if (!OrganizationIDs.length) return fail("No active organization is assigned to the authenticated user.", 403);
+    }
     const queryValues = [year, month];
     let organizationClause = "";
     if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "") {
@@ -400,8 +496,20 @@ const getMonthlyReport = async ({ OrganizationID, OrganizationIDs, Year, Month }
     } else if (Array.isArray(OrganizationIDs)) {
       organizationClause = `AND em.organizationid = ANY($${queryValues.push(OrganizationIDs.map(Number))}::bigint[])`;
     }
+    const masterOrganizationIDs = OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== ""
+      ? [Number(OrganizationID)] : (Array.isArray(OrganizationIDs) ? OrganizationIDs.map(Number) : []);
+    const mastersResult = masterOrganizationIDs.length
+      ? await client.query(
+        `SELECT DISTINCT ON (LOWER(title)) id AS "ID", title AS "Title", orderby AS "OrderBy", isactive AS "IsActive"
+           FROM hlpreport_master_list
+          WHERE organizationid = ANY($1::bigint[])
+          ORDER BY LOWER(title), isactive DESC, orderby NULLS LAST, id`,
+        [masterOrganizationIDs]
+      )
+      : { rows: [] };
+    const masters = mastersResult.rows;
     const values = await client.query(
-      `SELECT EXTRACT(DAY FROM em.entrydate)::int AS day, d.title AS "Title", d.yod AS "YOD"
+      `SELECT EXTRACT(DAY FROM em.entrydate)::int AS day, d.title AS "Title", d.${reportValueField} AS "Value"
          FROM hlpreport_entry_master em
          JOIN hlpreport_entry_details d ON d.entryid = em.id
         WHERE em.entrydate >= make_date($1, $2, 1)
@@ -410,7 +518,7 @@ const getMonthlyReport = async ({ OrganizationID, OrganizationIDs, Year, Month }
       queryValues
     );
     const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
-    const byTitle = new Map(values.rows.map((row) => [`${row.Title}|${row.day}`, row.YOD]));
+    const byTitle = new Map(values.rows.map((row) => [`${row.Title}|${row.day}`, row.Value]));
     const historicalTitles = new Set(values.rows.map((row) => row.Title));
     const rows = masters.filter((master) => master.IsActive || historicalTitles.has(master.Title)).map((master) => {
       const row = { ID: master.ID, Title: master.Title }; const populated = [];
@@ -422,7 +530,13 @@ const getMonthlyReport = async ({ OrganizationID, OrganizationIDs, Year, Month }
       row.Total = populated.every(numericValue) ? populated.reduce((sum, value) => sum + Number(value), 0) : null;
       return row;
     });
-    return { success: true, message: "HLP monthly report fetched successfully", data: rows };
+    return {
+      success: true,
+      message: reportValueField === "lyod"
+        ? "HLP last-year report fetched successfully"
+        : "HLP monthly report fetched successfully",
+      data: rows,
+    };
   } catch (error) {
     console.error("Get HLP Monthly Report Error:", error.message);
     return fail("Unable to fetch HLP monthly report at this time.", 503);
@@ -430,11 +544,18 @@ const getMonthlyReport = async ({ OrganizationID, OrganizationIDs, Year, Month }
 };
 
 // Return stored YOD/LYOD values for the exact selected date without date arithmetic.
-const getLastYearReport = async ({ OrganizationID, OrganizationIDs, EntryDate }) => {
+const getLastYearReport = async ({ UserID, OrganizationID, OrganizationIDs, EntryDate }) => {
   if (!isRealDate(EntryDate)) return fail("EntryDate must be a valid date in YYYY-MM-DD format");
   const client = await pool.connect();
   try {
     if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "" && !positiveInteger(OrganizationID)) return fail("Organization ID must be a positive integer");
+    if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "") {
+      const denied = await validateOrganization(client, UserID, OrganizationID);
+      if (denied) return denied;
+    } else if (!Array.isArray(OrganizationIDs)) {
+      OrganizationIDs = await getAccessibleOrganizationIDs(client, UserID);
+      if (!OrganizationIDs.length) return fail("No active organization is assigned to the authenticated user.", 403);
+    }
     const queryValues = [EntryDate];
     let organizationClause = "";
     if (OrganizationID !== undefined && OrganizationID !== null && String(OrganizationID).trim() !== "") {
@@ -450,7 +571,9 @@ const getLastYearReport = async ({ OrganizationID, OrganizationIDs, EntryDate })
     const result = await client.query(
       `SELECT d.masterid AS "MasterID", d.title AS "Title", d.yod AS "YOD", d.lyod AS "LYOD"
          FROM hlpreport_entry_details d
-         LEFT JOIN hlpreport_master_list ml ON ml.id = d.masterid
+         LEFT JOIN hlpreport_master_list ml ON ml.id = d.masterid AND ml.organizationid = (
+           SELECT organizationid FROM hlpreport_entry_master WHERE id = $1
+         )
         WHERE d.entryid = $1
         ORDER BY ml.orderby NULLS LAST, d.masterid, d.id`,
       [entry.rows[0].id]
@@ -534,7 +657,8 @@ const reportOrganizationMetadata = async (organizationID) => {
 
 // Atomically replace the order of all active master fields.
 const reorderMasterFields = async (data) => {
-  if (hasUnexpectedFields(data, ["items", "UserID"])) return fail("Only items can be supplied for HLP master field reorder");
+  if (hasUnexpectedFields(data, ["OrganizationID", "items", "UserID"])) return fail("Only OrganizationID and items can be supplied for HLP master field reorder");
+  if (!positiveInteger(data.OrganizationID)) return fail("Organization ID must be a positive integer");
   if (!Array.isArray(data.items) || data.items.length === 0) return fail("items must be a non-empty array");
   const ids = new Set(); const orders = new Set();
   for (const item of data.items) {
@@ -548,22 +672,24 @@ const reorderMasterFields = async (data) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_master_list_order'))");
-    await client.query("UPDATE hlpreport_master_list SET orderby = NULL WHERE isactive = FALSE AND orderby IS NOT NULL");
-    const current = await client.query("SELECT id FROM hlpreport_master_list WHERE isactive = TRUE ORDER BY id FOR UPDATE");
+    const denied = await validateOrganization(client, data.UserID, data.OrganizationID);
+    if (denied) { await client.query("ROLLBACK"); return denied; }
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`hlpreport_master_list_order:${Number(data.OrganizationID)}`]);
+    await client.query("UPDATE hlpreport_master_list SET orderby = NULL WHERE organizationid = $1 AND isactive = FALSE AND orderby IS NOT NULL", [Number(data.OrganizationID)]);
+    const current = await client.query("SELECT id FROM hlpreport_master_list WHERE organizationid = $1 AND isactive = TRUE ORDER BY id FOR UPDATE", [Number(data.OrganizationID)]);
     const currentIDs = current.rows.map((row) => Number(row.id));
     if (currentIDs.length !== ids.size || currentIDs.some((id) => !ids.has(id))) {
       await client.query("ROLLBACK");
       return fail("items must contain the complete active HLP master list with valid IDs");
     }
-    await client.query("UPDATE hlpreport_master_list SET orderby = -id WHERE isactive = TRUE");
+    await client.query("UPDATE hlpreport_master_list SET orderby = -id WHERE organizationid = $1 AND isactive = TRUE", [Number(data.OrganizationID)]);
     const orderedItems = [...data.items].sort((a, b) => Number(a.OrderBy) - Number(b.OrderBy));
     await client.query(
       `UPDATE hlpreport_master_list ml SET orderby = ordering.orderby,
          modifyby = $3, modifydatetime = CURRENT_TIMESTAMP
        FROM unnest($1::bigint[], $2::integer[]) AS ordering(id, orderby)
-       WHERE ml.id = ordering.id AND ml.isactive = TRUE`,
-      [orderedItems.map((item) => Number(item.ID)), orderedItems.map((item) => Number(item.OrderBy)), data.UserID]
+       WHERE ml.id = ordering.id AND ml.organizationid = $4 AND ml.isactive = TRUE`,
+      [orderedItems.map((item) => Number(item.ID)), orderedItems.map((item) => Number(item.OrderBy)), data.UserID, Number(data.OrganizationID)]
     );
     await client.query("COMMIT");
     return { success: true, message: "HLP master fields reordered successfully" };
@@ -574,13 +700,110 @@ const reorderMasterFields = async (data) => {
   } finally { client.release(); }
 };
 
-// Reuse monthly calculations and render the pivot in landscape orientation.
-const generateMonthlyReportPdf = async (data) => {
+// Build the Last Year page with the same month/day pivot contract as MonthlyReport,
+// selecting stored LYOD values instead of YOD values.
+const getLastYearMonthlyReport = async (data) => getMonthlyReport(data, "LYOD");
+
+const MASTER_EXPORT_COLUMNS = Object.freeze([
+  { key: "Title", header: "Title", width: 40 },
+  { key: "OrderBy", header: "OrderBy", width: 14 },
+]);
+
+// Export only the selected organization's active master configuration.
+const exportMasterFields = async ({ UserID, OrganizationID, Format } = {}) => {
+  const format = String(Format || "excel").trim().toLowerCase();
+  if (!positiveInteger(OrganizationID)) return fail("Organization ID must be a positive integer");
+  if (!['csv', 'excel'].includes(format)) return fail("Export format must be csv or excel");
+  const client = await pool.connect();
   try {
-    const report = await getMonthlyReport(data);
+    const denied = await validateOrganization(client, UserID, OrganizationID);
+    if (denied) return denied;
+    const rows = (await getMasterRows(client, OrganizationID)).rows;
+    const buffer = format === "csv"
+      ? generateCSV(rows, MASTER_EXPORT_COLUMNS)
+      : await generateExcel(rows, MASTER_EXPORT_COLUMNS, "HLP Master Fields");
+    return {
+      success: true,
+      message: "HLP master fields exported successfully",
+      fileBase64: buffer.toString("base64"),
+      contentType: format === "csv" ? "text/csv; charset=utf-8" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      filename: `HLP-Master-Fields-${Number(OrganizationID)}.${format === "csv" ? "csv" : "xlsx"}`,
+    };
+  } catch (error) {
+    console.error("Export HLP Master Fields Error:", error.message);
+    return fail("Unable to export HLP master fields at this time.", 503);
+  } finally { client.release(); }
+};
+
+const readImportedMasterFields = async (file) => {
+  const filename = String(file?.originalname || "").toLowerCase();
+  const mimeType = String(file?.mimetype || "").toLowerCase();
+  const buffer = Buffer.from(file?.bufferBase64 || "", "base64");
+  if (!buffer.length) throw Object.assign(new Error("A CSV or Excel file is required"), { statusCode: 400 });
+  const workbook = new ExcelJS.Workbook();
+  if (filename.endsWith(".csv") || mimeType === "text/csv") {
+    if (buffer.includes(0)) throw Object.assign(new Error("The uploaded CSV file is invalid"), { statusCode: 400 });
+    await workbook.csv.read(Readable.from([buffer]));
+  } else if (filename.endsWith(".xlsx") || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
+    if (buffer[0] !== 0x50 || buffer[1] !== 0x4B) throw Object.assign(new Error("The uploaded XLSX file is invalid"), { statusCode: 400 });
+    await workbook.xlsx.load(buffer);
+  } else {
+    throw Object.assign(new Error("Only CSV and XLSX files are supported"), { statusCode: 400 });
+  }
+  const sheet = workbook.worksheets[0];
+  if (!sheet) throw Object.assign(new Error("The import file does not contain a worksheet"), { statusCode: 400 });
+  const headers = new Map();
+  sheet.getRow(1).eachCell((cell, column) => headers.set(String(cell.value || "").trim().toLowerCase(), column));
+  const titleColumn = headers.get("title"); const orderColumn = headers.get("orderby");
+  if (!titleColumn || !orderColumn) throw Object.assign(new Error("Import file must contain Title and OrderBy columns"), { statusCode: 400 });
+  const rows = [];
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    const title = String(row.getCell(titleColumn).text || "").trim();
+    const orderBy = Number(String(row.getCell(orderColumn).text || "").trim());
+    if (!title && !row.getCell(orderColumn).text) return;
+    rows.push({ Title: title, OrderBy: orderBy });
+  });
+  if (!rows.length) throw Object.assign(new Error("Import file does not contain any master fields"), { statusCode: 400 });
+  const orders = new Set();
+  for (const row of rows) {
+    if (!row.Title) throw Object.assign(new Error("Every imported master field requires a Title"), { statusCode: 400 });
+    if (!positiveInteger(row.OrderBy)) throw Object.assign(new Error("Every imported master field requires a valid OrderBy"), { statusCode: 400 });
+    if (orders.has(row.OrderBy)) throw Object.assign(new Error(`Duplicate imported OrderBy is not allowed: ${row.OrderBy}`), { statusCode: 400 });
+    orders.add(row.OrderBy);
+  }
+  const sorted = [...rows].sort((a, b) => a.OrderBy - b.OrderBy);
+  if (sorted.some((row, index) => row.OrderBy !== index + 1)) {
+    throw Object.assign(new Error("Imported OrderBy values must be a continuous sequence starting from 1"), { statusCode: 400 });
+  }
+  return sorted.map(({ Title }) => ({ Title }));
+};
+
+// Imported ordering is preserved relative to the target organization's list;
+// createMasterField supplies new IDs and performs the insert transaction.
+const importMasterFields = async (data = {}) => {
+  try {
+    const fields = await readImportedMasterFields(data.File);
+    return createMasterField(
+      { UserID: data.UserID, OrganizationID: data.OrganizationID, Fields: fields },
+      { skipExisting: true }
+    );
+  } catch (error) {
+    return fail(error.message || "Unable to import HLP master fields", error.statusCode || 400);
+  }
+};
+
+// Render either YOD or LYOD monthly pivot data with the same landscape layout.
+const generateMonthlyPivotPdf = async (data, lastYear = false) => {
+  try {
+    const report = lastYear
+      ? await getLastYearMonthlyReport(data)
+      : await getMonthlyReport(data);
     if (!report.success) return report;
     const rows = report.data || [];
-    if (!hasMonthlyReportData(rows)) return fail("No HLP monthly report data found.", 404);
+    if (!hasMonthlyReportData(rows)) {
+      return fail(lastYear ? "No HLP last-year report data found." : "No HLP monthly report data found.", 404);
+    }
     const organization = await reportOrganizationMetadata(data.OrganizationID);
     const days = new Date(Date.UTC(Number(data.Year), Number(data.Month), 0)).getUTCDate();
     const dayWidth = Math.min(20, Math.floor((826 - 68 - 34 - ((days + 2) * 2) - 18) / days));
@@ -591,7 +814,9 @@ const generateMonthlyReportPdf = async (data) => {
       return `${words.slice(0, split).join(" ")}\n${words.slice(split).join(" ")}`;
     };
     const buffer = await generatePdf({
-      title: "HLP MONTHLY REPORT", reportName: "HLP Monthly Report", orientation: "landscape",
+      title: lastYear ? "HLP LAST YEAR REPORT" : "HLP MONTHLY REPORT",
+      reportName: lastYear ? "HLP Last Year Report" : "HLP Monthly Report",
+      orientation: "landscape",
       logoUrl: organization.LogoUrl, pageMargins: [8, 18, 8, 32],
       metadata: [{ label: "Organization", value: organization.Name }, { label: "Month", value: formatDate(`${data.Year}-${String(data.Month).padStart(2, "0")}-01`, "MMMM YYYY") }],
       columns: [
@@ -604,36 +829,18 @@ const generateMonthlyReportPdf = async (data) => {
     });
     const period = `${String(data.Year).padStart(4, "0")}-${String(data.Month).padStart(2, "0")}`;
     return {
-      success: true, message: "HLP monthly report PDF generated successfully",
-      pdfBase64: buffer.toString("base64"), filename: `HLP-Monthly-Report-${period}.pdf`,
+      success: true,
+      message: lastYear ? "HLP last-year report PDF generated successfully" : "HLP monthly report PDF generated successfully",
+      pdfBase64: buffer.toString("base64"),
+      filename: lastYear ? `HLP-Last-Year-Report-${period}.pdf` : `HLP-Monthly-Report-${period}.pdf`,
     };
   } catch (error) {
-    console.error("Generate HLP Monthly Report PDF Error:", error.message);
-    return fail("Unable to generate HLP monthly report PDF at this time.", 503);
+    console.error(lastYear ? "Generate HLP Last Year Report PDF Error:" : "Generate HLP Monthly Report PDF Error:", error.message);
+    return fail(lastYear ? "Unable to generate HLP last-year report PDF at this time." : "Unable to generate HLP monthly report PDF at this time.", 503);
   }
 };
 
-// Reuse exact-date values and render the YOD/LYOD comparison PDF.
-const generateLastYearReportPdf = async (data) => {
-  try {
-    const report = await getLastYearReport(data);
-    if (!report.success) return report;
-    const organization = await reportOrganizationMetadata(data.OrganizationID);
-    const buffer = await generatePdf({
-      title: "HLP LAST YEAR SAME DAY REPORT", reportName: "HLP Last Year Report", logoUrl: organization.LogoUrl,
-      metadata: [{ label: "Organization", value: organization.Name }, { label: "Entry Date", value: formatDate(data.EntryDate) }],
-      columns: hlpColumns(false).map((column) => column.key === "Title" ? column : { ...column, width: column.key === "YOD" ? 120 : 150 }),
-      rows: report.data?.Details || [],
-    });
-    const period = String(data.EntryDate).slice(0, 7);
-    return {
-      success: true, message: "HLP last-year report PDF generated successfully",
-      pdfBase64: buffer.toString("base64"), filename: `HLP-Last-Year-Report-${period}.pdf`,
-    };
-  } catch (error) {
-    console.error("Generate HLP Last Year Report PDF Error:", error.message);
-    return fail("Unable to generate HLP last-year report PDF at this time.", 503);
-  }
-};
+const generateMonthlyReportPdf = async (data) => generateMonthlyPivotPdf(data, false);
+const generateLastYearReportPdf = async (data) => generateMonthlyPivotPdf(data, true);
 
-module.exports = { getMasterList, getHLPList, createMasterField, updateMasterField, reorderMasterFields, deleteMasterField, createReport, updateReport, getMonthlyReport, getLastYearReport, generateReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };
+module.exports = { getMasterList, getHLPList, createMasterField, updateMasterField, reorderMasterFields, deleteMasterField, exportMasterFields, importMasterFields, createReport, updateReport, getMonthlyReport, getLastYearMonthlyReport, getLastYearReport, generateReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };

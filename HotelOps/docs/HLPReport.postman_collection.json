@@ -14,7 +14,7 @@
     {
       "name": "Master List",
       "event": [{ "listen": "test", "script": { "exec": ["const json = pm.response.json();", "pm.test('Master items contain configuration fields only', () => {", "  (json.data || []).forEach(item => {", "    pm.expect(item).to.have.keys('ID', 'Title', 'OrderBy');", "  });", "});"] } }],
-      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/MasterList" }
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/MasterList?organizationId={{OrganizationID}}" }
     },
     {
       "name": "HLP Entry List",
@@ -28,8 +28,27 @@
       "request": {
         "method": "POST",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"Title\": \"Small Banquet No of Hours\"\n}" },
-        "url": "{{LocalUrl}}/HLPReport/master-list"
+        "body": { "mode": "raw", "raw": "{\n  \"OrganizationID\": {{OrganizationID}},\n  \"Fields\": [\n    { \"Title\": \"Small Banquet No of Hours\" },\n    { \"Title\": \"Average Room Rate\" }\n  ]\n}" },
+        "url": "{{LocalUrl}}/HLPReport/CreateMasterField"
+      }
+    },
+    {
+      "name": "Export Master Fields - Excel",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/MasterField/Export?organizationId={{OrganizationID}}&format=excel" }
+    },
+    {
+      "name": "Export Master Fields - CSV",
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/MasterField/Export?organizationId={{OrganizationID}}&format=csv" }
+    },
+    {
+      "name": "Import Master Fields",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "OrganizationID", "value": "{{OrganizationID}}", "type": "text" }],
+        "body": { "mode": "formdata", "formdata": [
+          { "key": "File", "type": "file", "src": "" }
+        ] },
+        "url": "{{LocalUrl}}/HLPReport/MasterField/Import"
       }
     },
     {
@@ -37,8 +56,8 @@
       "request": {
         "method": "PUT",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"ID\": 4,\n  \"Title\": \"Small Banquet No. of Hours\"\n}" },
-        "url": "{{LocalUrl}}/HLPReport/master-list"
+        "body": { "mode": "raw", "raw": "{\n  \"OrganizationID\": {{OrganizationID}},\n  \"ID\": 4,\n  \"Title\": \"Small Banquet No. of Hours\"\n}" },
+        "url": "{{LocalUrl}}/HLPReport/UpdateMasterField"
       }
     },
     {
@@ -46,8 +65,8 @@
       "request": {
         "method": "PUT",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"items\": [\n    { \"ID\": 4, \"OrderBy\": 1 },\n    { \"ID\": 1, \"OrderBy\": 2 },\n    { \"ID\": 2, \"OrderBy\": 3 },\n    { \"ID\": 3, \"OrderBy\": 4 }\n  ]\n}" },
-        "url": "{{LocalUrl}}/HLPReport/master-list/reorder"
+        "body": { "mode": "raw", "raw": "{\n  \"OrganizationID\": {{OrganizationID}},\n  \"items\": [\n    { \"ID\": 4, \"OrderBy\": 1 },\n    { \"ID\": 1, \"OrderBy\": 2 },\n    { \"ID\": 2, \"OrderBy\": 3 },\n    { \"ID\": 3, \"OrderBy\": 4 }\n  ]\n}" },
+        "url": "{{LocalUrl}}/HLPReport/MasterField/Reorder"
       }
     },
     {
@@ -55,8 +74,8 @@
       "request": {
         "method": "DELETE",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"ID\": 1\n}" },
-        "url": "{{LocalUrl}}/HLPReport/master-list"
+        "body": { "mode": "raw", "raw": "{\n  \"OrganizationID\": {{OrganizationID}},\n  \"ID\": 1\n}" },
+        "url": "{{LocalUrl}}/HLPReport/DeleteMasterField"
       }
     },
     {
@@ -88,11 +107,11 @@
     },
     {
       "name": "Last Year Report - With Organization",
-      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report?organizationId={{OrganizationID}}&entryDate=2026-08-21" }
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report?organizationId={{OrganizationID}}&year=2026&month=9" }
     },
     {
       "name": "Last Year Report - All Organizations",
-      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report?entryDate=2026-08-21" }
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report?year=2026&month=9" }
     },
     {
       "name": "HLP Report PDF",
@@ -108,11 +127,11 @@
     },
     {
       "name": "Last Year Report PDF - With Organization",
-      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report/pdf?organizationId={{OrganizationID}}&entryDate=2026-08-21" }
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report/pdf?organizationId={{OrganizationID}}&year=2026&month=9" }
     },
     {
       "name": "Last Year Report PDF - All Organizations",
-      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report/pdf?entryDate=2026-08-21" }
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/last-year-report/pdf?year=2026&month=9" }
     }
   ]
 }

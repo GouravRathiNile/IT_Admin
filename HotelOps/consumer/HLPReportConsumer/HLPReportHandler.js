@@ -6,6 +6,7 @@ module.exports = async (message) => {
     // Translate each queue action into one explicit HLP service operation.
     switch (message.action) {
       case "CREATE_HLP_MASTER_FIELD": return await service.createMasterField(message.data);
+      case "IMPORT_HLP_MASTER_FIELDS": return await service.importMasterFields(message.data);
       case "REORDER_HLP_MASTER_FIELDS": return await service.reorderMasterFields(message.data);
       case "UPDATE_HLP_MASTER_FIELD": return await service.updateMasterField(message.data);
       case "DELETE_HLP_MASTER_FIELD": return await service.deleteMasterField(message.data);

@@ -1,15 +1,18 @@
 const express = require("express");
 const authenticateToken = require("../../middleware/authMiddleware");
 const controller = require("../../controllers/HLPReportController/HLPReportController");
+const upload = require("../../middleware/upload");
 
 const router = express.Router();
 // Every HLP endpoint requires the application's existing Bearer authentication.
 router.use(authenticateToken);
 // Configurable HLP master-field maintenance endpoints.
 router.get("/MasterList", controller.masterList);
+router.get("/MasterField/Export", controller.exportMasterFields);
 // Entry-page list overlays the selected report's YOD/LYOD values.
 router.get("/HLPList", controller.hlpList);
 router.post("/CreateMasterField", controller.createMasterField);
+router.post("/MasterField/Import", upload.hlpMasterImportUpload, controller.importMasterFields);
 router.put("/MasterField/Reorder", controller.reorderMasterFields);
 router.put("/UpdateMasterField", controller.updateMasterField);
 router.delete("/DeleteMasterField", controller.deleteMasterField);

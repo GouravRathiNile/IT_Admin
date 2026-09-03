@@ -9,6 +9,7 @@
 // module.exports = upload;
 
 const multer = require("multer");
+const path = require("path");
 const STATUS_CODES = require("../utils/statusCodes");
 
 const storage = multer.memoryStorage();
@@ -65,8 +66,39 @@ const guestGlitchUpload = (req, res, next) => {
   });
 };
 
+const hlpImportMimeTypes = Object.freeze({
+  ".csv": new Set(["text/csv", "application/csv", "application/vnd.ms-excel", "text/plain", "application/octet-stream"]),
+  ".xlsx": new Set(["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"]),
+});
+
+const hlpImportUpload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => {
+    const extension = path.extname(String(file.originalname || "")).toLowerCase();
+    const mimeType = String(file.mimetype || "").toLowerCase();
+    if (!hlpImportMimeTypes[extension]?.has(mimeType)) {
+      return callback(new Error("Only valid CSV and XLSX master-field files are allowed."));
+    }
+    return callback(null, true);
+  },
+});
+
+// HLP imports use an exact File field and return safe multipart/file errors.
+const hlpMasterImportUpload = (req, res, next) => {
+  hlpImportUpload.single("File")(req, res, (error) => {
+    if (!error) return next();
+    let message = error.message || "Invalid HLP master-field import file.";
+    if (error.code === "LIMIT_FILE_SIZE") message = "Import file must not exceed 10 MB.";
+    else if (error.code === "LIMIT_UNEXPECTED_FILE") message = "The import file field name must be File.";
+    else if (/boundary not found/i.test(message)) message = "Invalid multipart request. Remove the manual Content-Type header and let the client add the multipart boundary.";
+    return res.status(STATUS_CODES.BAD_REQUEST).json({ success: false, message });
+  });
+};
+
 // Keep existing routes working
 module.exports = upload;
 
 // Make Guest Glitch middleware available from the same file
 module.exports.guestGlitchUpload = guestGlitchUpload;
+module.exports.hlpMasterImportUpload = hlpMasterImportUpload;
