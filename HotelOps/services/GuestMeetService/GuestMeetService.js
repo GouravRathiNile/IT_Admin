@@ -37,7 +37,7 @@ const mapDetail = (row) => ({
   Feedback: row.feedback,
   ActionTaken: row.actiontaken,
   MetBy: row.metby == null ? null : Number(row.metby),
-  MetOn: formatDate(row.meton),
+  MetOn: row.meton,
   FeedbackType: row.feedbacktype,
   GuestStatus: row.gueststatus,
   CreatedDate: formatDate(row.createddate),
