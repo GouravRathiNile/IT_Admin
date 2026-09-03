@@ -14,23 +14,32 @@ const STATUS_CODES = require("../utils/statusCodes");
 const storage = multer.memoryStorage();
 
 const allowedTypes = new Set([
-  "image/jpeg",
-  "image/png",
   "application/pdf",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel.sheet.macroenabled.12",
+  "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+  "application/vnd.ms-excel.template.macroenabled.12",
+  "application/vnd.ms-excel.addin.macroenabled.12",
+  "text/csv",
 ]);
 
 const upload = multer({
   storage,
 
   limits: {
-    fileSize: 10 * 1024 * 1024,
-    files: 1,
+    fileSize: 50 * 1024 * 1024,
+    files: 10,
   },
 
   fileFilter: (_req, file, callback) => {
-    if (!allowedTypes.has(file.mimetype)) {
+    const mimeType = String(file.mimetype || "").toLowerCase();
+    const isAllowedImage = mimeType.startsWith("image/");
+
+    if (!isAllowedImage && !allowedTypes.has(mimeType)) {
       return callback(
-        new Error("Only JPG, PNG, and PDF attachments are allowed.")
+        new Error("Only image, PDF, Excel, and CSV attachments are allowed.")
       );
     }
 
@@ -46,7 +55,7 @@ const guestGlitchUpload = (req, res, next) => {
 
     const message =
       error.code === "LIMIT_FILE_SIZE"
-        ? "Attachment must not exceed 10 MB."
+        ? "Attachment must not exceed 50 MB."
         : error.message || "Invalid attachment.";
 
     return res.status(STATUS_CODES.BAD_REQUEST).json({
