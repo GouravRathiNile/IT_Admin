@@ -15,6 +15,8 @@ test("HLP routes expose the approved authenticated API contract", () => {
   assert.match(source, /router\.get\("\/MasterList"/);
   assert.match(source, /router\.get\("\/HLPList", controller\.hlpList\)/);
   assert.match(source, /router\.post\("\/CreateMasterField"/);
+  assert.match(source, /router\.get\("\/MasterField\/Export", controller\.exportMasterFields\)/);
+  assert.match(source, /router\.post\("\/MasterField\/Import", upload\.hlpMasterImportUpload, controller\.importMasterFields\)/);
   assert.match(source, /router\.put\("\/MasterField\/Reorder", controller\.reorderMasterFields\)/);
   assert.match(source, /router\.put\("\/UpdateMasterField"/);
   assert.match(source, /router\.delete\("\/DeleteMasterField"/);
@@ -48,7 +50,7 @@ test("numeric total eligibility accepts numeric text and rejects mixed text", ()
 
 test("handler keeps only HLP mutation actions", () => {
   const source = read("consumer/HLPReportConsumer/HLPReportHandler.js");
-  for (const action of ["CREATE_HLP_MASTER_FIELD", "UPDATE_HLP_MASTER_FIELD", "REORDER_HLP_MASTER_FIELDS", "DELETE_HLP_MASTER_FIELD", "CREATE_HLP_REPORT", "UPDATE_HLP_REPORT"]) {
+  for (const action of ["CREATE_HLP_MASTER_FIELD", "IMPORT_HLP_MASTER_FIELDS", "UPDATE_HLP_MASTER_FIELD", "REORDER_HLP_MASTER_FIELDS", "DELETE_HLP_MASTER_FIELD", "CREATE_HLP_REPORT", "UPDATE_HLP_REPORT"]) {
     assert.match(source, new RegExp(`case "${action}"`));
   }
   assert.doesNotMatch(source, /case "(?:GET_HLP_|GENERATE_HLP_)/);
@@ -58,7 +60,7 @@ test("handler keeps only HLP mutation actions", () => {
 test("report update changes the existing parent and preserves inactive historical details", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
   assert.match(source, /SELECT id, organizationid FROM hlpreport_entry_master WHERE id = \$1 FOR UPDATE/);
-  assert.match(source, /id = ANY\(\$1::bigint\[\]\) AND isactive = TRUE/);
+  assert.match(source, /id = ANY\(\$1::bigint\[\]\) AND organizationid = \$2 AND isactive = TRUE/);
   assert.match(source, /UPDATE hlpreport_entry_details[\s\S]*WHERE entryid = \$4 AND masterid = \$5/);
   assert.match(source, /INSERT INTO hlpreport_entry_details \(id, entryid, masterid, title/);
   assert.doesNotMatch(source, /DELETE FROM hlpreport_entry_details/);
@@ -73,8 +75,8 @@ test("exact-date report exposes the existing report ID and configured MasterID",
 
 test("master list and create integrity use only active configured fields", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
-  assert.match(source, /WHERE isactive = TRUE/);
-  assert.match(source, /id = ANY\(\$1::bigint\[\]\) AND isactive = TRUE/);
+  assert.match(source, /organizationid = \$1[\s\S]*isactive = TRUE/);
+  assert.match(source, /id = ANY\(\$1::bigint\[\]\) AND organizationid = \$2 AND isactive = TRUE/);
   assert.match(source, /isactive = FALSE, orderby = NULL, modifyby/);
 });
 
@@ -82,6 +84,7 @@ test("report controller accepts optional lowercase organization filters", () => 
   const source = read("controllers/HLPReportController/HLPReportController.js");
   assert.match(source, /organizationId \?\? req\.query\?\.OrganizationID/);
   assert.match(source, /entryDate \?\? req\.query\?\.EntryDate/);
+  assert.match(source, /req\.get\("X-Organization-ID"\)/);
 });
 
 test("HLP entry list requires date and resolves organization/date values", async () => {
@@ -129,8 +132,8 @@ test("report PDF actions reuse existing report service calculations", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
   assert.match(controller, /HLPReportService\.generateMonthlyReportPdf/);
   assert.match(controller, /HLPReportService\.generateLastYearReportPdf/);
-  assert.match(source, /const report = await getMonthlyReport\(data\)/);
-  assert.match(source, /const report = await getLastYearReport\(data\)/);
+  assert.match(source, /: await getMonthlyReport\(data\)/);
+  assert.match(source, /await getLastYearMonthlyReport\(data\)/);
   assert.match(source, /HLP-Monthly-Report-\$\{period\}\.pdf/);
   assert.match(source, /HLP-Last-Year-Report-\$\{period\}\.pdf/);
 });
@@ -167,7 +170,8 @@ test("create report is an organization-date locked create-or-update operation", 
   assert.match(serviceSource, /hlp_report:\$\{Number\(OrganizationID\)\}:\$\{EntryDate\}/);
   assert.match(serviceSource, /SELECT id FROM hlpreport_entry_master WHERE organizationid = \$1 AND entrydate = \$2 LIMIT 1 FOR UPDATE/);
   assert.match(serviceSource, /if \(existing\.rowCount\)[\s\S]*HLP report updated successfully[\s\S]*_httpStatus: 200/);
-  assert.doesNotMatch(serviceSource, /if \(duplicate\.rowCount\)/);
+  const createReportSource = serviceSource.match(/const createReport[\s\S]*?const updateReport/)?.[0] || "";
+  assert.doesNotMatch(createReportSource, /if \(duplicate\.rowCount\)/);
   assert.match(controllerSource, /const responseStatus = response\._httpStatus \|\| successStatus/);
   assert.match(controllerSource, /delete publicResponse\._httpStatus/);
 });
@@ -206,11 +210,11 @@ test("create report updates an existing organization-date report without creatin
 test("master list ordering is backend controlled and active state is not publicly selected", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
   assert.match(source, /MAX\(orderby\), 0\) \+ 1 AS orderby/);
-  assert.match(source, /Only Title can be supplied when creating an HLP master field/);
-  assert.match(source, /Only ID and Title can be supplied when updating an HLP master field/);
+  assert.match(source, /Only OrganizationID and Title or Fields can be supplied when creating HLP master fields/);
+  assert.match(source, /Only OrganizationID, ID and Title can be supplied when updating an HLP master field/);
   assert.match(source, /ORDER BY orderby NULLS LAST, id/);
   assert.match(source, /SELECT id AS "ID", title AS "Title", orderby AS "OrderBy"/);
-  assert.match(source, /const result = await getMasterRows\(client\)/);
+  assert.match(source, /const result = await getMasterRows\(client, OrganizationID\)/);
 });
 
 test("master list returns only ID, Title and OrderBy", async () => {
@@ -218,19 +222,53 @@ test("master list returns only ID, Title and OrderBy", async () => {
   const originalConnect = pool.connect;
   try {
     pool.connect = async () => ({
-      query: async () => ({ rows: [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1 }] }),
+      query: async (sql) => /FROM user_org_mapping/.test(sql)
+        ? ({ rowCount: 1, rows: [{ organizationid: 10 }] })
+        : ({ rows: [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1 }] }),
       release() {},
     });
-    const response = await service.getMasterList({ UserID: 1 });
+    const response = await service.getMasterList({ UserID: 1, OrganizationID: 10 });
     assert.deepEqual(response.data, [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1 }]);
   } finally { pool.connect = originalConnect; }
 });
 
+test("master list resolves a single active organization when query organization is omitted", async () => {
+  const pool = require("../../db").pool;
+  const originalConnect = pool.connect;
+  try {
+    pool.connect = async () => ({
+      query: async (sql) => {
+        if (/SELECT uom\.organizationid/.test(sql)) return { rows: [{ organizationid: "20" }] };
+        if (/SELECT 1[\s\S]*FROM user_org_mapping/.test(sql)) return { rowCount: 1, rows: [{}] };
+        return { rows: [{ ID: "5", Title: "Rooms", OrderBy: 1 }] };
+      },
+      release() {},
+    });
+    const response = await service.getMasterList({ UserID: 7 });
+    assert.equal(response.success, true);
+    assert.deepEqual(response.data, [{ ID: "5", Title: "Rooms", OrderBy: 1 }]);
+  } finally { pool.connect = originalConnect; }
+});
+
+test("master list asks for organization selection when user has multiple mappings", async () => {
+  const pool = require("../../db").pool;
+  const originalConnect = pool.connect;
+  try {
+    pool.connect = async () => ({
+      query: async () => ({ rows: [{ organizationid: "10" }, { organizationid: "20" }] }),
+      release() {},
+    });
+    const response = await service.getMasterList({ UserID: 7 });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.message, "Please select an organization to view HLP master fields.");
+  } finally { pool.connect = originalConnect; }
+});
+
 test("reorder validation rejects malformed, duplicate and discontinuous orders", async () => {
-  assert.match((await service.reorderMasterFields({ UserID: 1, items: [] })).message, /non-empty array/);
-  assert.match((await service.reorderMasterFields({ UserID: 1, items: [{ ID: 1, OrderBy: 1 }, { ID: 1, OrderBy: 2 }] })).message, /Duplicate HLP master field ID/);
-  assert.match((await service.reorderMasterFields({ UserID: 1, items: [{ ID: 1, OrderBy: 1 }, { ID: 2, OrderBy: 1 }] })).message, /Duplicate OrderBy/);
-  assert.match((await service.reorderMasterFields({ UserID: 1, items: [{ ID: 1, OrderBy: 1 }, { ID: 2, OrderBy: 3 }] })).message, /continuous sequence/);
+  assert.match((await service.reorderMasterFields({ UserID: 1, OrganizationID: 10, items: [] })).message, /non-empty array/);
+  assert.match((await service.reorderMasterFields({ UserID: 1, OrganizationID: 10, items: [{ ID: 1, OrderBy: 1 }, { ID: 1, OrderBy: 2 }] })).message, /Duplicate HLP master field ID/);
+  assert.match((await service.reorderMasterFields({ UserID: 1, OrganizationID: 10, items: [{ ID: 1, OrderBy: 1 }, { ID: 2, OrderBy: 1 }] })).message, /Duplicate OrderBy/);
+  assert.match((await service.reorderMasterFields({ UserID: 1, OrganizationID: 10, items: [{ ID: 1, OrderBy: 1 }, { ID: 2, OrderBy: 3 }] })).message, /continuous sequence/);
 });
 
 test("reorder and delete use transactions and safe two-phase resequencing", () => {
@@ -276,7 +314,8 @@ test("monthly PDF no-data detection ignores configured blank rows and accepts de
 test("PDF controllers preserve optional organization filters", () => {
   const source = read("controllers/HLPReportController/HLPReportController.js");
   assert.match(source, /exports\.monthlyReportPdf[\s\S]*OrganizationID: req\.query\?\.organizationId \?\? req\.query\?\.OrganizationID/);
-  assert.match(source, /exports\.lastYearReportPdf[\s\S]*EntryDate: req\.query\?\.entryDate \?\? req\.query\?\.EntryDate/);
+  assert.match(source, /exports\.lastYearReportPdf[\s\S]*Year: req\.query\?\.year \?\? req\.query\?\.Year/);
+  assert.match(source, /exports\.lastYearReportPdf[\s\S]*Month: req\.query\?\.month \?\? req\.query\?\.Month/);
 });
 
 test("HLP PDF service returns a PDF buffer with required report sections", async () => {
@@ -293,4 +332,16 @@ test("HLP PDF lookup preserves snapshotted titles and applies report organizatio
   assert.match(source, /validateOrganization\(client, UserID, record\.organizationid\)/);
   assert.match(source, /return fail\("HLP report not found", 404\)/);
   assert.doesNotMatch(source.match(/const generateReportPdf[\s\S]*?const reportOrganizationMetadata/)?.[0] || "", /isactive = TRUE/);
+});
+
+test("LastYearReport uses MonthlyReport filters and the shared LYOD pivot", () => {
+  const controller = read("controllers/HLPReportController/HLPReportController.js");
+  const serviceSource = read("services/HLPReportService/HLPReportService.js");
+  const lastYearController = controller.match(/exports\.lastYearReport =[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(lastYearController, /HLPReportService\.getLastYearMonthlyReport/);
+  assert.match(lastYearController, /Year: req\.query\?\.year \?\? req\.query\?\.Year/);
+  assert.match(lastYearController, /Month: req\.query\?\.month \?\? req\.query\?\.Month/);
+  assert.doesNotMatch(lastYearController, /EntryDate/);
+  assert.match(serviceSource, /const getLastYearMonthlyReport = async \(data\) => getMonthlyReport\(data, "LYOD"\)/);
+  assert.match(serviceSource, /d\.\$\{reportValueField\} AS "Value"/);
 });
