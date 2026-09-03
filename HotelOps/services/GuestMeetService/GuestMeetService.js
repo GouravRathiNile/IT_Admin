@@ -1420,6 +1420,224 @@ const generateMetByReportPdf = async (data) => {
     };
   }
 };
+// ===============================================================Guest details pdf
+const generateGuestDetailPdf = async (data) => {
+  try {
+    // =========================================================
+    // Validate input
+    // =========================================================
+
+    const organizationID = Number(data.OrganizationID);
+    const gmDetailID = Number(data.GMDetailID);
+
+    if (!Number.isInteger(organizationID) || organizationID <= 0) {
+      return fail("Valid OrganizationID is required.", 400);
+    }
+
+    if (!Number.isInteger(gmDetailID) || gmDetailID <= 0) {
+      return fail("Valid GMDetailID is required.", 400);
+    }
+
+    // =========================================================
+    // Fetch guest detail
+    // =========================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        d.GMDetailID,
+        d.OrganizationID,
+        d.GMMasterID,
+        d.GuestName,
+        d.RoomNo,
+        d.BookingSource,
+        d.Arrival,
+        d.Departure,
+        d.Feedback,
+        d.ActionTaken,
+        d.MetBy,
+        d.MetOn,
+        d.FeedbackType,
+        d.GuestStatus,
+        d.CreatedDate,
+
+        m.EntryDate,
+
+        om.OrganizationName,
+        om.ShortName AS OrganizationShortName,
+
+        um.FullName AS MetByName
+
+      FROM GuestMeet_Daily_Entry_Details d
+
+      INNER JOIN GuestMeet_Daily_Entry_Master m
+        ON m.GMMasterID = d.GMMasterID
+        AND m.OrganizationID = d.OrganizationID
+        AND m.IsDeleted = FALSE
+
+      INNER JOIN Organization_Master om
+        ON om.OrganizationID = d.OrganizationID
+        AND om.IsDeleted = FALSE
+
+      LEFT JOIN user_master um
+        ON um.UserID = d.MetBy
+        AND um.IsDeleted = FALSE
+
+      WHERE d.OrganizationID = $1
+        AND d.GMDetailID = $2
+        AND d.IsDeleted = FALSE
+
+      LIMIT 1;
+      `,
+      [organizationID, gmDetailID],
+    );
+
+    if (result.rows.length === 0) {
+      return fail("Guest detail not found.", 404);
+    }
+
+    const row = result.rows[0];
+
+    const guestDetail = {
+      GMDetailID: Number(row.gmdetailid),
+      OrganizationID: Number(row.organizationid),
+      GMMasterID: Number(row.gmmasterid),
+
+      OrganizationName: row.organizationname,
+      OrganizationShortName: row.organizationshortname,
+
+      EntryDate: formatDate(row.entrydate),
+
+      GuestName: row.guestname,
+      RoomNo: row.roomno,
+      BookingSource: row.bookingsource,
+
+      Arrival: formatDate(row.arrival),
+      Departure: formatDate(row.departure),
+
+      Feedback: row.feedback,
+      ActionTaken: row.actiontaken,
+
+      MetBy: row.metby == null ? null : Number(row.metby),
+      MetByName: row.metbyname,
+      MetOn: row.meton,
+
+      FeedbackType: row.feedbacktype,
+      GuestStatus: row.gueststatus,
+
+      CreatedDate: formatDate(row.createddate),
+    };
+
+    // =========================================================
+    // Generate PDF
+    // =========================================================
+
+    const pdfBuffer = await generatePdf({
+      title: "Guest Detail Report",
+      reportName: "Guest Detail Report",
+      organizationId: organizationID,
+      orientation: "portrait",
+
+      metadata: [
+        {
+          label: "Organization",
+          value:
+            guestDetail.OrganizationName ||
+            guestDetail.OrganizationShortName,
+        },
+        {
+          label: "Entry Date",
+          value: guestDetail.EntryDate,
+        },
+        {
+          label: "Guest Name",
+          value: guestDetail.GuestName,
+        },
+        {
+          label: "Room No.",
+          value: guestDetail.RoomNo,
+        },
+        {
+          label: "Arrival",
+          value: guestDetail.Arrival,
+        },
+        {
+          label: "Departure",
+          value: guestDetail.Departure,
+        },
+        {
+          label: "Booking Source",
+          value: guestDetail.BookingSource,
+        },
+        {
+          label: "Guest Status",
+          value: guestDetail.GuestStatus,
+        },
+        {
+          label: "Feedback Type",
+          value: guestDetail.FeedbackType,
+        },
+        {
+          label: "Met By",
+          value:
+            guestDetail.MetByName ||
+            (guestDetail.MetBy
+              ? `User ID: ${guestDetail.MetBy}`
+              : null),
+        },
+        {
+          label: "Met On",
+          value: guestDetail.MetOn,
+        },
+        {
+          label: "Created Date",
+          value: guestDetail.CreatedDate,
+        },
+      ],
+
+      sections: [
+        {
+          title: "Guest Feedback & Action Taken",
+          items: [
+            {
+              label: "Guest Feedback",
+              value: guestDetail.Feedback,
+            },
+            {
+              label: "Action Taken",
+              value: guestDetail.ActionTaken,
+            },
+          ],
+        },
+      ],
+
+      styles: {
+        pdfValue: {
+          fontSize: 9,
+          color: "#172033",
+          lineHeight: 1.25,
+        },
+      },
+    });
+
+    const fileName = `Guest-Detail-${gmDetailID}.pdf`;
+
+    return {
+      success: true,
+      message: "Guest detail PDF generated successfully.",
+      data: pdfBuffer,
+      fileName,
+      contentType: "application/pdf",
+    };
+  } catch (error) {
+    console.error("Generate guest detail PDF error:", error);
+
+    return databaseFailure(
+      error,
+      "Unable to generate guest detail PDF.",
+    );
+  }
+};
 
 // ============================================================ Public Service API
 module.exports = {
@@ -1435,5 +1653,6 @@ module.exports = {
   getMetByReport,
   generateDateRangeReportPdf,
   generateFeedbackReportPdf,
-  generateMetByReportPdf
+  generateMetByReportPdf,
+  generateGuestDetailPdf
 };

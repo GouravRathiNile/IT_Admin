@@ -404,3 +404,91 @@ exports.getMetByReportPdf = async (req, res) => {
     return handleError(error, res);
   }
 };
+exports.generateGuestDetailPdf = async (req, res) => {
+  try {
+    const result =
+      await GuestMeetService.generateGuestDetailPdf({
+        OrganizationID: req.query.OrganizationID,
+        GMDetailID: req.params.id,
+        UserID: req.user?.UserID || null,
+      });
+
+    if (!result?.success) {
+      return res.status(result?.statusCode || 400).json({
+        success: false,
+        message:
+          result?.message ||
+          "Unable to generate guest detail PDF.",
+        ...(result?.error
+          ? { error: result.error }
+          : {}),
+      });
+    }
+
+    // Prefer the standard direct Buffer response used by the other Guest Meet
+    // PDF services, while retaining compatibility with the older Base64 DTO.
+    const pdfBuffer =
+      (Buffer.isBuffer(result.pdfBuffer) && result.pdfBuffer) ||
+      (Buffer.isBuffer(result.data) && result.data) ||
+      (Buffer.isBuffer(result.data?.pdfBuffer) && result.data.pdfBuffer) ||
+      (typeof result.data?.FileData === "string" && result.data.FileData
+        ? Buffer.from(result.data.FileData, "base64")
+        : null);
+
+    const fileName =
+      result.fileName ||
+      result.data?.fileName ||
+      result.data?.FileName ||
+      `Guest-Detail-${req.params.id}.pdf`;
+
+    if (!Buffer.isBuffer(pdfBuffer)) {
+      console.error("Invalid PDF service response:", {
+        success: result?.success,
+        hasDirectBuffer: Buffer.isBuffer(result?.pdfBuffer),
+        hasDataBuffer: Buffer.isBuffer(result?.data),
+        hasNestedPdfBuffer: Buffer.isBuffer(
+          result?.data?.pdfBuffer,
+        ),
+        hasLegacyFileData:
+          typeof result?.data?.FileData === "string",
+        resultKeys: Object.keys(result || {}),
+        dataKeys: Object.keys(result?.data || {}),
+      });
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "PDF buffer was not returned by the service.",
+      });
+    }
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType || result.data?.MimeType || "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      String(pdfBuffer.length),
+    );
+
+    return res.end(pdfBuffer);
+  } catch (error) {
+    console.error(
+      "Generate guest detail PDF controller error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to generate guest detail PDF.",
+      error: error.message,
+    });
+  }
+};
