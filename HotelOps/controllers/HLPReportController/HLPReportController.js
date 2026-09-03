@@ -11,10 +11,48 @@ const userID = (req) => {
   if (!Number.isSafeInteger(id) || id < 1) throw new AppError("Authenticated user is invalid", STATUS_CODES.UNAUTHORIZED);
   return id;
 };
-const selectedOrganizationID = (req) =>
-  req.query?.organizationId ?? req.query?.OrganizationID ??
-  req.body?.OrganizationID ?? req.get("OrganizationID") ??
-  req.get("X-Organization-ID") ?? req.user?.OrganizationID;
+// Browsers may serialize an unselected dropdown as "undefined"/"null".
+// Treat those placeholders as absent and continue to the next trusted source.
+const normalizeOrganizationID = (value) => {
+  if (value === undefined || value === null) return undefined;
+  const normalized = String(value).trim();
+  return !normalized || ["undefined", "null"].includes(normalized.toLowerCase())
+    ? undefined
+    : normalized;
+};
+const firstOrganizationID = (...values) => {
+  for (const value of values) {
+    const normalized = normalizeOrganizationID(value);
+    if (normalized !== undefined) return normalized;
+  }
+  return undefined;
+};
+const queryOrganizationID = (req) => firstOrganizationID(
+  req.query?.organizationId,
+  req.query?.OrganizationID,
+  req.query?.organizationid
+);
+const selectedOrganizationID = (req) => firstOrganizationID(
+  queryOrganizationID(req),
+  req.body?.OrganizationID,
+  req.body?.organizationId,
+  req.body?.organizationid,
+  req.get("OrganizationID"),
+  req.get("X-Organization-ID"),
+  req.user?.OrganizationID
+);
+// Normalize organization aliases before service validation so lowercase client
+// fields are not treated as unexpected input and the public service contract stays stable.
+const bodyWithOrganizationID = (req) => {
+  const body = req.body || {};
+  const { OrganizationID: _upper, organizationId: _camel, organizationid: _lower, ...rest } = body;
+  return { ...rest, OrganizationID: selectedOrganizationID(req) };
+};
+const bodyWithoutOrganizationID = (req) => {
+  const body = req.body || {};
+  const { OrganizationID: _upper, organizationId: _camel, organizationid: _lower, ...rest } = body;
+  return rest;
+};
 // Shared JSON bridge for HLP controller-to-RabbitMQ communication.
 const send = async (req, res, action, data, successStatus = STATUS_CODES.SUCCESS) => {
   try {
@@ -52,15 +90,14 @@ exports.masterList = (req, res) => sendDirect(req, res, HLPReportService.getMast
 
 // Entry-page list resolves stored values for one organization and entry date.
 exports.hlpList = (req, res) => sendDirect(req, res, HLPReportService.getHLPList, {
-  OrganizationID: req.query?.organizationId ?? req.query?.OrganizationID ?? req.query?.organizationid,
+  OrganizationID: selectedOrganizationID(req),
   EntryDate: req.query?.entryDate ?? req.query?.EntryDate ?? req.query?.entrydate,
 });
 exports.createMasterField = (req, res) => send(req, res, "CREATE_HLP_MASTER_FIELD", {
-  ...(req.body || {}), OrganizationID: selectedOrganizationID(req),
+  ...bodyWithOrganizationID(req),
 }, STATUS_CODES.CREATED);
 exports.importMasterFields = (req, res) => send(req, res, "IMPORT_HLP_MASTER_FIELDS", {
-  ...(req.body || {}),
-  OrganizationID: selectedOrganizationID(req),
+  ...bodyWithOrganizationID(req),
   File: req.file ? {
     originalname: req.file.originalname,
     mimetype: req.file.mimetype,
@@ -72,38 +109,41 @@ exports.exportMasterFields = async (req, res) => {
     const response = await HLPReportService.exportMasterFields({
       UserID: userID(req),
       OrganizationID: selectedOrganizationID(req),
-      Format: req.query?.format,
+      // The master-page Export button downloads Excel unless CSV is explicitly requested.
+      Format: req.query?.format ?? "excel",
     });
     if (!response.success) throw new AppError(response.message, response.statusCode || STATUS_CODES.BAD_REQUEST);
     const file = Buffer.from(response.fileBase64, "base64");
     res.setHeader("Content-Type", response.contentType);
     res.setHeader("Content-Disposition", `attachment; filename="${response.filename}"`);
     res.setHeader("Content-Length", file.length);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "no-store");
     return res.status(STATUS_CODES.SUCCESS).send(file);
   } catch (error) { return handleError(error, res); }
 };
 exports.reorderMasterFields = (req, res) => send(req, res, "REORDER_HLP_MASTER_FIELDS", {
-  ...(req.body || {}), OrganizationID: selectedOrganizationID(req),
+  ...bodyWithOrganizationID(req),
 });
 exports.updateMasterField = (req, res) => send(req, res, "UPDATE_HLP_MASTER_FIELD", {
-  ...(req.body || {}), OrganizationID: selectedOrganizationID(req),
+  ...bodyWithoutOrganizationID(req),
 });
 exports.deleteMasterField = (req, res) => send(req, res, "DELETE_HLP_MASTER_FIELD", {
-  ...(req.body || {}), OrganizationID: selectedOrganizationID(req),
+  ...bodyWithoutOrganizationID(req),
 });
 // Create performs create-or-update using OrganizationID + EntryDate.
 exports.create = (req, res) => {
-  const body = req.body || {};
+  const body = bodyWithOrganizationID(req);
   return send(req, res, "CREATE_HLP_REPORT", body, STATUS_CODES.CREATED);
 };
-exports.update = (req, res) => send(req, res, "UPDATE_HLP_REPORT", req.body || {});
+exports.update = (req, res) => send(req, res, "UPDATE_HLP_REPORT", bodyWithoutOrganizationID(req));
 exports.monthlyReport = (req, res) => sendDirect(req, res, HLPReportService.getMonthlyReport, {
-  OrganizationID: req.query?.organizationId ?? req.query?.OrganizationID,
+  OrganizationID: queryOrganizationID(req),
   Year: req.query?.year ?? req.query?.Year,
   Month: req.query?.month ?? req.query?.Month,
 });
 exports.lastYearReport = (req, res) => sendDirect(req, res, HLPReportService.getLastYearMonthlyReport, {
-  OrganizationID: req.query?.organizationId ?? req.query?.OrganizationID,
+  OrganizationID: queryOrganizationID(req),
   Year: req.query?.year ?? req.query?.Year,
   Month: req.query?.month ?? req.query?.Month,
 });
@@ -129,13 +169,13 @@ const sendPdf = async (req, res, operation, data) => {
 };
 
 exports.monthlyReportPdf = (req, res) => sendPdf(req, res, HLPReportService.generateMonthlyReportPdf, {
-  OrganizationID: req.query?.organizationId ?? req.query?.OrganizationID,
+  OrganizationID: queryOrganizationID(req),
   Year: req.query?.year ?? req.query?.Year,
   Month: req.query?.month ?? req.query?.Month,
 });
 
 exports.lastYearReportPdf = (req, res) => sendPdf(req, res, HLPReportService.generateLastYearReportPdf, {
-  OrganizationID: req.query?.organizationId ?? req.query?.OrganizationID,
+  OrganizationID: queryOrganizationID(req),
   Year: req.query?.year ?? req.query?.Year,
   Month: req.query?.month ?? req.query?.Month,
 });

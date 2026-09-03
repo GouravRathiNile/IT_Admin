@@ -34,7 +34,7 @@
     },
     {
       "name": "Export Master Fields - Excel",
-      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/MasterField/Export?organizationId={{OrganizationID}}&format=excel" }
+      "request": { "method": "GET", "url": "{{LocalUrl}}/HLPReport/MasterField/Export?organizationId={{OrganizationID}}" }
     },
     {
       "name": "Export Master Fields - CSV",

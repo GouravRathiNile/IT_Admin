@@ -219,27 +219,32 @@ const createMasterField = async (data, options = {}) => {
 
 // Rename one active master field while deriving modification audit server-side.
 const updateMasterField = async (data) => {
-  if (!positiveInteger(data.OrganizationID)) return fail("Organization ID must be a positive integer");
   if (!positiveInteger(data.ID)) return fail("HLP master field ID must be a positive integer");
   if (masterAuditFields.some((field) => Object.prototype.hasOwnProperty.call(data, field))) return fail("Audit fields cannot be supplied by the client");
-  if (hasUnexpectedFields(data, ["ID", "OrganizationID", "Title", "UserID"])) return fail("Only OrganizationID, ID and Title can be supplied when updating an HLP master field");
+  if (hasUnexpectedFields(data, ["ID", "Title", "UserID"])) return fail("Only ID and Title can be supplied when updating an HLP master field");
   const title = typeof data.Title === "string" ? data.Title.trim() : "";
   if (!title) return fail("Title is required");
   const client = await pool.connect();
   try {
-    const denied = await validateOrganization(client, data.UserID, data.OrganizationID);
+    const field = await client.query(
+      "SELECT organizationid FROM hlpreport_master_list WHERE id = $1 AND isactive = TRUE LIMIT 1",
+      [Number(data.ID)]
+    );
+    if (!field.rowCount) return fail("HLP master field not found", 404);
+    const organizationID = Number(field.rows[0].organizationid);
+    const denied = await validateOrganization(client, data.UserID, organizationID);
     if (denied) return denied;
     const duplicate = await client.query(
       `SELECT 1 FROM hlpreport_master_list
         WHERE organizationid = $1 AND isactive = TRUE AND LOWER(title) = LOWER($2) AND id <> $3 LIMIT 1`,
-      [Number(data.OrganizationID), title, Number(data.ID)]
+      [organizationID, title, Number(data.ID)]
     );
     if (duplicate.rowCount) return fail(`Master field already exists: ${title}`, 409);
     const result = await client.query(
       `UPDATE hlpreport_master_list
        SET title = $1, modifyby = $2, modifydatetime = CURRENT_TIMESTAMP
        WHERE id = $3 AND organizationid = $4 AND isactive = TRUE
-       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy"`, [title, data.UserID, Number(data.ID), Number(data.OrganizationID)]
+       RETURNING id AS "ID", title AS "Title", orderby AS "OrderBy"`, [title, data.UserID, Number(data.ID), organizationID]
     );
     if (!result.rowCount) return fail("HLP master field not found", 404);
     return { success: true, message: "HLP master field updated successfully", data: result.rows[0] };
@@ -251,27 +256,32 @@ const updateMasterField = async (data) => {
 
 // Soft-deactivate a field and compact the remaining active display order.
 const deleteMasterField = async (data) => {
-  if (!positiveInteger(data.OrganizationID)) return fail("Organization ID must be a positive integer");
   if (!positiveInteger(data.ID)) return fail("HLP master field ID must be a positive integer");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const denied = await validateOrganization(client, data.UserID, data.OrganizationID);
+    const field = await client.query(
+      "SELECT organizationid FROM hlpreport_master_list WHERE id = $1 AND isactive = TRUE FOR UPDATE",
+      [Number(data.ID)]
+    );
+    if (!field.rowCount) { await client.query("ROLLBACK"); return fail("HLP master field not found", 404); }
+    const organizationID = Number(field.rows[0].organizationid);
+    const denied = await validateOrganization(client, data.UserID, organizationID);
     if (denied) { await client.query("ROLLBACK"); return denied; }
-    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`hlpreport_master_list_order:${Number(data.OrganizationID)}`]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`hlpreport_master_list_order:${organizationID}`]);
     const result = await client.query(
       `UPDATE hlpreport_master_list SET isactive = FALSE, orderby = NULL, modifyby = $1, modifydatetime = CURRENT_TIMESTAMP
-        WHERE id = $2 AND organizationid = $3 AND isactive = TRUE RETURNING id AS "ID"`, [data.UserID, Number(data.ID), Number(data.OrganizationID)]
+        WHERE id = $2 AND organizationid = $3 AND isactive = TRUE RETURNING id AS "ID"`, [data.UserID, Number(data.ID), organizationID]
     );
     if (!result.rowCount) { await client.query("ROLLBACK"); return fail("HLP master field not found", 404); }
-    await client.query("UPDATE hlpreport_master_list SET orderby = -orderby WHERE organizationid = $1 AND isactive = TRUE", [Number(data.OrganizationID)]);
+    await client.query("UPDATE hlpreport_master_list SET orderby = -orderby WHERE organizationid = $1 AND isactive = TRUE", [organizationID]);
     await client.query(
       `WITH ordered AS (
          SELECT id, ROW_NUMBER() OVER (ORDER BY orderby DESC NULLS LAST, id)::integer AS new_order
          FROM hlpreport_master_list WHERE organizationid = $1 AND isactive = TRUE
        )
        UPDATE hlpreport_master_list ml SET orderby = ordered.new_order
-       FROM ordered WHERE ml.id = ordered.id`, [Number(data.OrganizationID)]
+       FROM ordered WHERE ml.id = ordered.id`, [organizationID]
     );
     await client.query("COMMIT");
     return { success: true, message: "HLP master field deactivated successfully", data: result.rows[0] };

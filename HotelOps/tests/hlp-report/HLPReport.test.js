@@ -82,9 +82,25 @@ test("master list and create integrity use only active configured fields", () =>
 
 test("report controller accepts optional lowercase organization filters", () => {
   const source = read("controllers/HLPReportController/HLPReportController.js");
-  assert.match(source, /organizationId \?\? req\.query\?\.OrganizationID/);
+  assert.match(source, /const queryOrganizationID = \(req\) => firstOrganizationID/);
+  assert.match(source, /\["undefined", "null"\]\.includes/);
   assert.match(source, /entryDate \?\? req\.query\?\.EntryDate/);
   assert.match(source, /req\.get\("X-Organization-ID"\)/);
+  assert.match(source, /exports\.hlpList[\s\S]*OrganizationID: selectedOrganizationID\(req\)/);
+});
+
+test("HLP create/list normalize organization aliases while ID updates omit them", () => {
+  const source = read("controllers/HLPReportController/HLPReportController.js");
+  assert.match(source, /req\.body\?\.OrganizationID/);
+  assert.match(source, /req\.body\?\.organizationId/);
+  assert.match(source, /req\.body\?\.organizationid/);
+  assert.match(source, /const bodyWithOrganizationID = \(req\)/);
+  for (const handler of ["createMasterField", "importMasterFields", "reorderMasterFields", "create"]) {
+    assert.match(source, new RegExp(`exports\\.${handler}[\\s\\S]*?bodyWithOrganizationID\\(req\\)`));
+  }
+  for (const handler of ["updateMasterField", "deleteMasterField", "update"]) {
+    assert.match(source, new RegExp(`exports\\.${handler}[\\s\\S]*?bodyWithoutOrganizationID\\(req\\)`));
+  }
 });
 
 test("HLP entry list requires date and resolves organization/date values", async () => {
@@ -211,7 +227,7 @@ test("master list ordering is backend controlled and active state is not publicl
   const source = read("services/HLPReportService/HLPReportService.js");
   assert.match(source, /MAX\(orderby\), 0\) \+ 1 AS orderby/);
   assert.match(source, /Only OrganizationID and Title or Fields can be supplied when creating HLP master fields/);
-  assert.match(source, /Only OrganizationID, ID and Title can be supplied when updating an HLP master field/);
+  assert.match(source, /Only ID and Title can be supplied when updating an HLP master field/);
   assert.match(source, /ORDER BY orderby NULLS LAST, id/);
   assert.match(source, /SELECT id AS "ID", title AS "Title", orderby AS "OrderBy"/);
   assert.match(source, /const result = await getMasterRows\(client, OrganizationID\)/);
@@ -313,7 +329,7 @@ test("monthly PDF no-data detection ignores configured blank rows and accepts de
 
 test("PDF controllers preserve optional organization filters", () => {
   const source = read("controllers/HLPReportController/HLPReportController.js");
-  assert.match(source, /exports\.monthlyReportPdf[\s\S]*OrganizationID: req\.query\?\.organizationId \?\? req\.query\?\.OrganizationID/);
+  assert.match(source, /exports\.monthlyReportPdf[\s\S]*OrganizationID: queryOrganizationID\(req\)/);
   assert.match(source, /exports\.lastYearReportPdf[\s\S]*Year: req\.query\?\.year \?\? req\.query\?\.Year/);
   assert.match(source, /exports\.lastYearReportPdf[\s\S]*Month: req\.query\?\.month \?\? req\.query\?\.Month/);
 });
