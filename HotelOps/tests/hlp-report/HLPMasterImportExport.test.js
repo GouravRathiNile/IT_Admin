@@ -97,6 +97,24 @@ test("master CSV export contains only Title and OrderBy for authorized organizat
   } finally { pool.connect = originalConnect; }
 });
 
+test("master export defaults to a real XLSX workbook when format is omitted", async () => {
+  const originalConnect = pool.connect;
+  try {
+    pool.connect = async () => ({
+      query: async (sql) => /FROM user_org_mapping/.test(sql)
+        ? ({ rowCount: 1, rows: [{}] })
+        : ({ rows: [{ ID: "9", Title: "Rooms Occupied", OrderBy: 1 }] }),
+      release() {},
+    });
+    const response = await service.exportMasterFields({ UserID: 7, OrganizationID: 10 });
+    const file = Buffer.from(response.fileBase64, "base64");
+    assert.equal(response.success, true);
+    assert.equal(response.contentType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    assert.equal(response.filename, "HLP-Master-Fields-10.xlsx");
+    assert.equal(file.subarray(0, 2).toString(), "PK");
+  } finally { pool.connect = originalConnect; }
+});
+
 test("organization migration preserves legacy rows and repoints existing details", () => {
   const sql = fs.readFileSync(path.join(root, "docs/hlp-master-organization-migration.sql"), "utf8");
   assert.match(sql, /ADD COLUMN IF NOT EXISTS organizationid BIGINT/);
