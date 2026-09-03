@@ -762,6 +762,44 @@ const attachRelatedData = async (OpexRows) => {
 
   return OpexRows.map((row) => byID.get(Number(row.opexid)));
 };
+
+// Approval-role default view is the union of every role-specific status tab:
+// records currently pending at that role, plus records already acted on by it.
+const appendOpexRoleStatusFilter = (
+  query,
+  params,
+  userType,
+  approverStatusColumn,
+  approvalStatus,
+) => {
+  if (approvalStatus === "PENDING") {
+    params.push(userType);
+    return `${query}
+      AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
+      AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+    `;
+  }
+
+  if (approvalStatus) {
+    params.push(approvalStatus);
+    return `${query}
+      AND UPPER(COALESCE(${approverStatusColumn}, 'PENDING'))
+          = $${params.length}
+    `;
+  }
+
+  params.push(userType);
+  return `${query}
+    AND (
+      (
+        UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
+        AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+      )
+      OR UPPER(COALESCE(${approverStatusColumn}, ''))
+           IN ('APPROVED', 'REJECTED', 'HOLD', 'RETURNED')
+    )
+  `;
+};
 // ============================================================ Get All Opex
 const getAllOpex = async (data) => {
   try {
@@ -804,9 +842,12 @@ const getAllOpex = async (data) => {
     // Status
     // =====================================================
 
-    const approvalStatus = data.Status
-      ? String(data.Status).toUpperCase()
-      : null;
+    const approvalStatus =
+      data.Status !== undefined &&
+      data.Status !== null &&
+      String(data.Status).trim() !== ""
+        ? String(data.Status).trim().toUpperCase()
+        : null;
 
     const validStatuses = [
       "PENDING",
@@ -873,49 +914,13 @@ const getAllOpex = async (data) => {
     const approverStatusColumn = approverStatusColumns[userType];
 
     if (approverStatusColumn) {
-      // ---------------------------------------------------
-      // GM
-      // ---------------------------------------------------
-
-      if (["HOD", "FC", "GM", "RD-FC", "CEO"].includes(userType)) {
-        if (approvalStatus === "PENDING") {
-          params.push(userType);
-
-          query += `
-            AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
-            AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
-          `;
-        } else if (approvalStatus) {
-          params.push(approvalStatus);
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                ${approverStatusColumn},
-                'PENDING'
-              )
-            ) = $${params.length}
-          `;
-        } else {
-          params.push(userType);
-
-          query += `
-            AND UPPER(
-              COALESCE(
-                current_stage.ApprovalRole,
-                ''
-              )
-            ) = $${params.length}
-
-            AND UPPER(
-              COALESCE(
-                current_stage.Status,
-                'PENDING'
-              )
-            ) = 'PENDING'
-          `;
-        }
-      }
+      query = appendOpexRoleStatusFilter(
+        query,
+        params,
+        userType,
+        approverStatusColumn,
+        approvalStatus,
+      );
     }
 
     // =====================================================
@@ -978,44 +983,13 @@ const getAllOpex = async (data) => {
     // =====================================================
 
     if (approverStatusColumn) {
-      if (approvalStatus === "PENDING") {
-        countParams.push(userType);
-
-        countQuery += `
-          AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${countParams.length}
-          AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
-        `;
-      } else if (approvalStatus) {
-        countParams.push(approvalStatus);
-
-        countQuery += `
-          AND UPPER(
-            COALESCE(
-              ${approverStatusColumn},
-              'PENDING'
-            )
-          ) = $${countParams.length}
-        `;
-      } else {
-        countParams.push(userType);
-
-        // Use the same current-stage filter as the main list query.
-        countQuery += `
-          AND UPPER(
-            COALESCE(
-              current_stage.ApprovalRole,
-              ''
-            )
-          ) = $${countParams.length}
-
-          AND UPPER(
-            COALESCE(
-              current_stage.Status,
-              'PENDING'
-            )
-          ) = 'PENDING'
-        `;
-      }
+      countQuery = appendOpexRoleStatusFilter(
+        countQuery,
+        countParams,
+        userType,
+        approverStatusColumn,
+        approvalStatus,
+      );
     }
 
     countQuery += `
@@ -4366,9 +4340,6 @@ const generateLegacyOpexDetailPdf = async (Opex) => {
     }
   });
 };
-
-// Generate the OPEX list export with exactly the same JWT-derived visibility
-// and status rules as getAllOpex. Fetching in pages avoids an unbounded query.
 const generateOpexListPdf = async (data) => {
   try {
     const rows = [];
