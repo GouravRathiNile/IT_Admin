@@ -405,3 +405,121 @@ test("non-approval CAPEX PDF reuses the corrected status visibility", { concurre
     pool.query = originalQuery;
   }
 });
+
+test("CAPEX update preserves existing documents and inserts only new uploads", { concurrency: false }, async () => {
+  const originalConnect = pool.connect;
+  const calls = [];
+  const client = {
+    query: async (sql, values) => {
+      calls.push({ sql, values });
+      if (/UPDATE Capex_Master/.test(sql)) {
+        return { rows: [{ capexid: 21, capexnumber: 11 }] };
+      }
+      if (/FROM Capex_Documents[\s\S]*FOR UPDATE/.test(sql)) {
+        return {
+          rows: [
+            { capexdocumentid: 17, filepath: "old-17.png" },
+            { capexdocumentid: 18, filepath: "old-18.pdf" },
+          ],
+        };
+      }
+      if (/MAX\(CapexDocumentID\)/.test(sql)) {
+        return { rows: [{ nextid: "19" }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  pool.connect = async () => client;
+
+  try {
+    const response = await CapexService.updateCapex({
+      CapexID: 21,
+      UserID: 8,
+      Changes: { Item: "Updated item" },
+      Documents: [
+        {
+          FileName: "new.xlsx",
+          FilePath: "new-19.xlsx",
+          FileType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          FileSize: 100,
+        },
+      ],
+      DeleteDocumentIDs: [],
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(
+      calls.some((call) => /INSERT INTO Capex_Documents/.test(call.sql)),
+      true,
+    );
+    assert.equal(
+      calls.some((call) => /UPDATE Capex_Documents/.test(call.sql)),
+      false,
+    );
+    assert.equal(calls.some((call) => call.sql === "COMMIT"), true);
+
+    calls.length = 0;
+    const noDocumentChanges = await CapexService.updateCapex({
+      CapexID: 21,
+      UserID: 8,
+      Changes: { Description: "Text only update" },
+      Documents: [],
+      DeleteDocumentIDs: [],
+    });
+    assert.equal(noDocumentChanges.success, true);
+    assert.equal(
+      calls.some((call) => /FROM Capex_Documents|UPDATE Capex_Documents/.test(call.sql)),
+      false,
+    );
+  } finally {
+    pool.connect = originalConnect;
+  }
+});
+
+test("CAPEX update deletes only requested owned document IDs", { concurrency: false }, async () => {
+  const originalConnect = pool.connect;
+  const calls = [];
+  const client = {
+    query: async (sql, values) => {
+      calls.push({ sql, values });
+      if (/UPDATE Capex_Master/.test(sql)) {
+        return { rows: [{ capexid: 21, capexnumber: 11 }] };
+      }
+      if (/FROM Capex_Documents[\s\S]*FOR UPDATE/.test(sql)) {
+        return { rows: [{ capexdocumentid: 17, filepath: "old-17.png" }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  pool.connect = async () => client;
+
+  try {
+    const deleted = await CapexService.updateCapex({
+      CapexID: 21,
+      UserID: 8,
+      Changes: { Item: "Updated item" },
+      Documents: [],
+      DeleteDocumentIDs: [17],
+    });
+    assert.equal(deleted.success, true);
+    const deleteCall = calls.find((call) => /UPDATE Capex_Documents/.test(call.sql));
+    assert.deepEqual(deleteCall.values, [8, 21, [17]]);
+
+    calls.length = 0;
+    const invalid = await CapexService.updateCapex({
+      CapexID: 21,
+      UserID: 8,
+      Changes: { Item: "Updated again" },
+      Documents: [],
+      DeleteDocumentIDs: [999],
+    });
+    assert.equal(invalid.success, false);
+    assert.equal(invalid.statusCode, 400);
+    assert.match(invalid.message, /selected for deletion are invalid/);
+    assert.equal(calls.some((call) => call.sql === "ROLLBACK"), true);
+  } finally {
+    pool.connect = originalConnect;
+  }
+});
