@@ -40,6 +40,7 @@
     },
     { "name": "Report", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/report?organizationId=30&page=1&pageSize=10" } },
     { "name": "Report - Filters", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/report?organizationId=30&year=2026&month=8&search=breaker&page=1&pageSize=10" } },
+    { "name": "Filtered Report PDF", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/Report/pdf?organizationId=30&year=2026&month=8&search=breaker&page=1&pageSize=10&fromDate=2026-08-01&toDate=2026-08-31" } },
     { "name": "Report PDF", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/Report/{{IncidentReportID}}" } },
     { "name": "Export Report CSV", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/Report/export/csv?organizationId=30&year=2026&month=8&search=Transformer" } },
     { "name": "Export Report Excel", "request": { "method": "GET", "url": "{{LocalUrl}}/IncidentReport/Report/export/excel?organizationId=30&year=2026&month=8" } },

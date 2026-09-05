@@ -145,6 +145,32 @@ const exportController = (format) => (req, res) => execute(res, async () => {
 exports.exportCSV = exportController("csv");
 exports.exportExcel = exportController("excel");
 
+const reportListPdfController = (operation, fallbackFilename) => (req, res) => execute(res, async () => {
+  const data = reportListDTO(req.query || {});
+  assertValid(validator.validateReportList(data));
+
+  const response = await operation({
+    ...data,
+    ...requestContext(req),
+  });
+
+  if (!response.success) return sendResponse(res, response);
+
+  const pdf = Buffer.from(response.pdfBase64, "base64");
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader(
+    "Content-Disposition",
+    `inline; filename="${response.filename || fallbackFilename}"`
+  );
+  res.setHeader("Content-Length", pdf.length);
+
+  return res.status(STATUS_CODES.SUCCESS).send(pdf);
+});
+
+exports.reportPdf = reportListPdfController(GuestGlitchService.reportPdf, "guest-glitch-report.pdf");
+exports.masterReportListPdf = reportListPdfController(GuestGlitchService.masterReportListPdf, "guest-glitch-master-report.pdf");
+
 // PDF base64 is an internal service representation; the public response is binary.
 exports.masterReportPdf = (req, res) => execute(res, async () => {
   assertValidID(validator.validateID(req.params.id));

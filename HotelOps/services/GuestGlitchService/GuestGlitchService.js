@@ -100,6 +100,41 @@ const withOrganization = (operation, allowMultiple = false) => async (data) => {
   }
 };
 
+// Report-list filters may select one organization from the authenticated
+// user's active mappings. An omitted filter continues to span all mappings.
+const withReportOrganizations = (operation) => async (data) => {
+  try {
+    const mappings = await repository.resolveOrganizations(data.UserID);
+    if (!mappings.length) return fail("No active organization is assigned to the authenticated user.", 403);
+    const organizationIDs = mappings.map((row) => Number(row.organizationid));
+    const selectedValue = data.organizationId;
+    if (selectedValue !== undefined && selectedValue !== null && String(selectedValue).trim() !== "") {
+      const selectedOrganizationID = Number(selectedValue);
+      if (!Number.isSafeInteger(selectedOrganizationID) || selectedOrganizationID < 1) {
+        return fail("Organization ID must be a valid number.", 400);
+      }
+      if (!organizationIDs.includes(selectedOrganizationID)) {
+        return fail("You are not authorized to access the selected organization.", 403);
+      }
+      return operation({
+        ...data,
+        OrganizationID: selectedOrganizationID,
+        OrganizationIDs: [selectedOrganizationID],
+        SelectedOrganizationName: mappings.find((row) => Number(row.organizationid) === selectedOrganizationID)?.organizationname || null,
+      });
+    }
+    return operation({
+      ...data,
+      OrganizationID: null,
+      OrganizationIDs: organizationIDs,
+      SelectedOrganizationName: organizationIDs.length === 1 ? mappings[0]?.organizationname || null : "All Authorized Organizations",
+    });
+  } catch (error) {
+    console.error("Guest Glitch Report Organization Validation Error:", error.message);
+    return fail("Unable to validate Guest Glitch report organization at this time.", 503);
+  }
+};
+
 // Create accepts a selected organization only when it belongs to the authenticated user.
 const withSelectedOrganization = (operation) => async (data) => {
   try {
@@ -470,6 +505,99 @@ const exportReport = async (data) => {
   } finally { client.release(); }
 };
 
+const compactPdfColumns = [
+  { header: "ID", key: "ID", width: 28, align: "center" },
+  { header: "Date", key: "EntryDate", width: 48, align: "center" },
+  { header: "Room", key: "RoomNumber", width: 34, align: "center" },
+  { header: "Guest", key: "GuestName", width: 58 },
+  { header: "Guest Status", key: "GuestStatus", width: 48 },
+  { header: "Departments", key: "Departments", width: 65 },
+  { header: "Complaint", key: "Complaint", width: 112 },
+  { header: "Process Lapse", key: "ProcessLapse", width: 78 },
+  { header: "Service Recovery", key: "ServiceRecovery", width: 78 },
+  { header: "Internal Action", key: "InternalActionTaken", width: 78 },
+  { header: "Company", key: "CompanyName", width: 55 },
+  { header: "Rate", key: "Rate", width: 36, align: "right" },
+  { header: "Status", key: "Status", width: 45 },
+];
+
+const masterPdfColumns = [
+  ...compactPdfColumns.map((column) => ({ ...column, width: Math.max(20, Math.floor(column.width * 0.65)) })),
+  { header: "Investigation", key: "DetailedInvestigation", width: 45 },
+  { header: "Received By", key: "ReceivedByUsers", width: 42, value: (row) => selectionNames(row.ReceivedByUsers) },
+  { header: "Informed To", key: "InformedToUsers", width: 42, value: (row) => selectionNames(row.InformedToUsers) },
+  { header: "Resolved By", key: "ResolvedBy", width: 38 },
+  { header: "GM Comment", key: "GMComment", width: 48 },
+];
+
+// Both list PDFs reuse the exact JSON report filtering/query/DTO pipeline.
+const buildReportListPdf = async (params, complete = false) => {
+  const reportResponse = await report({
+    ...params,
+    page: 1,
+    pageSize: 100000,
+  }, complete);
+
+  if (!reportResponse.success) {
+    return reportResponse;
+  }
+
+  const rows = reportResponse.data || [];
+
+  const title = complete ? "Guest Glitch Master Report" : "Guest Glitch Report";
+  const pdf = await generatePdf({
+    title,
+    reportName: title,
+    organizationId: params.OrganizationID,
+    orientation: "landscape",
+    metadata: [
+      {
+        label: "Organization",
+        value: params.SelectedOrganizationName || rows[0]?.OrganizationName || "-",
+      },
+      {
+        label: "From Date",
+        value: formatDate(params.fromDate) || "All",
+      },
+      {
+        label: "To Date",
+        value: formatDate(params.toDate) || "All",
+      },
+      {
+        label: "Room Number",
+        value: params.roomNumber || "All",
+      },
+      {
+        label: "Total Records",
+        value: reportResponse.pagination?.totalRecords ?? rows.length,
+      },
+    ],
+    columns: complete ? masterPdfColumns : compactPdfColumns,
+    rows,
+    styles: {
+      pdfTableHeader: { fontSize: complete ? 5.2 : 6, bold: true, color: "#FFFFFF" },
+      pdfTableCell: { fontSize: complete ? 5 : 5.8 },
+    },
+    tableOptions: {
+      layout: {
+        paddingLeft: () => 2,
+        paddingRight: () => 2,
+        paddingTop: () => 3,
+        paddingBottom: () => 3,
+      },
+    },
+  });
+
+  return {
+    success: true,
+    pdfBase64: pdf.toString("base64"),
+    filename: complete ? "guest-glitch-master-report.pdf" : "guest-glitch-report.pdf",
+  };
+};
+
+const reportPdf = async (params) => buildReportListPdf(params, false);
+const masterReportListPdf = async (params) => buildReportListPdf(params, true);
+
 // Fetch the complete report DTO for detail, GM view and PDF reuse.
 const reportDetail = async (data) => {
   const client = await repository.getClient();
@@ -533,14 +661,16 @@ module.exports = {
   update: withRecordOrganization(update),
   updateStatus: withRecordOrganization(updateStatus),
   remove: withRecordOrganization(remove),
-  report: withOrganization((data) => report(data, false), true),
-  masterReport: withOrganization((data) => report(data, true), true),
+  report: withReportOrganizations((data) => report(data, false)),
+  reportPdf: withReportOrganizations(reportPdf),
+  masterReportListPdf: withReportOrganizations(masterReportListPdf),
+  masterReport: withReportOrganizations((data) => report(data, true)),
   reportDetail: withOrganization(reportDetail, true),
   masterReportPdf: withOrganization(masterReportPdf, true),
   gmView: withOrganization(reportDetail, true),
   gmAction: withRecordOrganization(gmAction),
   attachment: withOrganization(attachment, true),
-  exportReport: withOrganization(exportReport, true),
+  exportReport: withReportOrganizations(exportReport),
   // Internal provider entry point. Its OrganizationIDs must come from an
   // authenticated access context; public APIs keep using the wrappers above.
   reportForProvider: (data, options) => report(data, true, options),

@@ -178,6 +178,7 @@ const validateStatus = (body = {}) => {
 const validateReportList = (data) => {
   const base = { ...data, sortBy: SORT_COLUMNS[data.sortBy] ? data.sortBy : "EntryDate" };
   const errors = validateList(base);
+  data.organizationId = base.organizationId;
   data.departmentIds = base.departmentIds;
   if (!REPORT_SORT_COLUMNS[data.sortBy]) errors.push(error("sortBy", "Invalid report sort field."));
   for (const field of ["search", "status", "roomNumber", "guestName", "complaint", "complaintSource", "raiseSource"]) {

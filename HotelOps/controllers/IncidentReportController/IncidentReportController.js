@@ -92,6 +92,19 @@ const exportController = (format) => (req, res) => execute(res, async () => {
 exports.exportCSV = exportController("csv");
 exports.exportExcel = exportController("excel");
 
+// Filtered report PDF uses the same validated query contract as GET /Report.
+exports.reportListPdf = (req, res) => execute(res, async () => {
+  const query = { ...listDTO(req.query || {}), organizationId: req.query?.organizationId ?? null };
+  assertValid(validator.validateList(query));
+  const response = await IncidentReportService.reportListPdf({ Query: query, ...context(req) });
+  if (!response.success) return sendResponse(res, response);
+  const pdf = Buffer.from(response.pdfBase64, "base64");
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="${response.filename}"`);
+  res.setHeader("Content-Length", pdf.length);
+  return res.status(STATUS_CODES.SUCCESS).send(pdf);
+});
+
 // PDF is generated through the existing service/repository flow without RabbitMQ.
 exports.reportPdf = (req, res) => execute(res, async () => {
   assertValid(validator.validateID(req.params.id));
