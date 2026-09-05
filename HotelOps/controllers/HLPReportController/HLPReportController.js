@@ -16,7 +16,7 @@ const userID = (req) => {
 const normalizeOrganizationID = (value) => {
   if (value === undefined || value === null) return undefined;
   const normalized = String(value).trim();
-  return !normalized || ["undefined", "null"].includes(normalized.toLowerCase())
+  return !normalized || normalized === "0" || ["undefined", "null"].includes(normalized.toLowerCase())
     ? undefined
     : normalized;
 };
@@ -116,6 +116,7 @@ exports.exportMasterFields = async (req, res) => {
     const file = Buffer.from(response.fileBase64, "base64");
     res.setHeader("Content-Type", response.contentType);
     res.setHeader("Content-Disposition", `attachment; filename="${response.filename}"`);
+    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
     res.setHeader("Content-Length", file.length);
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");

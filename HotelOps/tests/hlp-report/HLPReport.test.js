@@ -84,6 +84,7 @@ test("report controller accepts optional lowercase organization filters", () => 
   const source = read("controllers/HLPReportController/HLPReportController.js");
   assert.match(source, /const queryOrganizationID = \(req\) => firstOrganizationID/);
   assert.match(source, /\["undefined", "null"\]\.includes/);
+  assert.match(source, /normalized === "0"/);
   assert.match(source, /entryDate \?\? req\.query\?\.EntryDate/);
   assert.match(source, /req\.get\("X-Organization-ID"\)/);
   assert.match(source, /exports\.hlpList[\s\S]*OrganizationID: selectedOrganizationID\(req\)/);
@@ -124,6 +125,19 @@ test("HLP entry list requires date and resolves organization/date values", async
     const response = await service.getHLPList({ UserID: 7, OrganizationID: 10, EntryDate: "2026-08-21" });
     assert.deepEqual(response.data, [{ ID: "1", Title: "Rooms Occupied", OrderBy: 1, YOD: "125", LYOD: "110" }]);
   } finally { pool.connect = originalConnect; }
+});
+
+test("HLP entry list reopens saved values and prefills new dates from comparisons", () => {
+  const source = read("services/HLPReportService/HLPReportService.js");
+  const hlpList = source.match(/const getHLPList[\s\S]*?\n\};/)?.[0] || "";
+  assert.match(hlpList, /yesterday_entry\.entrydate = \$2::date - INTERVAL '1 day'/);
+  assert.match(hlpList, /EXTRACT\(YEAR FROM last_year_entry\.entrydate\) = EXTRACT\(YEAR FROM \$2::date\) - 1/);
+  assert.match(hlpList, /EXTRACT\(MONTH FROM last_year_entry\.entrydate\) = EXTRACT\(MONTH FROM \$2::date\)/);
+  assert.match(hlpList, /EXTRACT\(DAY FROM last_year_entry\.entrydate\) = EXTRACT\(DAY FROM \$2::date\)/);
+  assert.match(hlpList, /COALESCE\(current_detail\.yod, yesterday_detail\.yod, '00'\)/);
+  assert.match(hlpList, /COALESCE\(current_detail\.lyod, last_year_detail\.yod, '00'\)/);
+  assert.match(hlpList, /YOD: row\.YOD \?\? "00"/);
+  assert.match(hlpList, /LYOD: row\.LYOD \?\? "00"/);
 });
 
 // PDF transport, layout, and report-calculation reuse coverage.
@@ -176,6 +190,12 @@ test("monthly PDF uses the compact single-page landscape table layout", () => {
   assert.match(source, /noWrap: false/);
   assert.match(helper, /Generated: \$\{timestamp\}/);
   assert.match(helper, /Page \$\{page\} of \$\{count\}/);
+});
+
+test("master export exposes its server-provided XLSX filename to browser clients", () => {
+  const controller = read("controllers/HLPReportController/HLPReportController.js");
+  assert.match(controller, /Content-Disposition", `attachment; filename="\$\{response\.filename\}"`/);
+  assert.match(controller, /Access-Control-Expose-Headers", "Content-Disposition, Content-Length"/);
 });
 
 // Create-or-update concurrency contract and master-list maintenance coverage.
