@@ -837,6 +837,12 @@ const getAllOpex = async (data) => {
 
     const userType = access.effectiveRole;
     const departmentName = access.departmentScope;
+    const requestedDepartment =
+      data.Department !== undefined &&
+      data.Department !== null &&
+      String(data.Department).trim() !== ""
+        ? String(data.Department).trim()
+        : null;
 
     // =====================================================
     // Status
@@ -895,6 +901,13 @@ const getAllOpex = async (data) => {
     if (departmentName) {
       params.push(departmentName);
 
+      query += `
+        AND LOWER(TRIM(cm.Department)) = LOWER(TRIM($${params.length}))
+      `;
+    }
+
+    if (requestedDepartment) {
+      params.push(requestedDepartment);
       query += `
         AND LOWER(TRIM(cm.Department)) = LOWER(TRIM($${params.length}))
       `;
@@ -973,6 +986,13 @@ const getAllOpex = async (data) => {
     if (departmentName) {
       countParams.push(departmentName);
 
+      countQuery += `
+        AND LOWER(TRIM(cm.Department)) = LOWER(TRIM($${countParams.length}))
+      `;
+    }
+
+    if (requestedDepartment) {
+      countParams.push(requestedDepartment);
       countQuery += `
         AND LOWER(TRIM(cm.Department)) = LOWER(TRIM($${countParams.length}))
       `;
@@ -2987,6 +3007,17 @@ const reportParameters = (data) => {
 
   return [filters.OrganizationID ?? null];
 };
+const departmentReportParameters = (data) => {
+  const filters = data.Filters || data || {};
+  const department =
+    filters.Department !== undefined &&
+    filters.Department !== null &&
+    String(filters.Department).trim() !== ""
+      ? String(filters.Department).trim()
+      : null;
+
+  return [filters.OrganizationID ?? null, department];
+};
 // Read/report failures return synchronously; they are not background-retried.
 const reportFailure = (error, reportName) => {
   console.error(`${reportName} Error:`, error.message);
@@ -3339,6 +3370,7 @@ const groupedReportRows = (rows, groupField) =>
     ApprovedCount: Number(row.approvedcount),
     PendingCount: Number(row.pendingcount),
     RejectedCount: Number(row.rejectedcount),
+    HoldCount: Number(row.holdcount),
     ReturnedCount: Number(row.returnedcount),
   }));
 // ============================================================ Department Report
@@ -3353,11 +3385,17 @@ const getOpexDepartmentReport = async (data) => {
          COUNT(*) FILTER (WHERE Status = 'Approved')::bigint AS ApprovedCount,
          COUNT(*) FILTER (WHERE Status = 'Pending')::bigint AS PendingCount,
          COUNT(*) FILTER (WHERE Status = 'Rejected')::bigint AS RejectedCount,
+         COUNT(*) FILTER (WHERE Status = 'Hold')::bigint AS HoldCount,
          COUNT(*) FILTER (WHERE Status = 'Returned')::bigint AS ReturnedCount
        FROM Opex_data
+       WHERE (
+         $2::text IS NULL
+         OR LOWER(TRIM(COALESCE(Department, 'Unspecified')))
+            = LOWER(TRIM($2::text))
+       )
        GROUP BY COALESCE(Department, 'Unspecified')
        ORDER BY COALESCE(Department, 'Unspecified') ASC;`,
-      reportParameters(data),
+      departmentReportParameters(data),
     );
 
     return {
@@ -3395,6 +3433,10 @@ const getOpexOrganizationReport = async (data) => {
          )::bigint AS RejectedCount,
 
          COUNT(*) FILTER (
+           WHERE cm.Status = 'Hold'
+         )::bigint AS HoldCount,
+
+         COUNT(*) FILTER (
            WHERE cm.Status = 'Returned'
          )::bigint AS ReturnedCount
 
@@ -3424,6 +3466,7 @@ const getOpexOrganizationReport = async (data) => {
         ApprovedCount: Number(row.approvedcount),
         PendingCount: Number(row.pendingcount),
         RejectedCount: Number(row.rejectedcount),
+        HoldCount: Number(row.holdcount),
         ReturnedCount: Number(row.returnedcount),
       })),
     };
@@ -3914,8 +3957,7 @@ const deleteApprovalConfig = async (data) => {
     if (client) client.release();
   }
 };
-// ===================================================================Pdf Apis
-// ============================================================Generate Opex List PDF
+ // ============================================================Opex List PDF
 const generateLegacyOpexDetailPdf = async (Opex) => {
   const fonts = {
     Roboto: {
@@ -4364,6 +4406,34 @@ const generateOpexListPdf = async (data) => {
     const access = await resolveOpexAccess(data);
     if (access.error) return access.error;
 
+    const pdfRows = rows.map((row, index) => ({
+      ...row,
+      ExportSerialNumber: index + 1,
+    }));
+
+    const approvalValue = (row, role) => {
+      const approval = (row.Approvals || []).find(
+        (item) =>
+          String(item.ApprovalRole || "").trim().toUpperCase() === role,
+      );
+
+      if (!approval) return "-";
+
+      const details = [approval.Status || "Pending"];
+      details.push(
+        `Qty - ${
+          approval.ApprovedQuantity === null ||
+          approval.ApprovedQuantity === undefined
+            ? "-"
+            : approval.ApprovedQuantity
+        }`,
+      );
+      if (approval.Remarks) details.push(approval.Remarks);
+      return details.join("\n");
+    };
+
+    const approvalRoles = ["HOD", "GM", "RD-FC", "CEO"];
+
     const pdfBuffer = await generatePdf({
       title: "OPEX LIST REPORT",
       reportName: "OPEX List Report",
@@ -4371,23 +4441,62 @@ const generateOpexListPdf = async (data) => {
       orientation: "landscape",
       metadata: [
         {
-          label: "Filters",
-          value: `Organization: ${data.OrganizationID || "All"} | Status: ${data.Status || "All"} | Approval Role: ${access.effectiveRole || "All"}${access.departmentScope ? ` | Department: ${access.departmentScope}` : ""}`,
+          label: "Organization",
+          value: data.OrganizationID || "All",
+        },
+        {
+          label: "Department",
+          value: data.Department || access.departmentScope || "All",
+        },
+        {
+          label: "Status",
+          value: data.Status || "All",
+        },
+        {
+          label: "Approval Role",
+          value: access.effectiveRole || "All",
         },
         { label: "Total Records", value: rows.length },
       ],
       columns: [
-        { key: "OpexNumber", header: "OPEX No.", width: 55 },
-        { key: "OrganizationShortName", header: "Organization", width: 70 },
-        { key: "Department", header: "Department", width: 75 },
-        { key: "Item", header: "Item", width: "*" },
-        { key: "Qty", header: "Qty", width: 35, align: "right" },
-        { key: "Rate", header: "Rate", width: 60, align: "right" },
-        { key: "Total", header: "Total", width: 65, align: "right" },
-        { key: "CurrentStatus", header: "Status", width: 55 },
-        { key: "CreatedDate", header: "Created Date", width: 75 },
+        {
+          header: "#",
+          value: (row) => row.ExportSerialNumber,
+          width: 24,
+          align: "center",
+        },
+        {
+          key: "OrganizationShortName",
+          header: "HTL",
+          width: 48,
+        },
+        {
+          key: "Department",
+          header: "DEPT",
+          width: 65,
+        },
+        {
+          key: "Item",
+          header: "ITEM",
+          width: "*",
+        },
+        {
+          header: "RATE",
+          value: (row) =>
+            Number(row.Rate || 0).toLocaleString("en-IN", {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 2,
+            }),
+          width: 62,
+          align: "right",
+        },
+        ...approvalRoles.map((role) => ({
+          header: role,
+          value: (row) => approvalValue(row, role),
+          width: 78,
+        })),
       ],
-      rows,
+      rows: pdfRows,
       pageMargins: [20, 25, 20, 35],
     });
 
@@ -4403,7 +4512,336 @@ const generateOpexListPdf = async (data) => {
     return fail("Unable to generate OPEX list PDF.", 503);
   }
 };
+// ============================================================ Department Report Pdf
+const getOpexDepartmentReportPdf = async (data) => {
+  try {
+    // Same query as OPEX Department Report GET API
+    const result = await pool.query(
+      `${REPORT_DATA_CTE}
+       SELECT
+         COALESCE(Department, 'Unspecified') AS Department,
+         COUNT(*)::bigint AS Count,
+         COALESCE(SUM(Total), 0) AS TotalAmount,
 
+         COUNT(*) FILTER (
+           WHERE Status = 'Approved'
+         )::bigint AS ApprovedCount,
+
+         COUNT(*) FILTER (
+           WHERE Status = 'Pending'
+         )::bigint AS PendingCount,
+
+         COUNT(*) FILTER (
+           WHERE Status = 'Rejected'
+         )::bigint AS RejectedCount,
+
+         COUNT(*) FILTER (
+           WHERE Status = 'Hold'
+         )::bigint AS HoldCount,
+
+         COUNT(*) FILTER (
+           WHERE Status = 'Returned'
+         )::bigint AS ReturnedCount
+
+       FROM Opex_data
+
+       WHERE (
+         $2::text IS NULL
+         OR LOWER(TRIM(COALESCE(Department, 'Unspecified')))
+            = LOWER(TRIM($2::text))
+       )
+
+       GROUP BY COALESCE(Department, 'Unspecified')
+
+       ORDER BY COALESCE(Department, 'Unspecified') ASC;`,
+      departmentReportParameters(data),
+    );
+
+    const rows = result.rows;
+
+    // ============================================================
+    // Generate PDF
+    // ============================================================
+
+    const pdfBuffer = await generatePdf({
+      title: "OPEX Department Report",
+      reportName: "OPEX Department Report",
+
+      organizationId:
+        data?.Filters?.OrganizationID ||
+        data?.OrganizationID ||
+        null,
+
+      orientation: "landscape",
+
+      metadata: [
+        {
+          label: "Department",
+          value: data?.Filters?.Department || data?.Department || "All",
+        },
+        {
+          label: "From Date",
+          value: data?.Filters?.FromDate
+            ? formatDate(data.Filters.FromDate)
+            : data?.FromDate
+              ? formatDate(data.FromDate)
+              : "All",
+        },
+        {
+          label: "To Date",
+          value: data?.Filters?.ToDate
+            ? formatDate(data.Filters.ToDate)
+            : data?.ToDate
+              ? formatDate(data.ToDate)
+              : "All",
+        },
+        {
+          label: "Total Departments",
+          value: rows.length,
+        },
+      ],
+
+      columns: [
+        {
+          header: "Department",
+          key: "department",
+          width: "*",
+        },
+        {
+          header: "Total Count",
+          key: "count",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Total Amount",
+          key: "totalamount",
+          width: 100,
+          align: "right",
+          format: (value) =>
+            Number(value || 0).toLocaleString("en-IN", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }),
+        },
+        {
+          header: "Approved",
+          key: "approvedcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Pending",
+          key: "pendingcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Rejected",
+          key: "rejectedcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Hold",
+          key: "holdcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Returned",
+          key: "returnedcount",
+          width: 75,
+          align: "center",
+        },
+      ],
+
+      rows,
+    });
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return {
+      success: true,
+      message: "OPEX department report PDF generated successfully.",
+      pdfBuffer,
+      fileName: "OPEX_Department_Report.pdf",
+    };
+  } catch (error) {
+    console.error("OPEX Department Report PDF Error:", error);
+
+    return {
+      success: false,
+      message: "Unable to generate OPEX department report PDF.",
+      statusCode: 500,
+    };
+  }
+};
+// ============================================================ Organization Report pdf
+const getOpexOrganizationReportPdf = async (data) => {
+  try {
+    // Same query as OPEX Organization Report GET API
+    const result = await pool.query(
+      `${REPORT_DATA_CTE}
+       SELECT
+         cm.OrganizationID,
+         COALESCE(om.ShortName, 'Unspecified') AS ShortName,
+
+         COUNT(*)::bigint AS Count,
+
+         COALESCE(SUM(cm.Total), 0) AS TotalAmount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Approved'
+         )::bigint AS ApprovedCount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Pending'
+         )::bigint AS PendingCount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Rejected'
+         )::bigint AS RejectedCount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Hold'
+         )::bigint AS HoldCount,
+
+         COUNT(*) FILTER (
+           WHERE cm.Status = 'Returned'
+         )::bigint AS ReturnedCount
+
+       FROM Opex_data cm
+
+       LEFT JOIN Organization_Master om
+         ON om.OrganizationID = cm.OrganizationID
+         AND om.IsDeleted = FALSE
+
+       GROUP BY
+         cm.OrganizationID,
+         om.ShortName
+
+       ORDER BY
+         cm.OrganizationID ASC;`,
+      reportParameters(data),
+    );
+
+    const rows = result.rows.map((row) => ({
+      organizationid: Number(row.organizationid),
+      shortname: row.shortname || "Unspecified",
+      count: Number(row.count || 0),
+      totalamount: Number(row.totalamount || 0),
+      approvedcount: Number(row.approvedcount || 0),
+      pendingcount: Number(row.pendingcount || 0),
+      rejectedcount: Number(row.rejectedcount || 0),
+      holdcount: Number(row.holdcount || 0),
+      returnedcount: Number(row.returnedcount || 0),
+    }));
+
+    // ============================================================
+    // Generate PDF
+    // ============================================================
+
+    const pdfBuffer = await generatePdf({
+      title: "OPEX Organization Report",
+      reportName: "OPEX Organization Report",
+
+      organizationId: data.OrganizationID || null,
+
+      orientation: "landscape",
+
+      metadata: [
+        {
+          label: "From Date",
+          value: data.FromDate || "All",
+        },
+        {
+          label: "To Date",
+          value: data.ToDate || "All",
+        },
+        {
+          label: "Total Organizations",
+          value: rows.length,
+        },
+      ],
+
+      columns: [
+        {
+          header: "Organization ID",
+          key: "organizationid",
+          width: 90,
+          align: "center",
+        },
+        {
+          header: "Organization",
+          key: "shortname",
+          width: "*",
+        },
+        {
+          header: "Total Count",
+          key: "count",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Total Amount",
+          key: "totalamount",
+          width: 100,
+          align: "right",
+        },
+        {
+          header: "Approved",
+          key: "approvedcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Pending",
+          key: "pendingcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Rejected",
+          key: "rejectedcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Hold",
+          key: "holdcount",
+          width: 75,
+          align: "center",
+        },
+        {
+          header: "Returned",
+          key: "returnedcount",
+          width: 75,
+          align: "center",
+        },
+      ],
+
+      rows,
+    });
+
+    return {
+      success: true,
+      message: "OPEX organization report PDF generated successfully.",
+      pdfBuffer,
+      fileName: "OPEX_Organization_Report.pdf",
+    };
+  } catch (error) {
+    console.error("OPEX Organization Report PDF Error:", error);
+
+    return {
+      success: false,
+      message: "Unable to generate OPEX organization report PDF.",
+      statusCode: 500,
+    };
+  }
+};
 // ============================================================ Exports
 module.exports = {
   createOpex,
@@ -4419,4 +4857,6 @@ module.exports = {
   createApprovalConfig,
   deleteApprovalConfig,
   generateOpexListPdf,
+  getOpexDepartmentReportPdf,
+  getOpexOrganizationReportPdf
 };

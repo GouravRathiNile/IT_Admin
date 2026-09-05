@@ -233,6 +233,13 @@ exports.getAllOpex = async (req, res) => {
       }
     }
 
+    const Department =
+      req.query.Department !== undefined &&
+      req.query.Department !== null &&
+      String(req.query.Department).trim() !== ""
+        ? String(req.query.Department).trim()
+        : null;
+
     // ================= Pagination =================
 
     const page = Number(req.query.page) || 1;
@@ -257,6 +264,7 @@ exports.getAllOpex = async (req, res) => {
   const response = await OpexService.getAllOpex({
   ...user,
   OrganizationID,
+  Department,
   Status,
   page,
   PageSize,
@@ -722,6 +730,12 @@ exports.approveOpex = async (req, res) => {
 // Validate report filters
 const reportFilters = (req) => {
   const rawOrganizationID = req.query?.OrganizationID;
+  const Department =
+    req.query?.Department !== undefined &&
+    req.query?.Department !== null &&
+    String(req.query.Department).trim() !== ""
+      ? String(req.query.Department).trim()
+      : null;
 
   // ------------------------------------------------------------
   // Missing OR empty OrganizationID
@@ -735,6 +749,7 @@ const reportFilters = (req) => {
   ) {
     return {
       OrganizationID: null,
+      Department,
     };
   }
 
@@ -752,6 +767,7 @@ const reportFilters = (req) => {
 
   return {
     OrganizationID: Number(rawOrganizationID),
+    Department,
   };
 };
 // All reports use the same JWT context and RabbitMQ request flow.
@@ -970,8 +986,7 @@ exports.deleteOpexApprovalConfig = async (req, res) => {
   }
 };
 
-// ============================================================PDF Apis
-// ============================================================Generate Opex List PDF
+// ============================================================Opex List PDF
 exports.generateOpexListPdf = async (req, res) => {
   try {
     // ================= OrganizationID =================
@@ -1016,16 +1031,284 @@ exports.generateOpexListPdf = async (req, res) => {
       }
     }
 
-    // ================= Send To Queue =================
+    const Department =
+      req.query.Department !== undefined &&
+      req.query.Department !== null &&
+      String(req.query.Department).trim() !== ""
+        ? String(req.query.Department).trim()
+        : null;
+
+    // Generate directly so the PDF Buffer is not converted into a JSON
+    // { type: "Buffer", data: [...] } object by RabbitMQ serialization.
 
     const user = authenticatedUser(req);
 
-    return await sendQueueResponse(res, "GENERATE_Opex_LIST_PDF", {
+    const response = await OpexService.generateOpexListPdf({
       ...user,
       OrganizationID,
+      Department,
       Status,
     });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to generate OPEX list PDF",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    if (!Buffer.isBuffer(response.data) || response.data.length === 0) {
+      throw new AppError(
+        "Generated OPEX list PDF is empty",
+        STATUS_CODES.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    const fileName = response.fileName || "OPEX_List_Report.pdf";
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType || "application/pdf",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${fileName}"`,
+    );
+    res.setHeader("Content-Length", String(response.data.length));
+
+    return res.status(STATUS_CODES.SUCCESS).send(response.data);
   } catch (error) {
     return handleControllerError(error, res);
+  }
+};
+// ============================================================ Department Report Pdf
+exports.getOpexDepartmentReportPdf = async (req, res) => {
+  try {
+    const data = {
+      OrganizationID:
+        req.query.OrganizationID !== undefined &&
+        req.query.OrganizationID !== null &&
+        String(req.query.OrganizationID).trim() !== ""
+          ? Number(req.query.OrganizationID)
+          : null,
+
+      FromDate:
+        req.query.FromDate !== undefined &&
+        req.query.FromDate !== null &&
+        String(req.query.FromDate).trim() !== ""
+          ? String(req.query.FromDate).trim()
+          : null,
+
+      ToDate:
+        req.query.ToDate !== undefined &&
+        req.query.ToDate !== null &&
+        String(req.query.ToDate).trim() !== ""
+          ? String(req.query.ToDate).trim()
+          : null,
+
+      Department:
+        req.query.Department !== undefined &&
+        req.query.Department !== null &&
+        String(req.query.Department).trim() !== ""
+          ? String(req.query.Department).trim()
+          : null,
+
+      UserID: req.user?.UserID || null,
+      UserType: req.user?.UserType || null,
+      LoginType: req.user?.LoginType || null,
+    };
+
+    // ============================================================
+    // Validate OrganizationID
+    // ============================================================
+
+    if (
+      data.OrganizationID !== null &&
+      (!Number.isInteger(data.OrganizationID) ||
+        data.OrganizationID <= 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid OrganizationID is required.",
+      });
+    }
+
+    // ============================================================
+    // Generate PDF
+    // ============================================================
+
+    const result =
+      await OpexService.getOpexDepartmentReportPdf(data);
+
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json({
+        success: false,
+        message:
+          result.message ||
+          "Unable to generate OPEX department report PDF.",
+      });
+    }
+
+    // ============================================================
+    // Validate PDF Buffer
+    // ============================================================
+
+    if (
+      !result.pdfBuffer ||
+      !Buffer.isBuffer(result.pdfBuffer) ||
+      result.pdfBuffer.length === 0
+    ) {
+      return res.status(500).json({
+        success: false,
+        message: "Generated OPEX department report PDF is empty.",
+      });
+    }
+
+    const fileName =
+      result.fileName || "OPEX_Department_Report.pdf";
+
+    // ============================================================
+    // Send PDF
+    // ============================================================
+
+    res.setHeader("Content-Type", "application/pdf");
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.pdfBuffer.length,
+    );
+
+    return res.status(200).send(result.pdfBuffer);
+  } catch (error) {
+    console.error(
+      "Generate OPEX Department Report PDF Controller Error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to generate OPEX department report PDF.",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
+};
+// ============================================================ Organization Report pdf
+exports.getOpexOrganizationReportPdf = async (req, res) => {
+  try {
+    const organizationValue = String(
+      req.query.OrganizationID ?? "",
+    ).trim();
+
+    const data = {
+      OrganizationID:
+        organizationValue !== ""
+          ? Number(organizationValue)
+          : null,
+
+      FromDate:
+        String(req.query.FromDate ?? "").trim() || null,
+
+      ToDate:
+        String(req.query.ToDate ?? "").trim() || null,
+
+      UserID: req.user?.UserID || null,
+      UserType: req.user?.UserType || null,
+      LoginType: req.user?.LoginType || null,
+    };
+
+    // ============================================================
+    // Validate OrganizationID
+    // ============================================================
+
+    if (
+      data.OrganizationID !== null &&
+      (!Number.isInteger(data.OrganizationID) ||
+        data.OrganizationID <= 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid OrganizationID is required.",
+      });
+    }
+
+    // ============================================================
+    // Validate Date Range
+    // ============================================================
+
+    if (
+      data.FromDate &&
+      data.ToDate &&
+      data.FromDate > data.ToDate
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "FromDate cannot be greater than ToDate.",
+      });
+    }
+
+    // ============================================================
+    // Generate PDF
+    // ============================================================
+
+    const result =
+      await OpexService.getOpexOrganizationReportPdf(data);
+
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json({
+        success: false,
+        message:
+          result.message ||
+          "Unable to generate OPEX organization report PDF.",
+      });
+    }
+
+    if (
+      !result.pdfBuffer ||
+      !Buffer.isBuffer(result.pdfBuffer) ||
+      result.pdfBuffer.length === 0
+    ) {
+      return res.status(500).json({
+        success: false,
+        message: "Generated OPEX organization report PDF is empty.",
+      });
+    }
+
+    const fileName =
+      result.fileName || "OPEX_Organization_Report.pdf";
+
+    res.setHeader("Content-Type", "application/pdf");
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.pdfBuffer.length,
+    );
+
+    return res.status(200).send(result.pdfBuffer);
+  } catch (error) {
+    console.error(
+      "Generate OPEX Organization Report PDF Controller Error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to generate OPEX organization report PDF.",
+    });
   }
 };

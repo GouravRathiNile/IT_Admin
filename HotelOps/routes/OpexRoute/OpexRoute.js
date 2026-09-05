@@ -15,7 +15,9 @@ const {
   getOpexApprovalConfig,
   updateOpexApprovalConfig,
   deleteOpexApprovalConfig,
-  generateOpexListPdf
+  generateOpexListPdf,
+  getOpexDepartmentReportPdf,
+  getOpexOrganizationReportPdf
 } = require("../../controllers/OpexController/OpexController");
 
 const router = express.Router();
@@ -41,5 +43,9 @@ router.get("/GetApprovalFlow",authenticateToken, getOpexApprovalConfig);
 router.delete("/DeleteApprovalFlow", authenticateToken, deleteOpexApprovalConfig);
 // ============================================================Opex PDfs
 router.get("/OpexListPdf", authenticateToken, generateOpexListPdf);
+router.get("/OpexDepartmentReportPdf",authenticateToken,getOpexDepartmentReportPdf,);
+router.get("/OpexOrganizationReportPdf",authenticateToken,getOpexOrganizationReportPdf,);
+
+
 
 module.exports = router;
