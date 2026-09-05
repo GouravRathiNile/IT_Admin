@@ -35,4 +35,10 @@ const detailDTO = (row) => ({
   ModifyDate: formatDate(row.modifydate, "DD MMM YYYY HH:mm"), ModifyBy: row.modifyby,
 });
 
-module.exports = { createDTO, updateDTO, listDTO, compactDTO, detailDTO, publicID };
+// Report screens intentionally omit internal creation/modification identities.
+const reportDTO = (row) => {
+  const { CreatedBy, ModifyDate, ModifyBy, ...report } = detailDTO(row);
+  return report;
+};
+
+module.exports = { createDTO, updateDTO, listDTO, compactDTO, detailDTO, reportDTO, publicID };

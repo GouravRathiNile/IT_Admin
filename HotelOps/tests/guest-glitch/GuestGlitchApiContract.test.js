@@ -30,10 +30,12 @@ test("Guest Glitch routes use the final REST methods and ID locations", () => {
   assert.equal(has("/options/list", "get"), false);
   assert.equal(has("/options/upsert", "post"), false);
   assert.ok(has("/report", "get"));
+  assert.ok(has("/report/pdf", "get"));
   assert.ok(has("/report/export/csv", "get"));
   assert.ok(has("/report/export/excel", "get"));
   assert.ok(has("/report/:id", "get"));
   assert.ok(has("/master-report", "get"));
+  assert.ok(has("/master-report/pdf", "get"));
   assert.ok(has("/master-report/:id/pdf", "get"));
   assert.ok(has("/gm/:id", "get"));
   assert.ok(has("/gm-action", "patch"));
@@ -54,18 +56,38 @@ test("list query parses organization and comma-separated department IDs", () => 
   assert.deepEqual(data.departmentIds, [1, 2, 3]);
 });
 
+test("report DTO accepts the public OrganizationID and RoomNumber query casing", () => {
+  const data = reportListDTO({ OrganizationID: "30", RoomNumber: "101" });
+  assert.equal(data.organizationId, "30");
+  assert.equal(data.roomNumber, "101");
+  assert.deepEqual(validator.validateReportList(data), []);
+  assert.equal(data.organizationId, 30);
+});
+
 test("Guest Glitch GET controllers call services directly and mutation queues remain", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const controller = fs.readFileSync(path.resolve(__dirname, "../../controllers/GuestGlitchController/GuestGlitchController.js"), "utf8");
   const handler = fs.readFileSync(path.resolve(__dirname, "../../consumer/GuestGlitchConsumer/GuestGlitchHandler.js"), "utf8");
-  for (const method of ["list", "get", "report", "masterReport", "reportDetail", "gmView", "exportReport", "masterReportPdf", "attachment"]) {
+  for (const method of ["list", "get", "report", "reportPdf", "masterReport", "masterReportListPdf", "reportDetail", "gmView", "exportReport", "masterReportPdf", "attachment"]) {
     assert.match(controller, new RegExp(`GuestGlitchService\\.${method}`));
   }
   assert.doesNotMatch(handler, /case "(?:LIST_GUEST_GLITCH|GET_GUEST_GLITCH|LIST_GUEST_GLITCH_OPTIONS|REPORT_GUEST_GLITCH|EXPORT_GUEST_GLITCH_REPORT|REPORT_GUEST_GLITCH_DETAIL|MASTER_REPORT_GUEST_GLITCH|MASTER_REPORT_GUEST_GLITCH_PDF|GET_GUEST_GLITCH_GM|GET_GUEST_GLITCH_ATTACHMENT)"/);
   for (const action of ["CREATE_GUEST_GLITCH", "UPDATE_GUEST_GLITCH", "DELETE_GUEST_GLITCH", "UPDATE_GUEST_GLITCH_STATUS", "GUEST_GLITCH_GM_ACTION"]) {
     assert.match(handler, new RegExp(`case "${action}"`));
   }
+});
+
+test("Guest Glitch list PDFs reuse report filters and render trusted metadata", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const serviceSource = fs.readFileSync(path.resolve(__dirname, "../../services/GuestGlitchService/GuestGlitchService.js"), "utf8");
+  assert.match(serviceSource, /const buildReportListPdf = async \(params, complete = false\)/);
+  assert.match(serviceSource, /\.\.\.params,[\s\S]*page: 1,[\s\S]*pageSize: 100000/);
+  assert.match(serviceSource, /params\.roomNumber \|\| "All"/);
+  assert.match(serviceSource, /params\.SelectedOrganizationName \|\| rows\[0\]\?\.OrganizationName/);
+  assert.match(serviceSource, /reportResponse\.pagination\?\.totalRecords \?\? rows\.length/);
+  assert.match(serviceSource, /masterReportListPdf: withReportOrganizations\(masterReportListPdf\)/);
 });
 
 test("list response contains stored fields required by the Guest Glitch Edit form", () => {
@@ -202,6 +224,57 @@ test("repository visibility is organization scoped without workflow configuratio
   const source = require("node:fs").readFileSync(require.resolve("../../repositories/GuestGlitchRepository/GuestGlitchRepository"), "utf8");
   assert.match(source, /gg\.organizationid\s*=\s*ANY\(\$1::bigint\[\]\)/);
   assert.doesNotMatch(source, /guest_glitch_flow_config|currentworkflowstage/);
+});
+
+test("Guest Glitch report applies an authorized selected organization as its database scope", async () => {
+  const originals = {
+    resolveOrganizations: repository.resolveOrganizations,
+    getClient: repository.getClient,
+    reportList: repository.reportList,
+  };
+  let reportScope;
+  try {
+    repository.resolveOrganizations = async () => [
+      { organizationid: "10" },
+      { organizationid: "30" },
+    ];
+    repository.getClient = async () => ({ release() {} });
+    repository.reportList = async (_data, organizationIDs) => {
+      reportScope = organizationIDs;
+      return { rows: [], total: 0 };
+    };
+    const response = await service.report({
+      UserID: 7,
+      organizationId: 30,
+      page: 1,
+      pageSize: 10,
+      sortBy: "EntryDate",
+      sortDirection: "DESC",
+    });
+    assert.equal(response.success, true);
+    assert.deepEqual(reportScope, [30]);
+  } finally {
+    Object.assign(repository, originals);
+  }
+});
+
+test("Guest Glitch report rejects an organization outside authenticated mappings", async () => {
+  const originalResolve = repository.resolveOrganizations;
+  try {
+    repository.resolveOrganizations = async () => [{ organizationid: "10" }];
+    const response = await service.report({
+      UserID: 7,
+      organizationId: 30,
+      page: 1,
+      pageSize: 10,
+      sortBy: "EntryDate",
+      sortDirection: "DESC",
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.message, "You are not authorized to access the selected organization.");
+  } finally {
+    repository.resolveOrganizations = originalResolve;
+  }
 });
 
 test("ID-based update derives the record organization for multi-organization users", async () => {

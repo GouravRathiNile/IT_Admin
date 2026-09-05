@@ -129,6 +129,14 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /report/pdf:
+    get:
+      summary: Generate the filtered Guest Glitch report as an inline PDF
+      parameters: *reportFilters
+      responses:
+        '200':
+          description: Filtered PDF document
+          content: { application/pdf: { schema: { type: string, format: binary } } }
   /report/{id}/pdf:
     get:
       summary: Generate an inline Guest Glitch PDF
@@ -154,6 +162,14 @@ paths:
           description: PDF document
           headers:
             Content-Disposition: { schema: { type: string }, example: 'inline; filename="guest-glitch-1001.pdf"' }
+          content: { application/pdf: { schema: { type: string, format: binary } } }
+  /master-report/pdf:
+    get:
+      summary: Generate the filtered Guest Glitch master report as an inline PDF
+      parameters: *reportFilters
+      responses:
+        '200':
+          description: Filtered master-report PDF document
           content: { application/pdf: { schema: { type: string, format: binary } } }
   /gm/{id}:
     get:

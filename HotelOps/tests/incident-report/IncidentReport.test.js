@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const router = require("../../routes/IncidentReportRoutes/IncidentReportRoutes");
 const validator = require("../../validators/IncidentReportValidator");
-const { createDTO, listDTO, compactDTO, detailDTO, publicID } = require("../../dto/IncidentReportDTO");
+const { createDTO, listDTO, compactDTO, detailDTO, reportDTO, publicID } = require("../../dto/IncidentReportDTO");
 const service = require("../../services/IncidentReportService/IncidentReportService");
 const repository = require("../../repositories/IncidentReportRepository/IncidentReportRepository");
 const { generatePdf } = require("../../utils/pdfHelper");
@@ -18,7 +18,7 @@ const valid = {
 test("Incident Report routes expose the approved methods and report precedes ID route", () => {
   const definitions = router.stack.filter((layer) => layer.route).map((layer) => ({ path: layer.route.path, methods: layer.route.methods }));
   const has = (path, method) => definitions.some((item) => item.path === path && item.methods[method]);
-  for (const [path, method] of [["/Create", "post"], ["/List", "get"], ["/Report", "get"], ["/Report/export/csv", "get"], ["/Report/export/excel", "get"], ["/Report/:id", "get"], ["/Update", "put"], ["/Delete", "delete"], ["/:id", "get"]]) assert.ok(has(path, method));
+  for (const [path, method] of [["/Create", "post"], ["/List", "get"], ["/Report", "get"], ["/Report/export/csv", "get"], ["/Report/export/excel", "get"], ["/Report/pdf", "get"], ["/Report/:id", "get"], ["/Update", "put"], ["/Delete", "delete"], ["/:id", "get"]]) assert.ok(has(path, method));
   assert.ok(definitions.findIndex((item) => item.path === "/Report") < definitions.findIndex((item) => item.path === "/:id"));
 });
 
@@ -72,13 +72,38 @@ test("Incident GET controllers use direct services while mutation actions remain
   const path = require("node:path");
   const controller = fs.readFileSync(path.resolve(__dirname, "../../controllers/IncidentReportController/IncidentReportController.js"), "utf8");
   const handler = fs.readFileSync(path.resolve(__dirname, "../../consumer/IncidentReportConsumer/IncidentReportHandler.js"), "utf8");
-  for (const method of ["list", "get", "report", "exportReport", "reportPdf"]) {
+  for (const method of ["list", "get", "report", "exportReport", "reportListPdf", "reportPdf"]) {
     assert.match(controller, new RegExp(`IncidentReportService\\.${method}`));
   }
   assert.doesNotMatch(handler, /case "(?:LIST_INCIDENT_REPORTS|GET_INCIDENT_REPORT|REPORT_INCIDENT_REPORTS|EXPORT_INCIDENT_REPORTS|INCIDENT_REPORT_PDF)"/);
   for (const action of ["CREATE_INCIDENT_REPORT", "UPDATE_INCIDENT_REPORT", "DELETE_INCIDENT_REPORT"]) {
     assert.match(handler, new RegExp(`case "${action}"`));
   }
+});
+
+test("Incident report DTO removes only the requested audit fields", () => {
+  const output = reportDTO({
+    id: "12", organizationshortname: "Nile", reportdate: "2026-09-05", incidentdate: "2026-09-05",
+    createdby: 7, createddate: "2026-09-05T10:00:00Z", modifyby: 8, modifydate: "2026-09-05T11:00:00Z",
+    investigatedby: "Manager",
+  });
+  assert.equal(output.ID, 12);
+  assert.equal(output.CreatedDate != null, true);
+  assert.equal(output.InvestigatedBy, "Manager");
+  for (const field of ["CreatedBy", "ModifyDate", "ModifyBy"]) assert.equal(Object.hasOwn(output, field), false);
+});
+
+test("filtered Incident PDF reuses report list logic and excludes removed audit columns", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.resolve(__dirname, "../../services/IncidentReportService/IncidentReportService.js"), "utf8");
+  const block = source.match(/const INCIDENT_REPORT_PDF_COLUMNS[\s\S]*?\n\]\);/)?.[0] || "";
+  for (const key of ["ID", "Organization", "ReportDate", "IncidentDate", "Time", "Location", "AccidentCause", "Anycasualty", "Description", "Damagedcaused", "Investigation", "PresentDuringIncident", "ReportTo", "ReportBy", "InvestigatedBy"]) {
+    assert.match(block, new RegExp(`key: "${key}"`));
+  }
+  assert.doesNotMatch(block, /CreatedBy|ModifyDate|ModifyBy/);
+  assert.match(source, /const response = await list\(data, true\)/);
+  assert.match(source, /orientation: "landscape"/);
 });
 
 test("list organization query is optional, validated and preserved with existing filters", () => {

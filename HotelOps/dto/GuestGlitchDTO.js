@@ -121,7 +121,7 @@ const listDTO = (query = {}) => ({
   receivedByIds: parseCommaSeparatedIDs(query.receivedByIds),
   informedToIds: parseCommaSeparatedIDs(query.informedToIds),
 
-  roomNumber: query.roomNumber ?? null,
+  roomNumber: query.roomNumber ?? query.RoomNumber ?? null,
   guestName: query.guestName ?? null,
   complaint: query.complaint ?? null,
 

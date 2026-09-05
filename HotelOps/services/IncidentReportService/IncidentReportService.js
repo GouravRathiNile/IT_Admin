@@ -1,5 +1,5 @@
 const repository = require("../../repositories/IncidentReportRepository/IncidentReportRepository");
-const { compactDTO, detailDTO } = require("../../dto/IncidentReportDTO");
+const { compactDTO, detailDTO, reportDTO } = require("../../dto/IncidentReportDTO");
 const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseError");
 const { generatePdf } = require("../../utils/pdfHelper");
 const { generateCSV, generateExcel } = require("../../utils/exportHelper");
@@ -89,12 +89,82 @@ const list = async (data, detailed = false) => {
     return {
       success: true,
       message: detailed ? "Incident report data retrieved successfully." : "Incident reports retrieved successfully.",
-      data: result.rows.map(detailed ? detailDTO : compactDTO),
+      data: result.rows.map(detailed ? reportDTO : compactDTO),
       pagination: { page: Number(data.Query.page), pageSize: Number(data.Query.pageSize), totalRecords: result.total, totalPages: Math.ceil(result.total / Number(data.Query.pageSize)) },
     };
   } catch (error) {
     console.error("List Incident Report Error:", error.message);
     return fail("Unable to retrieve incident reports at this time.", 503);
+  }
+};
+
+const INCIDENT_REPORT_PDF_COLUMNS = Object.freeze([
+  { key: "ID", header: "ID", width: 30, align: "center" },
+  { key: "Organization", header: "Organization", width: 44 },
+  { key: "ReportDate", header: "Report Date", width: 43, align: "center" },
+  { key: "IncidentDate", header: "Incident Date", width: 43, align: "center" },
+  { key: "Time", header: "Time", width: 32, align: "center" },
+  { key: "Location", header: "Location", width: 52 },
+  { key: "AccidentCause", header: "Accident Cause", width: 58 },
+  { key: "Anycasualty", header: "Any Casualty", width: 38, align: "center" },
+  { key: "Description", header: "Description", width: 82 },
+  { key: "Damagedcaused", header: "Damage Caused", width: 68 },
+  { key: "Investigation", header: "Investigation", width: 68 },
+  { key: "PresentDuringIncident", header: "Present During Incident", width: 60 },
+  { key: "ReportTo", header: "Report To", width: 43 },
+  { key: "ReportBy", header: "Report By", width: 43 },
+  { key: "InvestigatedBy", header: "Investigated By", width: 48 },
+]);
+
+// Generate the current filtered report page using the same service query and DTO.
+const reportListPdf = async (data) => {
+  try {
+    const response = await list(data, true);
+    if (!response.success) return response;
+    const organization = await resolveOrganization(data.UserID, data.Query.organizationId);
+    if (organization.error) return organization.error;
+    const query = data.Query;
+    const metadata = [
+      { label: "Organization", value: organization.OrganizationShortName || organization.OrganizationName },
+      { label: "Year", value: query.year || "All" },
+      { label: "Month", value: query.month || "All" },
+      { label: "Search", value: query.search || "All" },
+      { label: "From Date", value: query.fromDate ? formatDate(query.fromDate) : "All" },
+      { label: "To Date", value: query.toDate ? formatDate(query.toDate) : "All" },
+      { label: "Page", value: Number(query.page) },
+      { label: "Total Records", value: response.pagination.totalRecords },
+    ];
+    const buffer = await generatePdf({
+      title: "INCIDENT REPORT",
+      reportName: "Incident Report",
+      organizationId: organization.OrganizationID,
+      orientation: "landscape",
+      pageMargins: [16, 22, 16, 34],
+      metadata,
+      columns: INCIDENT_REPORT_PDF_COLUMNS,
+      rows: response.data,
+      styles: {
+        pdfTableHeader: { fontSize: 5.4, bold: true, color: "#FFFFFF" },
+        pdfTableCell: { fontSize: 5.2 },
+      },
+      tableOptions: {
+        layout: {
+          paddingLeft: () => 1.5,
+          paddingRight: () => 1.5,
+          paddingTop: () => 3,
+          paddingBottom: () => 3,
+        },
+      },
+    });
+    return {
+      success: true,
+      message: "Incident report PDF generated successfully.",
+      pdfBase64: buffer.toString("base64"),
+      filename: "incident-report.pdf",
+    };
+  } catch (error) {
+    console.error("Incident Report List PDF Error:", error.message);
+    return fail("Unable to generate incident report PDF at this time.", 503);
   }
 };
 
@@ -178,4 +248,4 @@ const exportReport = async (data) => {
   }
 };
 
-module.exports = { create, list: (data) => list(data, false), get, update, remove, report: (data) => list(data, true), reportPdf, exportReport, resolveOrganization, resolveRecordOrganization };
+module.exports = { create, list: (data) => list(data, false), get, update, remove, report: (data) => list(data, true), reportListPdf, reportPdf, exportReport, resolveOrganization, resolveRecordOrganization };

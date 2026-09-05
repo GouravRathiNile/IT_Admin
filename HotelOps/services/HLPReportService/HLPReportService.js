@@ -102,7 +102,8 @@ const getAccessibleOrganizationIDs = async (client, userID) => {
   return result.rows.map((row) => Number(row.organizationid));
 };
 
-// Entry-page list overlays exact-date YOD/LYOD values on active master fields.
+// Reopen saved values for an existing selected-date report. For a new date,
+// prefill YOD from the previous day and LYOD from last year's same-date YOD snapshot.
 const getHLPList = async ({ UserID, OrganizationID, EntryDate } = {}) => {
   if (EntryDate === undefined || EntryDate === null || String(EntryDate).trim() === "") return fail("Entry date is required");
   if (!positiveInteger(OrganizationID)) return fail("Organization ID must be a positive integer");
@@ -113,16 +114,41 @@ const getHLPList = async ({ UserID, OrganizationID, EntryDate } = {}) => {
     if (denied) return denied;
     const result = await client.query(
       `SELECT ml.id AS "ID", ml.title AS "Title", ml.orderby AS "OrderBy",
-              COALESCE(detail.yod, '') AS "YOD", COALESCE(detail.lyod, '') AS "LYOD"
+              COALESCE(current_detail.yod, yesterday_detail.yod, '00') AS "YOD",
+              COALESCE(current_detail.lyod, last_year_detail.yod, '00') AS "LYOD"
          FROM hlpreport_master_list ml
-         LEFT JOIN hlpreport_entry_master em
-           ON em.organizationid = $1 AND em.entrydate = $2
+         LEFT JOIN hlpreport_entry_master current_entry
+           ON current_entry.organizationid = $1
+          AND current_entry.entrydate = $2::date
          LEFT JOIN LATERAL (
            SELECT d.yod, d.lyod
              FROM hlpreport_entry_details d
-            WHERE d.entryid = em.id AND d.masterid = ml.id
-            ORDER BY d.id DESC LIMIT 1
-         ) detail ON TRUE
+            WHERE d.entryid = current_entry.id
+              AND (d.masterid = ml.id OR LOWER(d.title) = LOWER(ml.title))
+            ORDER BY (d.masterid = ml.id) DESC, d.id DESC LIMIT 1
+         ) current_detail ON TRUE
+         LEFT JOIN hlpreport_entry_master yesterday_entry
+           ON yesterday_entry.organizationid = $1
+          AND yesterday_entry.entrydate = $2::date - INTERVAL '1 day'
+         LEFT JOIN LATERAL (
+           SELECT d.yod
+             FROM hlpreport_entry_details d
+            WHERE d.entryid = yesterday_entry.id
+              AND (d.masterid = ml.id OR LOWER(d.title) = LOWER(ml.title))
+            ORDER BY (d.masterid = ml.id) DESC, d.id DESC LIMIT 1
+         ) yesterday_detail ON TRUE
+         LEFT JOIN hlpreport_entry_master last_year_entry
+           ON last_year_entry.organizationid = $1
+          AND EXTRACT(YEAR FROM last_year_entry.entrydate) = EXTRACT(YEAR FROM $2::date) - 1
+          AND EXTRACT(MONTH FROM last_year_entry.entrydate) = EXTRACT(MONTH FROM $2::date)
+          AND EXTRACT(DAY FROM last_year_entry.entrydate) = EXTRACT(DAY FROM $2::date)
+         LEFT JOIN LATERAL (
+           SELECT d.yod
+             FROM hlpreport_entry_details d
+            WHERE d.entryid = last_year_entry.id
+              AND (d.masterid = ml.id OR LOWER(d.title) = LOWER(ml.title))
+            ORDER BY (d.masterid = ml.id) DESC, d.id DESC LIMIT 1
+         ) last_year_detail ON TRUE
         WHERE ml.organizationid = $1 AND ml.isactive = TRUE
         ORDER BY ml.orderby NULLS LAST, ml.id`,
       [Number(OrganizationID), EntryDate]
@@ -130,7 +156,7 @@ const getHLPList = async ({ UserID, OrganizationID, EntryDate } = {}) => {
     return {
       success: true,
       message: "HLP list fetched successfully",
-      data: result.rows.map((row) => ({ ...row, YOD: row.YOD ?? "", LYOD: row.LYOD ?? "" })),
+      data: result.rows.map((row) => ({ ...row, YOD: row.YOD ?? "00", LYOD: row.LYOD ?? "00" })),
     };
   } catch (error) {
     console.error("Get HLP List Error:", error.message);
