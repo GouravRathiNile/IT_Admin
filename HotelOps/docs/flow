@@ -71,3 +71,68 @@ user
 
 
 
+Mere existing Node.js + Express + PostgreSQL project ko pehle read aur understand karo.
+
+Project architecture, coding pattern aur complete request flow identify karo:
+
+Route
+→ Authentication middleware
+→ Controller
+→ RabbitMQ request queue/handler
+→ Service
+→ PostgreSQL queries/transactions
+→ RabbitMQ response
+→ Controller response
+
+Pehle in cheezon ko inspect karo:
+
+1. Folder structure aur naming conventions
+2. Existing similar module ka complete implementation
+3. Routes aur middleware order
+4. Controller validation/error-handling pattern
+5. RabbitMQ action names, request/response queues aur handlers
+6. Service response structure
+7. PostgreSQL naming, soft-delete aur transaction pattern
+8. JWT se trusted fields:
+   - UserID
+   - UserType
+   - DepartmentName
+   - LoginType
+9. Organization access/mapping validation
+10. Pagination, filters, status handling aur PDF/export pattern
+11. Existing tests aur test conventions
+
+Rules:
+
+- Pehle project read karo; turant generic code mat likho.
+- Existing architecture aur coding style follow karo.
+- Similar module ko reference implementation ki tarah use karo.
+- UserType, UserID aur DepartmentName request body/query se trust mat karo; verified JWT se lo.
+- OrganizationID validate karo aur existing access rules follow karo.
+- SQL parameterized rakho.
+- IsDeleted/active conditions existing pattern ke according lagao.
+- Multi-step database writes transaction mein karo.
+- Existing APIs aur roles ka behavior bina requirement ke change mat karo.
+- Unrelated files modify mat karo.
+- Nayi helper/file tabhi banao jab existing structure mein genuinely required ho.
+- API aur PDF/list filters mein consistent data return karo.
+- List query aur TotalCount query ka scope exactly same rakho.
+- Implementation ke baad syntax checks aur relevant tests chalao.
+- Jo assumptions ya unclear requirements hain, coding se pehle batao.
+
+Pehle mujhe ye output do:
+
+1. Tumne project flow kya samjha
+2. Similar/reference module kaun-sa mila
+3. Kaun-si files change/add hongi
+4. API contract
+5. Database/query changes
+6. Security and role behavior
+7. Implementation plan
+8. Important assumptions/questions
+
+Meri requirement:
+
+[YAHA APNI REQUIREMENT LIKHO]
+
+Jab main “implement karo” bolun, tab complete implementation karo, required files modify/create karo aur tests run karke result batao.

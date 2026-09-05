@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const { pool } = require("../../db");
 const OpexService = require("../../services/OpexService/OpexService");
+const OpexController = require("../../controllers/OpexController/OpexController");
 
 const summaryRow = {
   totalopex: "6",
@@ -239,6 +240,75 @@ test("non-Finance HOD OPEX list scopes every status and count to JWT department"
       );
       assert.equal(call.values.includes("Engineering"), true);
       assert.equal(call.values[0], 20);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("OPEX list applies the requested department to data and count queries", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      Department: "  Engineering  ",
+      UserType: "GM",
+      Status: "Approved",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    const listCalls = calls.filter((call) => /FROM Opex_Master cm/.test(call.sql));
+    assert.equal(listCalls.length, 2);
+    for (const call of listCalls) {
+      assert.match(
+        call.sql,
+        /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$\d+\)\)/,
+      );
+      assert.equal(call.values.includes("Engineering"), true);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("requested department cannot broaden an HOD's JWT department scope", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      Department: "Finance",
+      UserType: "HOD",
+      DepartmentName: "Engineering",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    for (const call of calls) {
+      assert.equal(call.values.includes("Engineering"), true);
+      assert.equal(call.values.includes("Finance"), true);
+      assert.equal(
+        (call.sql.match(/LOWER\(TRIM\(cm\.Department\)\)/g) || []).length,
+        2,
+      );
     }
   } finally {
     pool.query = originalQuery;
@@ -522,6 +592,40 @@ test("Finance HOD OPEX PDF reuses FC list visibility and returns a valid PDF", {
   }
 });
 
+test("OPEX list PDF forwards the requested department to list and count queries", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.generateOpexListPdf({
+      OrganizationID: 20,
+      Department: "Engineering",
+      UserType: "GM",
+      Status: "Approved",
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(response.data.subarray(0, 4).toString(), "%PDF");
+    const listCalls = calls.filter((call) => /FROM Opex_Master cm/.test(call.sql));
+    assert.equal(listCalls.length, 2);
+    for (const call of listCalls) {
+      assert.equal(call.values.includes("Engineering"), true);
+      assert.match(
+        call.sql,
+        /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$\d+\)\)/,
+      );
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
 test("central Finance HOD PDF uses global RD-FC visibility", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];
@@ -626,4 +730,141 @@ test("OPEX controller reads DepartmentName only from JWT context", () => {
   )[0];
   assert.match(approvalHandler, /DepartmentName: user\.DepartmentName/);
   assert.doesNotMatch(approvalHandler, /req\.(query|body).*DepartmentName/);
+});
+
+test("OPEX list PDF reuses getAllOpex and exposes the UI data columns", () => {
+  const serviceSource = fs.readFileSync(
+    path.join(__dirname, "../../services/OpexService/OpexService.js"),
+    "utf8",
+  );
+  const pdfHandler = serviceSource.match(
+    /const generateOpexListPdf[\s\S]*?\/\/ =+ Exports/,
+  )[0];
+
+  assert.match(pdfHandler, /await getAllOpex\(/);
+  for (const header of ["#", "HTL", "DEPT", "ITEM", "RATE"]) {
+    assert.match(pdfHandler, new RegExp(`header: "${header.replace("-", "\\-")}"`));
+  }
+  assert.match(
+    pdfHandler,
+    /const approvalRoles = \["HOD", "GM", "RD-FC", "CEO"\]/,
+  );
+  assert.match(pdfHandler, /header: role/);
+  assert.match(pdfHandler, /ApprovedQuantity/);
+  assert.match(pdfHandler, /approval\.Remarks/);
+  assert.doesNotMatch(pdfHandler, /header: "ACTION"/);
+});
+
+test("OPEX department report and PDF apply a normalized department filter", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return { rows: [] };
+  };
+
+  try {
+    const report = await OpexService.getOpexDepartmentReport({
+      Filters: { OrganizationID: 20, Department: " Engineering " },
+    });
+    const pdf = await OpexService.getOpexDepartmentReportPdf({
+      OrganizationID: 20,
+      Department: " Engineering ",
+    });
+
+    assert.equal(report.success, true);
+    assert.equal(pdf.success, true);
+    assert.equal(Buffer.isBuffer(pdf.pdfBuffer), true);
+    const reportCalls = calls.filter((call) => /FROM Opex_data/.test(call.sql));
+    assert.equal(reportCalls.length, 2);
+    for (const call of reportCalls) {
+      assert.deepEqual(call.values, [20, "Engineering"]);
+      assert.match(call.sql, /LOWER\(TRIM\(COALESCE\(Department, 'Unspecified'\)\)\)/);
+      assert.match(call.sql, /= LOWER\(TRIM\(\$2::text\)\)/);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("OPEX department and organization API/PDF reports include Hold count", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const reportRow = {
+    department: "Engineering",
+    organizationid: "20",
+    shortname: "HJU",
+    count: "5",
+    totalamount: "1000",
+    approvedcount: "1",
+    pendingcount: "1",
+    rejectedcount: "1",
+    holdcount: "1",
+    returnedcount: "1",
+  };
+
+  pool.query = async (sql) =>
+    /FROM Opex_data/.test(sql) ? { rows: [reportRow] } : { rows: [] };
+
+  try {
+    const department = await OpexService.getOpexDepartmentReport({
+      Filters: { OrganizationID: 20 },
+    });
+    const organization = await OpexService.getOpexOrganizationReport({
+      Filters: { OrganizationID: 20 },
+    });
+    const departmentPdf = await OpexService.getOpexDepartmentReportPdf({
+      OrganizationID: 20,
+    });
+    const organizationPdf = await OpexService.getOpexOrganizationReportPdf({
+      OrganizationID: 20,
+    });
+
+    assert.equal(department.data[0].HoldCount, 1);
+    assert.equal(organization.data[0].HoldCount, 1);
+    assert.equal(Buffer.isBuffer(departmentPdf.pdfBuffer), true);
+    assert.equal(Buffer.isBuffer(organizationPdf.pdfBuffer), true);
+    assert.equal(departmentPdf.pdfBuffer.subarray(0, 4).toString(), "%PDF");
+    assert.equal(organizationPdf.pdfBuffer.subarray(0, 4).toString(), "%PDF");
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("OPEX list PDF controller sends the generated Buffer as application/pdf", { concurrency: false }, async () => {
+  const originalGenerate = OpexService.generateOpexListPdf;
+  const pdf = Buffer.from("%PDF-OPEX");
+  let body;
+  let statusCode;
+  const headers = {};
+  const res = {
+    setHeader: (name, value) => { headers[name] = value; },
+    status: (value) => { statusCode = value; return res; },
+    send: (value) => { body = value; return res; },
+    json: (value) => { body = value; return res; },
+  };
+
+  OpexService.generateOpexListPdf = async () => ({
+    success: true,
+    data: pdf,
+    fileName: "OPEX_List.pdf",
+    contentType: "application/pdf",
+  });
+
+  try {
+    await OpexController.generateOpexListPdf(
+      {
+        query: { OrganizationID: "20", Status: "Approved" },
+        user: { UserID: 6, UserType: "GM", DepartmentName: "Finance" },
+      },
+      res,
+    );
+
+    assert.equal(statusCode, 200);
+    assert.equal(body, pdf);
+    assert.equal(headers["Content-Type"], "application/pdf");
+    assert.equal(headers["Content-Length"], String(pdf.length));
+    assert.match(headers["Content-Disposition"], /inline; filename="OPEX_List\.pdf"/);
+  } finally {
+    OpexService.generateOpexListPdf = originalGenerate;
+  }
 });
