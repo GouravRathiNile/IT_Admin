@@ -20,7 +20,7 @@ router.get("/report/:id/pdf", controller.masterReportPdf);
 router.get("/report/:id", controller.reportDetail);
 router.get("/master-report", controller.masterReport);
 router.get("/master-report/pdf", controller.masterReportListPdf);
-router.get("/master-report/:id/pdf", controller.masterReportPdf);
+router.get("/List/pdf/:id", controller.masterReportPdf);
 router.get("/gm/:id", controller.gmView);
 router.patch("/gm-action", controller.gmAction);
 router.get("/attachment/:id", controller.attachment);
