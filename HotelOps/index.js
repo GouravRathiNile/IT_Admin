@@ -29,6 +29,7 @@ const CapexRoutes = require("./routes/CapexRoute/CapexRoute");
 const OpexRoutes = require("./routes/OpexRoute/OpexRoute");
 const HLPReportRoutes = require("./routes/HLPReportRoutes/HLPReportRoutes");
 const ReportRoutes = require("./routes/ReportRoutes/ReportRoutes");
+const EngineeringRoutes = require("./routes/EngineeringRoutes/EngineeringRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
 const OrganizationHandler = require("./consumer/ITAdminConsumer/OrganizationHandler");
@@ -45,6 +46,7 @@ const CapexHandler = require("./consumer/CapexConsumer/CapexHandler");
 const OpexHandler = require("./consumer/OpexConsumer/OpexHandler");
 const HLPReportHandler = require("./consumer/HLPReportConsumer/HLPReportHandler");
 const ReportBuilderHandler = require("./consumer/ReportBuilderConsumer/ReportBuilderHandler");
+const EngineeringHandler = require("./consumer/EngineeringConsumer/EngineeringHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -68,6 +70,7 @@ app.use("/api/Capex", CapexRoutes);
 app.use("/api/Opex", OpexRoutes);
 app.use("/api/HLPReport", HLPReportRoutes);
 app.use("/api/Report", ReportRoutes);
+app.use("/api/Engineering", EngineeringRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -162,15 +165,23 @@ const startServer = async () => {
       QUEUE.OPEX.RESPONSE,
       OpexHandler
     );
+    // ===================================== HLP Consumer
     await startConsumer(
       QUEUE.HLP_REPORT.REQUEST,
       QUEUE.HLP_REPORT.RESPONSE,
       HLPReportHandler
     );
+    // ===================================== Report Builder Consumer
     await startConsumer(
       QUEUE.REPORT_BUILDER.REQUEST,
       QUEUE.REPORT_BUILDER.RESPONSE,
       ReportBuilderHandler
+    );
+     // =====================================  Engineering Consumer
+    await startConsumer(
+       QUEUE.ENGINEERING.REQUEST,
+        QUEUE.ENGINEERING.RESPONSE,
+      EngineeringHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;

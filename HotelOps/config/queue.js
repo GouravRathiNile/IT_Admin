@@ -59,4 +59,8 @@ module.exports = {
     REQUEST: "report_builder_request_queue",
     RESPONSE: "report_builder_response_queue",
   },
+  ENGINEERING: {
+  REQUEST: "engineering_request_queue",
+  RESPONSE: "engineering_response_queue",
+},
 };
