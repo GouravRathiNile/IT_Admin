@@ -11,12 +11,6 @@ const EngineeringHandler = async (message) => {
       case "CREATE_ENGINEERING_EQUIPMENT":
         return await EngineeringService.createEquipment(message.data);
 
-      case "GET_ENGINEERING_EQUIPMENT_LIST":
-        return await EngineeringService.getAllEquipment(message.data);
-
-      case "GET_ENGINEERING_EQUIPMENT_BY_ID":
-        return await EngineeringService.getEquipmentById(message.data);
-
       case "UPDATE_ENGINEERING_EQUIPMENT":
         return await EngineeringService.updateEquipment(message.data);
 

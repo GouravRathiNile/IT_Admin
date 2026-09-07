@@ -8,8 +8,7 @@ const handleError = require("../../utils/errorHandler");
 //==================================================Azur
 const uploadToAzure = require("../../AzurConfigration/Engineering/AzureUpload");
 // =========================================================Get Data From service
-const CapexService = require("../../services/CapexService/CapexService");
-
+const EngineeringService = require("../../services/EngineeringService/EngineeringService",);
 
 // ============================================================Queue Helper
 const sendQueueResponse = async (
@@ -184,27 +183,46 @@ exports.createEquipment = async (req, res) => {
 };
 // ============================================================ Equipment LIST
 exports.getAllEquipment = async (req, res) => {
-  return sendQueueResponse(req, res, "GET_ENGINEERING_EQUIPMENT_LIST", {
-    OrganizationID: req.query.OrganizationID || null,
+  try {
+    const result = await EngineeringService.getAllEquipment({
+      OrganizationID: req.query.OrganizationID || null,
 
-    Department: req.query.Department || null,
+      Department: req.query.Department || null,
+      Status: req.query.Status || null,
 
-    Status: req.query.Status || null,
+      WarrantyStatus: req.query.WarrantyStatus || null,
+      AMCStatus: req.query.AMCStatus || null,
 
-    Search: req.query.Search || null,
+      SerialNo: req.query.SerialNo || null,
+      Area: req.query.Area || null,
+      Equipment: req.query.Equipment || null,
 
-    page: Number(req.query.page) || 1,
+      Search: req.query.Search || null,
 
-    PageSize: Number(req.query.PageSize) || 10,
-  });
+      page: Number(req.query.page) || 1,
+      PageSize: Number(req.query.PageSize) || 10,
+    });
+
+    return res
+      .status(result.statusCode || (result.success ? 200 : 400))
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
 };
 // ============================================================GET Equipment BY ID
 exports.getEquipmentById = async (req, res) => {
-  return sendQueueResponse(req, res, "GET_ENGINEERING_EQUIPMENT_BY_ID", {
-    EquipmentID: req.params.id,
+  try {
+    const result = await EngineeringService.getEquipmentById({
+      EquipmentID: req.params.id,
+    });
 
-    OrganizationID: req.query.OrganizationID || null,
-  });
+    return res
+      .status(result.statusCode || (result.success ? 200 : 400))
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
 };
 // ============================================================UPDATE Equipment
 exports.updateEquipment = async (req, res) => {
@@ -251,4 +269,25 @@ exports.deleteEquipment = async (req, res) => {
 
     OrganizationID: req.body?.OrganizationID || req.query?.OrganizationID,
   });
+};
+// ============================================================GET Equipment Descriptions(Names)
+exports.getEquipmentDescriptions = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getEquipmentDescriptions({
+        OrganizationID: req.query.OrganizationID,
+
+        // Trusted JWT data
+        UserID: req.user.UserID,
+        UserType: req.user.UserType,
+        DepartmentName: req.user.DepartmentName,
+        LoginType: req.user.LoginType,
+      });
+
+    return res
+      .status(result.statusCode || (result.success ? 200 : 400))
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
 };

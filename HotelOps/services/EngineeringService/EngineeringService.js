@@ -151,7 +151,7 @@ const attachDocuments = async (equipments) => {
     Documents: documentMap.get(equipment.EquipmentID) || [],
   }));
 };
-
+// ============================================================================================Equipment Entries
 // ============================================================CREATE Equipment
 const createEquipment = async (data) => {
   const client = await pool.connect();
@@ -356,9 +356,7 @@ const createEquipment = async (data) => {
 
     await client.query("COMMIT");
 
-    return ok("Engineering equipment created successfully.", {
-      EquipmentID: equipmentID,
-    });
+    return ok("Engineering equipment created successfully.",);
   } catch (error) {
     await client.query("ROLLBACK");
 
@@ -392,6 +390,21 @@ const getAllEquipment = async (data) => {
       values.push(data.Status);
 
       conditions.push(`e.Status = $${values.length}`);
+    }
+
+    for (const [parameter, column, operator] of [
+      ["WarrantyStatus", "WarrantyStatus", "="],
+      ["AMCStatus", "AMCStatus", "="],
+      ["SerialNo", "SerialNumber", "ILIKE"],
+      ["Area", "Area", "ILIKE"],
+      ["Equipment", "Description", "ILIKE"],
+    ]) {
+      const value = String(data[parameter] ?? "").trim();
+
+      if (!value) continue;
+
+      values.push(operator === "ILIKE" ? `%${value}%` : value);
+      conditions.push(`e.${column} ${operator} $${values.length}`);
     }
 
     if (data.Search) {
@@ -479,8 +492,6 @@ const getEquipmentById = async (data) => {
   try {
     const equipmentID = Number(data.EquipmentID);
 
-    const organizationID = Number(data.OrganizationID);
-
     if (!Number.isInteger(equipmentID) || equipmentID <= 0) {
       return fail("Valid EquipmentID is required.", 400);
     }
@@ -502,12 +513,11 @@ const getEquipmentById = async (data) => {
 
           WHERE
             e.EquipmentID = $1
-            AND e.OrganizationID = $2
             AND e.IsDeleted = FALSE
 
           LIMIT 1;
           `,
-      [equipmentID, organizationID],
+      [equipmentID],
     );
 
     if (!result.rows.length) {
@@ -875,7 +885,46 @@ const deleteEquipment = async (data) => {
     client.release();
   }
 };
+// ============================================================GET Equipment Descriptions(Names)
+const getEquipmentDescriptions = async (data) => {
+  try {
+    const organizationID = Number(data.OrganizationID);
 
+    if (!Number.isInteger(organizationID) || organizationID <= 0) {
+      return fail("Valid OrganizationID is required.", 400);
+    }
+
+    const result = await pool.query(
+      `
+      SELECT Description
+      FROM Engineering_Equipment_Entry_Master
+      WHERE OrganizationID = $1
+        AND IsDeleted = FALSE
+        AND Description IS NOT NULL
+        AND TRIM(Description) <> ''
+      ORDER BY Description ASC;
+      `,
+      [organizationID],
+    );
+
+    const records = result.rows.map((row) => ({
+      Equipment: row.description,
+    }));
+
+    return ok(
+      "Equipment descriptions fetched successfully.",
+      records,
+      {
+        Count: records.length,
+      },
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch equipment descriptions",
+    );
+  }
+};
 // ============================================================EXPORTS
 module.exports = {
   createEquipment,
@@ -883,4 +932,5 @@ module.exports = {
   getEquipmentById,
   updateEquipment,
   deleteEquipment,
+  getEquipmentDescriptions,
 };

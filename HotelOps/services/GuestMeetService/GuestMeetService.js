@@ -37,6 +37,7 @@ const mapDetail = (row) => ({
   Feedback: row.feedback,
   ActionTaken: row.actiontaken,
   MetBy: row.metby == null ? null : Number(row.metby),
+  MetByName: row.metbyname || null,
   MetOn: row.meton,
   FeedbackType: row.feedbacktype,
   GuestStatus: row.gueststatus,
@@ -545,51 +546,117 @@ const getFeedbackReport = async (data) => {
   try {
     const values = [];
     const filter = addDateFilters(data, values);
+
     const result = await pool.query(
-      `WITH FeedbackCounts AS
-       (
-         SELECT
-           m.OrganizationID,
-           om.ShortName,
-           COALESCE(NULLIF(TRIM(d.FeedbackType), ''), 'Unspecified') AS FeedbackType,
-           COUNT(*)::bigint AS TotalGuests
-         FROM GuestMeet_Daily_Entry_Master m
-         INNER JOIN GuestMeet_Daily_Entry_Details d
-           ON d.GMMasterID = m.GMMasterID
-          AND d.IsDeleted = FALSE
-         INNER JOIN Organization_Master om
-           ON om.OrganizationID = m.OrganizationID
-         WHERE m.IsDeleted = FALSE${filter}
-         GROUP BY
-           m.OrganizationID,
-           om.ShortName,
-           COALESCE(NULLIF(TRIM(d.FeedbackType), ''), 'Unspecified')
-       )
-       SELECT
-         OrganizationID,
-         ShortName,
-         JSON_AGG(
-           JSON_BUILD_OBJECT(
-             FeedbackType || ' Feedback',
-             TotalGuests
-           )
-           ORDER BY TotalGuests DESC, FeedbackType
-         ) AS FeedbackData
-       FROM FeedbackCounts
-       GROUP BY OrganizationID, ShortName
-       ORDER BY ShortName, OrganizationID;`,
+      `
+      WITH FeedbackCounts AS
+      (
+        SELECT
+          m.OrganizationID,
+          om.ShortName,
+
+          UPPER(
+            COALESCE(
+              NULLIF(TRIM(d.FeedbackType), ''),
+              'UNSPECIFIED'
+            )
+          ) AS FeedbackType,
+
+          COUNT(*)::bigint AS TotalGuests
+
+        FROM GuestMeet_Daily_Entry_Master m
+
+        INNER JOIN GuestMeet_Daily_Entry_Details d
+          ON d.GMMasterID = m.GMMasterID
+         AND d.IsDeleted = FALSE
+
+        INNER JOIN Organization_Master om
+          ON om.OrganizationID = m.OrganizationID
+
+        WHERE m.IsDeleted = FALSE
+          ${filter}
+
+        GROUP BY
+          m.OrganizationID,
+          om.ShortName,
+
+          UPPER(
+            COALESCE(
+              NULLIF(TRIM(d.FeedbackType), ''),
+              'UNSPECIFIED'
+            )
+          )
+      )
+
+      SELECT
+        OrganizationID,
+        ShortName,
+
+        COALESCE(
+          SUM(TotalGuests)
+          FILTER (
+            WHERE FeedbackType = 'POSITIVE'
+          ),
+          0
+        )::bigint AS PositiveFeedback,
+
+        COALESCE(
+          SUM(TotalGuests)
+          FILTER (
+            WHERE FeedbackType = 'AVERAGE'
+          ),
+          0
+        )::bigint AS AverageFeedback,
+
+        COALESCE(
+          SUM(TotalGuests)
+          FILTER (
+            WHERE FeedbackType = 'NEGATIVE'
+          ),
+          0
+        )::bigint AS NegativeFeedback
+
+      FROM FeedbackCounts
+
+      GROUP BY
+        OrganizationID,
+        ShortName
+
+      ORDER BY
+        ShortName,
+        OrganizationID;
+      `,
       values,
     );
+
     return ok(
       "Guest Meet feedback report fetched successfully.",
       result.rows.map((row) => ({
         OrganizationID: Number(row.organizationid),
+
         ShortName: row.shortname,
-        FeedbackData: row.feedbackdata,
+
+        FeedbackData: [
+          {
+            "Positive Feedback":
+              Number(row.positivefeedback || 0),
+          },
+          {
+            "Average Feedback":
+              Number(row.averagefeedback || 0),
+          },
+          {
+            "Negative Feedback":
+              Number(row.negativefeedback || 0),
+          },
+        ],
       })),
     );
   } catch (error) {
-    return databaseFailure(error, "Generate Guest Meet feedback report");
+    return databaseFailure(
+      error,
+      "Generate Guest Meet feedback report",
+    );
   }
 };
 // ============================================================ Met By Report
@@ -758,21 +825,57 @@ const generateDateRangeReportPdf = async (data) => {
 
     const organizationId =
       Number(data.OrganizationID);
+// ============================================================
+// ORGANIZATION DETAILS
+// ============================================================
 
+const organizationResult = await pool.query(
+  `
+  SELECT
+    OrganizationID,
+    OrganizationName
+  FROM Organization_Master
+  WHERE OrganizationID = $1
+    AND IsDeleted = FALSE
+  LIMIT 1;
+  `,
+  [organizationId],
+);
+
+const organization =
+  organizationResult.rows[0] || null;
     // ============================================================
     // PDF COLUMNS
     // ============================================================
 
     const columns = [
       {
+        header: "Guest Status",
+        value: (row) => row.GuestStatus,
+        width: 50,
+        align: "center",
+      },
+       {
+        header: "RN#.",
+        value: (row) => row.RoomNo,
+        width: 25,
+        align: "center",
+      },
+      {
         header: "Guest Name",
         value: (row) => row.GuestName,
         width: 75,
       },
+        {
+        header: "Arrival",
+        value: (row) => row.Arrival,
+        width: 50,
+        align: "center",
+      },
       {
-        header: "RN#.",
-        value: (row) => row.RoomNo,
-        width: 30,
+        header: "Departure",
+        value: (row) => row.Departure,
+        width: 50,
         align: "center",
       },
       {
@@ -780,16 +883,22 @@ const generateDateRangeReportPdf = async (data) => {
         value: (row) => row.BookingSource,
         width: 60,
       },
-      {
-        header: "Arrival",
-        value: (row) => row.Arrival,
-        width: 55,
+       {
+        header: "Met On",
+        value: (row) => row.MetOn,
+        width: 50,
+        align: "center",
+      },
+       {
+        header: "Met By",
+         value: (row) => row.MetByName || "-",
+        width: 65,
         align: "center",
       },
       {
-        header: "Departure",
-        value: (row) => row.Departure,
-        width: 55,
+        header: "Feedback",
+        value: (row) => row.FeedbackType,
+        width: 50,
         align: "center",
       },
       {
@@ -802,30 +911,10 @@ const generateDateRangeReportPdf = async (data) => {
         value: (row) => row.ActionTaken,
         width: 105,
       },
-      {
-        header: "Met By",
-        value: (row) => row.MetBy,
-        width: 45,
-        align: "center",
-      },
-      {
-        header: "Met On",
-        value: (row) => row.MetOn,
-        width: 55,
-        align: "center",
-      },
-      {
-        header: "Feedback",
-        value: (row) => row.FeedbackType,
-        width: 50,
-        align: "center",
-      },
-      {
-        header: "Guest Status",
-        value: (row) => row.GuestStatus,
-        width: 55,
-        align: "center",
-      },
+     
+     
+      
+      
       
     ];
 
@@ -835,10 +924,17 @@ const generateDateRangeReportPdf = async (data) => {
 
     const metadata = [
       {
-        label: "Filters",
+        label: "Organization",
         value:
-          `From Date: ${formatDate(data.FromDate)}` +
-          `    |    To Date: ${formatDate(data.ToDate)}`,
+          organization?.organizationname || "-",
+      },
+      {
+        label: "From Date",
+        value: formatDate(data.FromDate),
+      },
+      {
+        label: "To Date",
+        value: formatDate(data.ToDate),
       },
       {
         label: "Total Records",
@@ -1044,34 +1140,37 @@ const generateFeedbackReportPdf = async (data) => {
     // Negative and Positive as separate columns
     // ============================================================
 
-    const feedbackRows = reportData.map((organization) => {
-      const feedbackCounts = {};
+   const feedbackRows = reportData.map((organization) => {
+  const feedbackCounts = {};
 
-      for (const feedback of organization.FeedbackData) {
-        const feedbackType = String(
-          feedback.FeedbackType || "Unspecified",
-        )
-          .trim()
-          .toUpperCase();
+  for (const feedback of organization.FeedbackData) {
+    const feedbackType = String(
+      feedback.FeedbackType || "Unspecified",
+    )
+      .trim()
+      .toUpperCase();
 
-        feedbackCounts[feedbackType] =
-          Number(feedback.TotalGuests || 0);
-      }
+    feedbackCounts[feedbackType] =
+      Number(feedback.TotalGuests || 0);
+  }
 
-      return {
-        OrganizationID:
-          organization.OrganizationID,
+  return {
+    OrganizationID:
+      organization.OrganizationID,
 
-        ShortName:
-          organization.ShortName,
+    ShortName:
+      organization.ShortName,
 
-        Negative:
-          feedbackCounts.NEGATIVE || 0,
+    Negative:
+      feedbackCounts.NEGATIVE || 0,
 
-        Positive:
-          feedbackCounts.POSITIVE || 0,
-      };
-    });
+    Average:
+      feedbackCounts.AVERAGE || 0,
+
+    Positive:
+      feedbackCounts.POSITIVE || 0,
+  };
+});
 
     // ============================================================
     // ORGANIZATION FOR LOGO
@@ -1099,6 +1198,13 @@ const generateFeedbackReportPdf = async (data) => {
         align: "center",
         bold: true,
       },
+       {
+    header: "Average Feedback",
+    value: (row) => row.Average,
+    width: "*",
+    align: "center",
+    bold: true,
+  },
       {
         header: "Positive Feedback",
         value: (row) => row.Positive,
@@ -1542,7 +1648,7 @@ const generateGuestDetailPdf = async (data) => {
         {
           label: "Organization",
           value:
-            guestDetail.OrganizationName ||
+            guestDetail.OrganizationShortName ||
             guestDetail.OrganizationShortName,
         },
         {
