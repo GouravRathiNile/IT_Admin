@@ -18,18 +18,6 @@ const display = (value) => {
   return String(value);
 };
 
-const fallbackLogo = () => ({ stack: [
-  { canvas: [
-    { type: "line", x1: 32, y1: 24, x2: 32, y2: 5, lineColor: COLORS.navy, lineWidth: 1.2 },
-    { type: "line", x1: 40, y1: 24, x2: 40, y2: 0, lineColor: COLORS.navy, lineWidth: 1.2 },
-    { type: "line", x1: 48, y1: 24, x2: 48, y2: 6, lineColor: COLORS.navy, lineWidth: 1.2 },
-    { type: "line", x1: 32, y1: 5, x2: 40, y2: 0, lineColor: COLORS.navy, lineWidth: 1.2 },
-    { type: "line", x1: 40, y1: 0, x2: 48, y2: 6, lineColor: COLORS.navy, lineWidth: 1.2 },
-  ] },
-  { text: "NILE", fontSize: 13, bold: true, color: COLORS.navy, alignment: "center", characterSpacing: 1.2 },
-  { text: "HOTEL MANAGEMENT", fontSize: 5, color: COLORS.navy, alignment: "center" },
-] });
-
 const organizationLogoUrl = async (organizationId) => {
   if (!organizationId) return null;
   try {
@@ -43,8 +31,29 @@ const organizationLogoUrl = async (organizationId) => {
   } catch (_error) { return null; }
 };
 
-const loadLogo = async (organizationId, suppliedUrl) => {
-  const url = suppliedUrl || await organizationLogoUrl(organizationId);
+// Official fallback is a real stored/configured NILE logo. The previous drawn
+// placeholder is intentionally not used by any report.
+const officialNileLogoUrl = async () => {
+  if (process.env.NILE_OFFICIAL_LOGO_URL) return process.env.NILE_OFFICIAL_LOGO_URL;
+  try {
+    const result = await pool.query(
+      `SELECT oml.logoname
+       FROM organization_master_logo oml
+       INNER JOIN organization_master om ON om.organizationid = oml.organizationid
+       WHERE oml.isdeleted = FALSE
+         AND om.isdeleted = FALSE
+         AND (LOWER(BTRIM(om.shortname)) = 'nile'
+           OR LOWER(BTRIM(om.organizationname)) = 'nile'
+           OR LOWER(BTRIM(om.organizationname)) LIKE 'nile %')
+       ORDER BY om.organizationid, oml.logoid
+       LIMIT 1`,
+      []
+    );
+    return result.rows[0]?.logoname ? generateOrganizationLogoUrl(result.rows[0].logoname) : null;
+  } catch (_error) { return null; }
+};
+
+const fetchLogo = async (url) => {
   if (!url || typeof fetch !== "function") return null;
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
@@ -55,10 +64,17 @@ const loadLogo = async (organizationId, suppliedUrl) => {
   } catch (_error) { return null; }
 };
 
+const loadLogo = async (organizationId, suppliedUrl) => {
+  const organizationUrl = suppliedUrl || await organizationLogoUrl(organizationId);
+  const organizationLogo = await fetchLogo(organizationUrl);
+  if (organizationLogo) return organizationLogo;
+  return fetchLogo(await officialNileLogoUrl());
+};
+
 const buildHeader = async (title, organizationId, logoUrl) => {
   const logo = await loadLogo(organizationId, logoUrl);
   return { table: { widths: [100, "*", 100], body: [[
-    { ...(logo ? { image: logo, fit: [78, 45], alignment: "left" } : fallbackLogo()), border: [false, false, false, false] },
+    { ...(logo ? { image: logo, fit: [78, 45], alignment: "left" } : { text: "" }), border: [false, false, false, false] },
     { text: title, style: "pdfTitle", alignment: "center", margin: [0, 15, 0, 0], border: [false, false, false, false] },
     { text: "", border: [false, false, false, false] },
   ]] }, layout: "noBorders", margin: [0, 0, 0, 10] };

@@ -88,6 +88,16 @@ test("Guest Glitch list PDFs reuse report filters and render trusted metadata", 
   assert.match(serviceSource, /params\.SelectedOrganizationName \|\| rows\[0\]\?\.OrganizationName/);
   assert.match(serviceSource, /reportResponse\.pagination\?\.totalRecords \?\? rows\.length/);
   assert.match(serviceSource, /masterReportListPdf: withReportOrganizations\(masterReportListPdf\)/);
+  assert.match(serviceSource, /const normalizeGuestPdfRecord/);
+  assert.match(serviceSource, /Departments: pdfSelectionNames\(data\.Departments\)/);
+  assert.match(serviceSource, /DepartmentHODComments: pdfHODComments/);
+  assert.match(serviceSource, /GetMetJson: pdfGuestMet/);
+  assert.match(serviceSource, /sections: pdfRecordSections\(rows\)/);
+  assert.doesNotMatch(serviceSource, /title: "Audit and Attachment"/);
+  const singlePdfSource = serviceSource.match(/const masterReportPdf = async[\s\S]*?const gmAction/)?.[0] || "";
+  assert.match(singlePdfSource, /title: "Guest Glitch", reportName: "Guest Glitch"/);
+  assert.match(singlePdfSource, /!\["ID", "Organization"\]\.includes\(key\)/);
+  assert.doesNotMatch(singlePdfSource, /\["Rate", "Rate"\]|\["Check In", "CheckInDate"\]|\["Check Out", "CheckOutDate"\]/);
 });
 
 test("list response contains stored fields required by the Guest Glitch Edit form", () => {
@@ -404,9 +414,11 @@ test("create rejects an organization not mapped to the authenticated user", asyn
 });
 
 test("complete detail preserves review attribution and resolves department names", () => {
-  const result = completeReportDTO({ id: 1, departmenthodcomments: [{ departmentId: 10, comment: "Corrected", commentedBy: "hod" }] },
+  const result = completeReportDTO({ id: 1, hotel: "HJ Udaipur", organizationfullname: "Howard Johnson by Wyndham, Udaipur", departmenthodcomments: [{ departmentId: 10, comment: "Corrected", commentedBy: "hod" }] },
     { departments: [{ ID: 10, Name: "Engineering" }] });
   assert.deepEqual(result.DepartmentHODComments, [{ departmentName: "Engineering", HODComment: "Corrected" }]);
+  assert.equal(result.OrganizationName, "HJ Udaipur");
+  assert.equal(result.OrganizationFullName, "Howard Johnson by Wyndham, Udaipur");
 });
 
 test("report query accepts dedicated filters and safe sorting", () => {

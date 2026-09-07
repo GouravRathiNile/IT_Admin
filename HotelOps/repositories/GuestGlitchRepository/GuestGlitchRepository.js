@@ -563,7 +563,8 @@ const reportList = async (data, organizationID, paginate = true) => {
     `
     SELECT
       gg.*,
-      om.organizationname AS hotel
+      om.shortname AS hotel,
+      om.organizationname AS organizationfullname
     FROM guest_glitch_entry_master gg
 
     LEFT JOIN organization_master om

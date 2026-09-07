@@ -32,12 +32,60 @@ const GUEST_GLITCH_EXPORT_COLUMNS = Object.freeze([
   { key: "ResolvedBy", header: "Resolved By", width: 22 }, { key: "UpdatedBy", header: "Updated By", width: 22 },
   { key: "GMComment", header: "GM Comment", width: 35 },
 ]);
-const guestPdfItems = (data, fields) => fields.map(([label, key]) => ({ label, value: data[key] }));
+const pdfSelectionNames = (items = []) => (Array.isArray(items)
+  ? items.map((item) => item?.Name ?? item?.name ?? item?.departmentName ?? item?.fullname)
+    .filter((value) => value !== null && value !== undefined && String(value).trim() !== "")
+    .join(", ")
+  : items) || "-";
+
+const pdfHODComments = (items = []) => (Array.isArray(items)
+  ? items.map((item) => {
+    const department = item?.departmentName ?? item?.DepartmentName ?? "Department";
+    const comment = item?.HODComment ?? item?.comment;
+    return `${department}: ${comment === null || comment === undefined || comment === "" ? "-" : comment}`;
+  }).join("\n")
+  : items) || "-";
+
+const humanizePdfKey = (key) => String(key)
+  .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+  .replace(/_/g, " ")
+  .replace(/^./, (character) => character.toUpperCase());
+
+const pdfGuestMet = (items = []) => (Array.isArray(items)
+  ? items.map((item, index) => {
+    if (!item || typeof item !== "object") return `Guest Met ${index + 1}: ${item || "-"}`;
+    const values = Object.entries(item)
+      .filter(([, value]) => value !== null && value !== undefined && value !== "")
+      .map(([key, value]) => `${humanizePdfKey(key)}: ${pdfValue(value)}`);
+    return `Guest Met ${index + 1}: ${values.join("; ") || "-"}`;
+  }).join("\n")
+  : items) || "-";
+
+const pdfValue = (value) => {
+  if (value === null || value === undefined || value === "") return "-";
+  if (Array.isArray(value)) return pdfSelectionNames(value);
+  if (typeof value === "object") {
+    return Object.entries(value).map(([key, item]) => `${humanizePdfKey(key)}: ${pdfValue(item)}`).join("; ") || "-";
+  }
+  return value;
+};
+
+const normalizeGuestPdfRecord = (data = {}) => ({
+  ...data,
+  Organization: data.OrganizationName ?? data.Hotel,
+  Departments: pdfSelectionNames(data.Departments),
+  ReceivedByUsers: pdfSelectionNames(data.ReceivedByUsers),
+  InformedToUsers: pdfSelectionNames(data.InformedToUsers),
+  ResolvedBy: data.ResolvedByName ?? data.ResolvedBy,
+  DepartmentHODComments: pdfHODComments(data.DepartmentHODComments),
+  GetMetJson: pdfGuestMet(data.GetMetJson),
+});
+
+const guestPdfItems = (data, fields) => fields.map(([label, key]) => ({ label, value: pdfValue(data[key]) }));
 const GUEST_GLITCH_PDF_SECTIONS = Object.freeze([
-  { title: "Hotel and Guest", fields: [["Hotel", "Hotel"], ["Entry Date", "EntryDate"], ["Room", "RoomNumber"], ["Guest", "GuestName"], ["Guest Status", "GuestStatus"], ["Company", "CompanyName"], ["Rate", "Rate"], ["Check In", "CheckInDate"], ["Check Out", "CheckOutDate"]] },
-  { title: "Complaint and Follow-up", fields: [["Complaint", "Complaint"], ["Complaint Source", "ComplaintSource"], ["Raise Source", "RaiseSource"], ["Departments", "Departments"], ["Received By", "ReceivedByUsers"], ["Informed To", "InformedToUsers"], ["Process Lapse", "ProcessLapse"], ["Service Recovery", "ServiceRecovery"], ["Detailed Investigation", "DetailedInvestigation"], ["Internal Action", "InternalActionTaken"]] },
-  { title: "Status and Follow-up", fields: [["Status", "Status"], ["Resolved By", "ResolvedBy"], ["GM Comment", "GMComment"], ["HOD Comments", "DepartmentHODComments"]] },
-  { title: "Audit and Attachment", fields: [["Created By", "CreatedBy"], ["Created Date", "CreatedDate"], ["Modified By", "ModifyBy"], ["Modified Date", "ModifyDate"], ["Attachment", "Attachment"]] },
+  { title: "Hotel and Guest", fields: [["Record ID", "ID"], ["Organization", "Organization"], ["Entry Date", "EntryDate"], ["Time", "Time"], ["Room", "RoomNumber"], ["Guest Name", "GuestName"], ["Guest Status", "GuestStatus"], ["Company", "CompanyName"]] },
+  { title: "Complaint and Follow-up", fields: [["Complaint", "Complaint"], ["Complaint Source", "ComplaintSource"], ["Raise Source", "RaiseSource"], ["Departments", "Departments"], ["Received By", "ReceivedByUsers"], ["Informed To", "InformedToUsers"], ["Process Lapse Category", "ProcessLapseCategory"], ["Process Lapse", "ProcessLapse"], ["Service Recovery", "ServiceRecovery"], ["Detailed Investigation", "DetailedInvestigation"], ["Internal Action Category", "InternalActionTakenCategory"], ["Internal Action", "InternalActionTaken"], ["Service Recovery - Room", "SRA_Room"], ["Service Recovery - Food", "SRA_Food"], ["Service Recovery - Other", "SRA_Other"]] },
+  { title: "Status and Follow-up", fields: [["Status", "Status"], ["Resolved By", "ResolvedBy"], ["GM Comment", "GMComment"], ["HOD Comments", "DepartmentHODComments"], ["Guest Met Details", "GetMetJson"]] },
 ]);
 
 const fail = (message, statusCode = 400, errors) => ({ success: false, statusCode, message, ...(errors ? { errors } : {}) });
@@ -541,26 +589,19 @@ const compactPdfColumns = [
   { header: "ID", key: "ID", width: 28, align: "center" },
   { header: "Date", key: "EntryDate", width: 48, align: "center" },
   { header: "Room", key: "RoomNumber", width: 34, align: "center" },
-  { header: "Guest", key: "GuestName", width: 58 },
-  { header: "Guest Status", key: "GuestStatus", width: 48 },
-  { header: "Departments", key: "Departments", width: 65 },
-  { header: "Complaint", key: "Complaint", width: 112 },
-  { header: "Process Lapse", key: "ProcessLapse", width: 78 },
-  { header: "Service Recovery", key: "ServiceRecovery", width: 78 },
-  { header: "Internal Action", key: "InternalActionTaken", width: 78 },
-  { header: "Company", key: "CompanyName", width: 55 },
-  { header: "Rate", key: "Rate", width: 36, align: "right" },
-  { header: "Status", key: "Status", width: 45 },
+  { header: "Guest Name", key: "GuestName", width: 75 },
+  { header: "Guest Status", key: "GuestStatus", width: 55 },
+  { header: "Departments", key: "Departments", width: 90 },
+  { header: "Complaint", key: "Complaint", width: "*" },
+  { header: "Status", key: "Status", width: 52 },
 ];
 
-const masterPdfColumns = [
-  ...compactPdfColumns.map((column) => ({ ...column, width: Math.max(20, Math.floor(column.width * 0.65)) })),
-  { header: "Investigation", key: "DetailedInvestigation", width: 45 },
-  { header: "Received By", key: "ReceivedByUsers", width: 42, value: (row) => selectionNames(row.ReceivedByUsers) },
-  { header: "Informed To", key: "InformedToUsers", width: 42, value: (row) => selectionNames(row.InformedToUsers) },
-  { header: "Resolved By", key: "ResolvedBy", width: 38 },
-  { header: "GM Comment", key: "GMComment", width: 48 },
-];
+const pdfRecordSections = (rows) => rows.flatMap((record) => GUEST_GLITCH_PDF_SECTIONS.map((section, index) => ({
+  title: index === 0
+    ? `Guest Glitch #${record.ID}${record.GuestName ? ` - ${record.GuestName}` : ""}`
+    : section.title,
+  items: guestPdfItems(record, section.fields),
+})));
 
 // Both list PDFs reuse the exact JSON report filtering/query/DTO pipeline.
 const buildReportListPdf = async (params, complete = false) => {
@@ -568,13 +609,13 @@ const buildReportListPdf = async (params, complete = false) => {
     ...params,
     page: 1,
     pageSize: 100000,
-  }, complete);
+  }, true);
 
   if (!reportResponse.success) {
     return reportResponse;
   }
 
-  const rows = reportResponse.data || [];
+  const rows = (reportResponse.data || []).map(normalizeGuestPdfRecord);
 
   const title = complete ? "Guest Glitch Master Report" : "Guest Glitch Report";
   const pdf = await generatePdf({
@@ -604,11 +645,14 @@ const buildReportListPdf = async (params, complete = false) => {
         value: reportResponse.pagination?.totalRecords ?? rows.length,
       },
     ],
-    columns: complete ? masterPdfColumns : compactPdfColumns,
+    columns: compactPdfColumns,
     rows,
+    sections: pdfRecordSections(rows),
     styles: {
-      pdfTableHeader: { fontSize: complete ? 5.2 : 6, bold: true, color: "#FFFFFF" },
-      pdfTableCell: { fontSize: complete ? 5 : 5.8 },
+      pdfTableHeader: { fontSize: 6.5, bold: true, color: "#FFFFFF" },
+      pdfTableCell: { fontSize: 6.2 },
+      pdfLabel: { fontSize: 7.2, bold: true, color: "#082B5C" },
+      pdfValue: { fontSize: 7.4, color: "#172033" },
     },
     tableOptions: {
       layout: {
@@ -648,11 +692,29 @@ const masterReportPdf = async (data) => {
   const detail = await reportDetail(data);
   if (!detail.success) return detail;
   try {
+    const record = normalizeGuestPdfRecord(detail.data);
+    const singleRecordSections = GUEST_GLITCH_PDF_SECTIONS.map((section, index) => ({
+      title: section.title,
+      items: guestPdfItems(
+        record,
+        index === 0
+          ? section.fields.filter(([, key]) => !["ID", "Organization"].includes(key))
+          : section.fields
+      ),
+    }));
     const buffer = await generatePdf({
-      title: "Guest Glitch Master Report", reportName: "Guest Glitch Master Report",
-      organizationId: detail.data.OrganizationID,
-      metadata: [{ label: "Record ID", value: detail.data.ID }, { label: "Organization", value: detail.data.OrganizationName || detail.data.Hotel }],
-      sections: GUEST_GLITCH_PDF_SECTIONS.map((section) => ({ title: section.title, items: guestPdfItems(detail.data, section.fields) })),
+      title: "Guest Glitch", reportName: "Guest Glitch",
+      organizationId: record.OrganizationID,
+      orientation: "landscape",
+      metadata: [{ label: "Record ID", value: record.ID }, { label: "Organization", value: record.Organization }],
+      sections: singleRecordSections,
+      pageMargins: [20, 18, 20, 28],
+      styles: {
+        pdfTitle: { fontSize: 16, bold: true, color: "#082B5C" },
+        pdfSection: { fontSize: 10.5, bold: true, color: "#082B5C" },
+        pdfLabel: { fontSize: 7, bold: true, color: "#082B5C" },
+        pdfValue: { fontSize: 7.2, color: "#172033" },
+      },
     });
     return { success: true, message: "Guest Glitch PDF generated successfully", pdfBase64: buffer.toString("base64"), filename: `guest-glitch-${data.ID}.pdf` };
   } catch (error) {

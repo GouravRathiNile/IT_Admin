@@ -223,7 +223,10 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
     row.organizationid ?? row.OrganizationID,
 
   OrganizationName:
-    row.organizationname ?? row.OrganizationName ?? null,
+    row.hotel ?? row.Hotel ?? row.shortname ?? row.organizationname ?? row.OrganizationName ?? null,
+
+  OrganizationFullName:
+    row.organizationfullname ?? row.OrganizationFullName ?? row.organizationname ?? null,
 
   EntryDate: formatDate(row.entrydate ?? row.EntryDate),
 
