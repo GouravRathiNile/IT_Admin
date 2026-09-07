@@ -639,6 +639,11 @@ const resolveSelections = async (client, organizationID, rows = []) => {
       ),
     ];
 
+  const guestMetUserIDs = [...new Set(rows
+    .flatMap((row) => Array.isArray(row.getmetjson) ? row.getmetjson : [])
+    .map((item) => item?.GuestMetBy ?? item?.guestMetBy)
+    .filter((value) => /^\d+$/.test(String(value ?? "")))
+    .map(Number))];
   const resolvedByValues = [...new Set(rows.map((row) => row.resolvedby).filter((value) => value !== null && value !== undefined && String(value).trim() !== ""))];
   const [departments, users, resolvedUsers] = await Promise.all([
     validateDepartments(
@@ -654,6 +659,7 @@ const resolveSelections = async (client, organizationID, rows = []) => {
         ...new Set([
           ...unique("receivedbyids"),
           ...unique("informedtoids"),
+          ...guestMetUserIDs,
         ]),
       ]
     ),
@@ -703,6 +709,13 @@ const resolveSelections = async (client, organizationID, rows = []) => {
         ID: id,
         Name: userMap.get(id) || null,
       })),
+
+    guestMetUsers: (Array.isArray(row.getmetjson) ? row.getmetjson : [])
+      .map((item) => item?.GuestMetBy ?? item?.guestMetBy)
+      .filter((value) => /^\d+$/.test(String(value ?? "")))
+      .map(Number)
+      .filter((id, index, ids) => ids.indexOf(id) === index)
+      .map((id) => ({ ID: id, Name: userMap.get(id) || null })),
 
     resolvedByUser: resolvedUserMap.get(String(row.resolvedby ?? "").trim().toLowerCase()) || null,
   }));

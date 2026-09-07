@@ -384,6 +384,7 @@ const list = async (data) => {
           departments: [],
           receivedByUsers: [],
           informedToUsers: [],
+          guestMetUsers: [],
         }
       )
     );
@@ -428,12 +429,22 @@ const get = async (data) => {
     const recordOrganizationID = Number(row.organizationid);
     const [resolved] = await repository.resolveSelections(client, recordOrganizationID, [row]);
     const editData = listResponseDTO(row, resolved);
+    const mappedRecord = formatGuestGlitchDates(mapRow(row));
+    const {
+      Rate: _rate,
+      CheckInDate: _checkInDate,
+      CheckOutDate: _checkOutDate,
+      ComplaintSource: _complaintSource,
+      RaiseSource: _raiseSource,
+      AttachmentTitle: _attachmentTitle,
+      ...editRecord
+    } = mappedRecord;
 
     return {
       success: true, message: "Guest glitch retrieved successfully.", data: {
         // Retain the existing detail fields/ID arrays while also returning the
         // same complete, consistently named edit fields exposed by List.
-        ...formatGuestGlitchDates(mapRow(row)),
+        ...editRecord,
         ...editData,
         DepartmentIDs: row.departmentids || [],
         ReceivedByIDs: row.receivedbyids || [],
@@ -463,6 +474,9 @@ const update = async (data) => {
     const selectionData = { ...merged };
     if (!Object.prototype.hasOwnProperty.call(data, "ResolvedBy")) {
       selectionData.ResolvedBy = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(data, "GetMetJson")) {
+      selectionData.GetMetJson = [];
     }
     const selections = await validateSelections(client, selectionData, data.OrganizationID);
     if (selections.error) { await client.query("ROLLBACK"); return selections.error; }

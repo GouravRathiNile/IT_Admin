@@ -14,6 +14,18 @@ const parseJSONField = (value) => {
   try { return JSON.parse(value); } catch (_) { return value; }
 };
 
+// The database/public response retain the established `GetMetJson` name.
+// Normalize common frontend spellings before allowlist validation so a valid
+// Guest Met edit is not silently omitted from the update DTO.
+const normalizeGuestMetField = (data) => {
+  const aliases = ["GuestMetJson", "GuestMetJSON", "getMetJson", "guestMetJson"];
+  const alias = aliases.find((field) => Object.prototype.hasOwnProperty.call(data, field));
+  if (!Object.prototype.hasOwnProperty.call(data, "GetMetJson") && alias) {
+    data.GetMetJson = data[alias];
+  }
+  aliases.forEach((field) => { delete data[field]; });
+};
+
 const normalizeIDArray = (body, field, errors, required = false) => {
   const value = parseJSONField(body[field]);
   if (!Array.isArray(value)) {
@@ -133,13 +145,19 @@ const validateCommon = (data, isCreate) => {
           errors.push(error("GetMetJson", `Guest Met row ${index + 1} must be a valid object.`));
           return item;
         }
-        const guestMetBy = item.GuestMetBy ?? item.guestMetBy;
+        const guestMetBy = item.GuestMetBy ?? item.guestMetBy
+          ?? item.GuestMetByID ?? item.GuestMetById ?? item.guestMetById;
         if (guestMetBy !== undefined && guestMetBy !== null && guestMetBy !== "") {
           if (!isPositiveInteger(guestMetBy)) {
             errors.push(error("GetMetJson", `GuestMetBy in row ${index + 1} must be a valid positive user ID.`));
             return item;
           }
-          return { ...item, GuestMetBy: Number(guestMetBy) };
+          const normalized = { ...item, GuestMetBy: Number(guestMetBy) };
+          delete normalized.guestMetBy;
+          delete normalized.GuestMetByID;
+          delete normalized.GuestMetById;
+          delete normalized.guestMetById;
+          return normalized;
         }
         return item;
       });
@@ -157,11 +175,12 @@ const validateCreate = (body = {}) => {
 
 const validateUpdate = (body = {}) => {
   const data = { ...body, ID: body.ID ?? body.id };
+  normalizeGuestMetField(data);
   const errors = [];
   if (data.ID === undefined || data.ID === null || data.ID === "") errors.push(error("ID", "Guest Glitch ID is required"));
   else if (!isPositiveInteger(data.ID)) errors.push(error("ID", "Guest Glitch ID must be a valid number"));
   errors.push(...validateCommon(data, false));
-  if (!EDITABLE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(body, field))) errors.push(error("body", "At least one editable field is required."));
+  if (!EDITABLE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(data, field))) errors.push(error("body", "At least one editable field is required."));
   return { data, errors };
 };
 

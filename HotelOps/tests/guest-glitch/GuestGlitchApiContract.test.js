@@ -108,16 +108,18 @@ test("list response contains stored fields required by the Guest Glitch Edit for
     processlapsecategory: "Service", processlapse: "Delay", internalactiontakencategory: "Training",
     internalactiontaken: "Team briefed", detailedinvestigation: "Reviewed", gmcomment: "Closed",
     sra_room: "100", sra_food: "50", sra_other: "25", departmenthodcomments: [{ departmentId: 1029, comment: "Checked" }],
-    getmetjson: [{ GuestMetBy: 12 }], rate: "4500", checkindate: "2026-08-24", checkoutdate: "2026-08-26" }, {
+    getmetjson: [{ GuestMetBy: 12, Designation: "Manager", GuestMetOn: "2026-08-25", GuestMetDuring: "Dinner" }],
+    rate: "4500", checkindate: "2026-08-24", checkoutdate: "2026-08-26",
+    complaintsource: "Call", raisesource: "Guest", attachmenttitle: "proof.pdf" }, {
     departments: [{ ID: 1029, Name: "Engineering" }],
     receivedByUsers: [{ ID: 12, Name: "User A" }], informedToUsers: [{ ID: 15, Name: "User B" }],
     resolvedByUser: { ID: 18, Name: "Manager" },
+    guestMetUsers: [{ ID: 12, Name: "User A" }],
   });
   for (const field of ["GuestStatus", "ReceivedByUsers", "InformedToUsers",
     "ResolvedBy", "ProcessLapseCategory", "ProcessLapse", "InternalActionTakenCategory", "InternalActionTaken",
     "DetailedInvestigation", "ServiceRecovery", "GMComment", "SRA_Room", "SRA_Food", "SRA_Other",
-    "DepartmentHODComments", "GetMetJson", "CompanyName", "Rate", "CheckInDate", "CheckOutDate",
-    "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
+    "DepartmentHODComments", "GetMetJson", "CompanyName"]) {
     assert.ok(Object.prototype.hasOwnProperty.call(response, field), `Missing edit field: ${field}`);
   }
   assert.equal(response.OrganizationName, "Ramada");
@@ -125,6 +127,11 @@ test("list response contains stored fields required by the Guest Glitch Edit for
   assert.equal(response.DepartmentHODComments[0].departmentName, "Engineering");
   assert.equal(response.ResolvedBy, 18);
   assert.equal(response.ResolvedByName, "Manager");
+  assert.equal(response.GetMetJson[0].GuestMetBy, 12);
+  assert.equal(response.GetMetJson[0].GuestMetByName, "User A");
+  for (const field of ["Rate", "CheckInDate", "CheckOutDate", "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(response, field), false, `Unexpected edit field: ${field}`);
+  }
   assert.equal(Object.prototype.hasOwnProperty.call(response, "DepartmentIDs"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(response, "ReceivedByIDs"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(response, "InformedToIDs"), false);
@@ -133,8 +140,7 @@ test("list response contains stored fields required by the Guest Glitch Edit for
 test("list response keeps nullable edit fields present instead of omitting them", () => {
   const response = listResponseDTO({ id: 1, organizationid: 30 }, {});
   for (const field of ["ServiceRecovery", "DetailedInvestigation", "InternalActionTaken",
-    "ProcessLapse", "GMComment", "CompanyName", "Rate", "CheckInDate", "CheckOutDate",
-    "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
+    "ProcessLapse", "GMComment", "CompanyName"]) {
     assert.ok(Object.prototype.hasOwnProperty.call(response, field), `Missing nullable edit field: ${field}`);
   }
   assert.deepEqual(response.Departments, []);
@@ -397,8 +403,7 @@ test("static dropdown values are stored without Guest Glitch option-master valid
   assert.doesNotMatch(serviceSource, /validateOptions|listOptions|upsertOption/);
   assert.doesNotMatch(repositorySource, /const findOption|const listOptions|const upsertOption/);
   const validation = validator.validateUpdate({
-    ID: 1, GuestStatus: "Frontend Static Status", ComplaintSource: "Frontend Static Source",
-    RaiseSource: "Frontend Raise Source", ProcessLapseCategory: "Frontend Category",
+    ID: 1, GuestStatus: "Frontend Static Status", ProcessLapseCategory: "Frontend Category",
     InternalActionTakenCategory: "Frontend Action Category",
   });
   assert.deepEqual(validation.errors, []);

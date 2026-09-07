@@ -9,6 +9,25 @@ const mapHODComments = (comments = [], departments = []) => comments.map((item) 
   HODComment: String(item.HODComment ?? item.comment ?? ""),
 }));
 
+// Preserve every stored Guest Met field while enriching its selected user ID
+// with the organization-scoped display data required by the Edit page.
+const mapGuestMetRows = (rows, users = []) => {
+  if (!Array.isArray(rows)) return rows ?? [];
+  const userMap = new Map(users.map((user) => [Number(user.ID ?? user.id), user]));
+  return rows.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const rawID = item.GuestMetBy ?? item.guestMetBy;
+    if (rawID === undefined || rawID === null || rawID === "") return item;
+    const guestMetBy = /^\d+$/.test(String(rawID ?? "")) ? Number(rawID) : rawID ?? null;
+    const user = Number.isSafeInteger(Number(guestMetBy)) ? userMap.get(Number(guestMetBy)) : null;
+    return {
+      ...item,
+      GuestMetBy: guestMetBy,
+      GuestMetByName: user?.Name ?? user?.name ?? item.GuestMetByName ?? item.guestMetByName ?? null,
+    };
+  });
+};
+
 const EDITABLE_FIELDS = Object.freeze([
   "EntryDate",
   "Status",
@@ -21,17 +40,11 @@ const EDITABLE_FIELDS = Object.freeze([
   "DetailedInvestigation",
   "InternalActionTaken",
   "CompanyName",
-  "Rate",
-  "CheckInDate",
-  "CheckOutDate",
   "GMComment",
   "ProcessLapse",
   "SRA_Room",
   "SRA_Food",
   "SRA_Other",
-  "RaiseSource",
-  "ComplaintSource",
-  "AttachmentTitle",
   "GuestStatus",
   "ProcessLapseCategory",
   "InternalActionTakenCategory",
@@ -197,15 +210,9 @@ const listResponseDTO = (row, resolved = {}) => ({
   SRA_Other: row.sra_other == null ? null : Number(row.sra_other),
 
   DepartmentHODComments: mapHODComments(row.departmenthodcomments || [], resolved.departments || []),
-  GetMetJson: row.getmetjson ?? [],
+  GetMetJson: mapGuestMetRows(row.getmetjson, resolved.guestMetUsers || []),
 
   CompanyName: row.companyname ?? null,
-  Rate: row.rate == null ? null : Number(row.rate),
-  CheckInDate: formatDate(row.checkindate),
-  CheckOutDate: formatDate(row.checkoutdate),
-  ComplaintSource: row.complaintsource ?? null,
-  RaiseSource: row.raisesource ?? null,
-  AttachmentTitle: row.attachmenttitle ?? null,
 });
 
 /*

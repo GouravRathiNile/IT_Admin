@@ -68,6 +68,24 @@ test("Guest Met repeated rows are accepted as JSON arrays on update", () => {
   assert.equal(multipartValidation.data.GetMetJson[0].GuestMetBy, 5);
   assert.ok(validator.validateUpdate({ ID: 1, GetMetJson: [{ GuestMetBy: "Manager Name" }] })
     .errors.some((item) => /positive user ID/.test(item.message)));
+
+  const frontendAlias = validator.validateUpdate({
+    ID: 1,
+    GuestMetJson: JSON.stringify([{
+      GuestMetById: "5", Designation: "FC", GuestMetOn: "2026-09-07", GuestMetDuring: "During Stay",
+    }]),
+  });
+  assert.deepEqual(frontendAlias.errors, []);
+  assert.deepEqual(frontendAlias.data.GetMetJson, [{
+    GuestMetBy: 5, Designation: "FC", GuestMetOn: "2026-09-07", GuestMetDuring: "During Stay",
+  }]);
+});
+
+test("update rejects fields removed from the Edit contract", () => {
+  for (const field of ["Rate", "CheckInDate", "CheckOutDate", "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
+    const validation = validator.validateUpdate({ ID: 1, [field]: "value" });
+    assert.ok(validation.errors.some((item) => item.field === field && /not an allowed field/.test(item.message)));
+  }
 });
 
 test("list pagination and safe sorting are validated", () => {
