@@ -207,6 +207,12 @@ exports.getDateRangeReport = async (req, res) => {
       OrganizationID: req.query.OrganizationID || null,
       FromDate: req.query.FromDate || null,
       ToDate: req.query.ToDate || null,
+      MetBy:
+        req.query.MetBy !== undefined &&
+        req.query.MetBy !== null &&
+        String(req.query.MetBy).trim() !== ""
+          ? req.query.MetBy
+          : null,
       page: Number(req.query.page) || 1,
       PageSize: Number(req.query.PageSize) || 10,
     };
@@ -271,6 +277,13 @@ exports.getDateRangeReportPdf = async (req, res) => {
 
       ToDate:
         req.query.ToDate || null,
+
+      MetBy:
+        req.query.MetBy !== undefined &&
+        req.query.MetBy !== null &&
+        String(req.query.MetBy).trim() !== ""
+          ? req.query.MetBy
+          : null,
     };
 
     const response =

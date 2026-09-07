@@ -1,5 +1,7 @@
 const { pool } = require("../../db");
-const {retryableDatabaseResponse} = require("../../utils/retryableDatabaseError");
+const {
+  retryableDatabaseResponse,
+} = require("../../utils/retryableDatabaseError");
 const { formatDate } = require("../../utils/dateFormatter");
 const { generatePdf } = require("../../utils/pdfHelper");
 
@@ -90,6 +92,23 @@ const addDateFilters = (data, values, alias = "m") => {
   add("EntryDate", data.ToDate, "<=");
   return conditions.length ? ` AND ${conditions.join(" AND ")}` : "";
 };
+// Normalize optional user-ID filters before they reach PostgreSQL.
+const optionalPositiveInteger = (value, fieldName) => {
+  if (
+    value === undefined ||
+    value === null ||
+    String(value).trim() === ""
+  ) {
+    return { value: null };
+  }
+
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized <= 0) {
+    return { error: fail(`${fieldName} must be a positive integer.`, 400) };
+  }
+
+  return { value: normalized };
+};
 
 // ============================================================ Create or Update Daily Entry
 // An advisory transaction lock prevents concurrent duplicate active rows for org/date.
@@ -99,14 +118,13 @@ const createDailyEntry = async (data) => {
   try {
     await client.query("BEGIN");
 
-   // EntryDate frontend body se aa rahi hai
-    const entryDate = data.EntryDate; 
+    // EntryDate frontend body se aa rahi hai
+    const entryDate = data.EntryDate;
 
     // Lock based on Organization + Current Date
-    await client.query(
-      "SELECT pg_advisory_xact_lock(hashtext($1));",
-      [`GuestMeet:${data.OrganizationID}:${entryDate}`]
-    );
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1));", [
+      `GuestMeet:${data.OrganizationID}:${entryDate}`,
+    ]);
 
     const existing = await client.query(
       `SELECT GMMasterID
@@ -117,7 +135,7 @@ const createDailyEntry = async (data) => {
        ORDER BY GMMasterID
        LIMIT 1
        FOR UPDATE;`,
-      [data.OrganizationID, entryDate]
+      [data.OrganizationID, entryDate],
     );
 
     let result;
@@ -147,11 +165,7 @@ const createDailyEntry = async (data) => {
          WHERE GMMasterID = $7
            AND IsDeleted = FALSE
          RETURNING *;`,
-        [
-          ...values,
-          data.UserID,
-          existing.rows[0].gmmasterid
-        ]
+        [...values, data.UserID, existing.rows[0].gmmasterid],
       );
     } else {
       created = true;
@@ -172,12 +186,7 @@ const createDailyEntry = async (data) => {
          )
          VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,CURRENT_TIMESTAMP)
          RETURNING *;`,
-        [
-          data.OrganizationID,
-          entryDate,
-          ...values,
-          data.UserID
-        ]
+        [data.OrganizationID, entryDate, ...values, data.UserID],
       );
     }
 
@@ -190,7 +199,6 @@ const createDailyEntry = async (data) => {
       // mapMaster(result.rows[0]),
       // { created }
     );
-
   } catch (error) {
     await client.query("ROLLBACK");
     return databaseFailure(error, "Save Guest Meet daily entry");
@@ -378,7 +386,7 @@ const createGuestDetail = async (data) => {
       ],
     );
     await client.query("COMMIT");
-    return ok("Guest detail created successfully.", );
+    return ok("Guest detail created successfully.");
   } catch (error) {
     await client.query("ROLLBACK");
     return databaseFailure(error, "Create Guest Meet detail");
@@ -453,7 +461,11 @@ const getDateRangeReport = async (data) => {
       return fail("FromDate cannot be greater than ToDate.", 400);
     }
 
+    const metByFilter = optionalPositiveInteger(data.MetBy, "MetBy");
+    if (metByFilter.error) return metByFilter.error;
+
     const parameters = [data.OrganizationID, data.FromDate, data.ToDate];
+    const detailParameters = [...parameters, metByFilter.value];
     const page = Number(data.page) || 1;
     const pageSize = Number(data.PageSize) || 10;
     const offset = (page - 1) * pageSize;
@@ -494,8 +506,9 @@ const getDateRangeReport = async (data) => {
           AND m.IsDeleted = FALSE
          WHERE m.OrganizationID = $1
            AND m.EntryDate BETWEEN $2 AND $3
-           AND d.IsDeleted = FALSE;`,
-        parameters,
+           AND d.IsDeleted = FALSE
+           AND ($4::bigint IS NULL OR d.MetBy = $4::bigint);`,
+        detailParameters,
       ),
       pool.query(
         `SELECT d.*
@@ -506,9 +519,10 @@ const getDateRangeReport = async (data) => {
          WHERE m.OrganizationID = $1
            AND m.EntryDate BETWEEN $2 AND $3
            AND d.IsDeleted = FALSE
+           AND ($4::bigint IS NULL OR d.MetBy = $4::bigint)
          ORDER BY m.EntryDate DESC, m.GMMasterID DESC, d.GMDetailID ASC
-         LIMIT $4 OFFSET $5;`,
-        [...parameters, pageSize, offset],
+         LIMIT $5 OFFSET $6;`,
+        [...detailParameters, pageSize, offset],
       ),
     ]);
 
@@ -638,25 +652,19 @@ const getFeedbackReport = async (data) => {
 
         FeedbackData: [
           {
-            "Positive Feedback":
-              Number(row.positivefeedback || 0),
+            "Positive Feedback": Number(row.positivefeedback || 0),
           },
           {
-            "Average Feedback":
-              Number(row.averagefeedback || 0),
+            "Average Feedback": Number(row.averagefeedback || 0),
           },
           {
-            "Negative Feedback":
-              Number(row.negativefeedback || 0),
+            "Negative Feedback": Number(row.negativefeedback || 0),
           },
         ],
       })),
     );
   } catch (error) {
-    return databaseFailure(
-      error,
-      "Generate Guest Meet feedback report",
-    );
+    return databaseFailure(error, "Generate Guest Meet feedback report");
   }
 };
 // ============================================================ Met By Report
@@ -694,15 +702,10 @@ const generateDateRangeReportPdf = async (data) => {
     // VALIDATION
     // ============================================================
 
-    if (
-      !data.OrganizationID ||
-      !data.FromDate ||
-      !data.ToDate
-    ) {
+    if (!data.OrganizationID || !data.FromDate || !data.ToDate) {
       return {
         success: false,
-        message:
-          "OrganizationID, FromDate and ToDate are required.",
+        message: "OrganizationID, FromDate and ToDate are required.",
         statusCode: 400,
       };
     }
@@ -710,17 +713,16 @@ const generateDateRangeReportPdf = async (data) => {
     if (data.FromDate > data.ToDate) {
       return {
         success: false,
-        message:
-          "FromDate cannot be greater than ToDate.",
+        message: "FromDate cannot be greater than ToDate.",
         statusCode: 400,
       };
     }
 
-    const parameters = [
-      data.OrganizationID,
-      data.FromDate,
-      data.ToDate,
-    ];
+    const metByFilter = optionalPositiveInteger(data.MetBy, "MetBy");
+    if (metByFilter.error) return metByFilter.error;
+
+    const parameters = [data.OrganizationID, data.FromDate, data.ToDate];
+    const detailParameters = [...parameters, metByFilter.value];
 
     // ============================================================
     // MASTER SUMMARY
@@ -788,7 +790,7 @@ const generateDateRangeReportPdf = async (data) => {
     // ============================================================
 
     const detailsResult = await pool.query(
-  `
+      `
   SELECT
     d.*,
     um.FullName AS MetByName
@@ -806,31 +808,30 @@ const generateDateRangeReportPdf = async (data) => {
   WHERE m.OrganizationID = $1
     AND m.EntryDate BETWEEN $2 AND $3
     AND d.IsDeleted = FALSE
+    AND ($4::bigint IS NULL OR d.MetBy = $4::bigint)
 
   ORDER BY
     m.EntryDate DESC,
     m.GMMasterID DESC,
     d.GMDetailID ASC;
   `,
-  parameters,
-);
+      detailParameters,
+    );
 
     // ============================================================
     // MAP DETAILS
     // Same mapper as GET API
     // ============================================================
 
-    const guestDetails =
-      detailsResult.rows.map(mapDetail);
+    const guestDetails = detailsResult.rows.map(mapDetail);
 
-    const organizationId =
-      Number(data.OrganizationID);
-// ============================================================
-// ORGANIZATION DETAILS
-// ============================================================
+    const organizationId = Number(data.OrganizationID);
+    // ============================================================
+    // ORGANIZATION DETAILS
+    // ============================================================
 
-const organizationResult = await pool.query(
-  `
+    const organizationResult = await pool.query(
+      `
   SELECT
     OrganizationID,
     OrganizationName
@@ -839,11 +840,10 @@ const organizationResult = await pool.query(
     AND IsDeleted = FALSE
   LIMIT 1;
   `,
-  [organizationId],
-);
+      [organizationId],
+    );
 
-const organization =
-  organizationResult.rows[0] || null;
+    const organization = organizationResult.rows[0] || null;
     // ============================================================
     // PDF COLUMNS
     // ============================================================
@@ -855,7 +855,7 @@ const organization =
         width: 50,
         align: "center",
       },
-       {
+      {
         header: "RN#.",
         value: (row) => row.RoomNo,
         width: 25,
@@ -866,7 +866,7 @@ const organization =
         value: (row) => row.GuestName,
         width: 75,
       },
-        {
+      {
         header: "Arrival",
         value: (row) => row.Arrival,
         width: 50,
@@ -883,15 +883,15 @@ const organization =
         value: (row) => row.BookingSource,
         width: 60,
       },
-       {
+      {
         header: "Met On",
         value: (row) => row.MetOn,
         width: 50,
         align: "center",
       },
-       {
+      {
         header: "Met By",
-         value: (row) => row.MetByName || "-",
+        value: (row) => row.MetByName || "-",
         width: 65,
         align: "center",
       },
@@ -911,11 +911,6 @@ const organization =
         value: (row) => row.ActionTaken,
         width: 105,
       },
-     
-     
-      
-      
-      
     ];
 
     // ============================================================
@@ -925,8 +920,7 @@ const organization =
     const metadata = [
       {
         label: "Organization",
-        value:
-          organization?.organizationname || "-",
+        value: organization?.organizationname || "-",
       },
       {
         label: "From Date",
@@ -962,9 +956,7 @@ const organization =
       },
       {
         label: "Created Date",
-        value: master?.createddate
-          ? formatDate(master.createddate)
-          : "-",
+        value: master?.createddate ? formatDate(master.createddate) : "-",
       },
     ];
 
@@ -975,26 +967,21 @@ const organization =
     const pdfBuffer = await generatePdf({
       title: "GUEST MEET DATE RANGE REPORT",
 
-      reportName:
-        "Guest Meet Date Range Report",
+      reportName: "Guest Meet Date Range Report",
 
       organizationId,
 
-      logoUrl:
-        data.logoUrl,
+      logoUrl: data.logoUrl,
 
-      orientation:
-        "landscape",
+      orientation: "landscape",
 
       metadata,
 
       columns,
 
-      rows:
-        guestDetails,
+      rows: guestDetails,
 
-      pageMargins:
-        [20, 25, 20, 35],
+      pageMargins: [20, 25, 20, 35],
     });
 
     // ============================================================
@@ -1004,32 +991,23 @@ const organization =
     return {
       success: true,
 
-      message:
-        "Guest Meet date range PDF generated successfully.",
+      message: "Guest Meet date range PDF generated successfully.",
 
-      data:
-        pdfBuffer,
+      data: pdfBuffer,
 
-      fileName:
-        `Guest_Meet_Date_Range_Report_${Date.now()}.pdf`,
+      fileName: `Guest_Meet_Date_Range_Report_${Date.now()}.pdf`,
 
-      contentType:
-        "application/pdf",
+      contentType: "application/pdf",
     };
   } catch (error) {
-    console.error(
-      "Guest Meet Date Range PDF Error:",
-      error,
-    );
+    console.error("Guest Meet Date Range PDF Error:", error);
 
     return {
       success: false,
 
-      message:
-        "Unable to generate Guest Meet date range PDF.",
+      message: "Unable to generate Guest Meet date range PDF.",
 
-      statusCode:
-        503,
+      statusCode: 503,
     };
   }
 };
@@ -1125,14 +1103,11 @@ const generateFeedbackReportPdf = async (data) => {
     // ============================================================
 
     const reportData = result.rows.map((row) => ({
-      OrganizationID:
-        Number(row.organizationid),
+      OrganizationID: Number(row.organizationid),
 
-      ShortName:
-        row.shortname,
+      ShortName: row.shortname,
 
-      FeedbackData:
-        row.feedbackdata || [],
+      FeedbackData: row.feedbackdata || [],
     }));
 
     // ============================================================
@@ -1140,47 +1115,53 @@ const generateFeedbackReportPdf = async (data) => {
     // Negative and Positive as separate columns
     // ============================================================
 
-   const feedbackRows = reportData.map((organization) => {
-  const feedbackCounts = {};
+    const feedbackRows = reportData.map((organization) => {
+      const feedbackCounts = {};
 
-  for (const feedback of organization.FeedbackData) {
-    const feedbackType = String(
-      feedback.FeedbackType || "Unspecified",
-    )
-      .trim()
-      .toUpperCase();
+      for (const feedback of organization.FeedbackData) {
+        const feedbackType = String(feedback.FeedbackType || "Unspecified")
+          .trim()
+          .toUpperCase();
 
-    feedbackCounts[feedbackType] =
-      Number(feedback.TotalGuests || 0);
-  }
+        feedbackCounts[feedbackType] = Number(feedback.TotalGuests || 0);
+      }
 
-  return {
-    OrganizationID:
-      organization.OrganizationID,
+      return {
+        OrganizationID: organization.OrganizationID,
 
-    ShortName:
-      organization.ShortName,
+        ShortName: organization.ShortName,
 
-    Negative:
-      feedbackCounts.NEGATIVE || 0,
+        Negative: feedbackCounts.NEGATIVE || 0,
 
-    Average:
-      feedbackCounts.AVERAGE || 0,
+        Average: feedbackCounts.AVERAGE || 0,
 
-    Positive:
-      feedbackCounts.POSITIVE || 0,
-  };
-});
+        Positive: feedbackCounts.POSITIVE || 0,
+      };
+    });
 
     // ============================================================
     // ORGANIZATION FOR LOGO
     // ============================================================
 
     const organizationId =
-      data.OrganizationID ||
-      reportData[0]?.OrganizationID ||
-      null;
+      data.OrganizationID || reportData[0]?.OrganizationID || null;
+let organizationName = "All Organizations";
 
+if (data.OrganizationID) {
+  const organizationResult = await pool.query(
+    `
+    SELECT OrganizationName
+    FROM Organization_Master
+    WHERE OrganizationID = $1
+      AND IsDeleted = FALSE
+    LIMIT 1;
+    `,
+    [data.OrganizationID],
+  );
+
+  organizationName =
+    organizationResult.rows[0]?.organizationname || "-";
+}
     // ============================================================
     // PDF COLUMNS
     // ============================================================
@@ -1191,23 +1172,24 @@ const generateFeedbackReportPdf = async (data) => {
         value: (row) => row.ShortName,
         width: "*",
       },
+
       {
-        header: "Negative Feedback",
-        value: (row) => row.Negative,
+        header: "Positive Feedback",
+        value: (row) => row.Positive,
         width: "*",
         align: "center",
         bold: true,
       },
-       {
-    header: "Average Feedback",
-    value: (row) => row.Average,
-    width: "*",
-    align: "center",
-    bold: true,
-  },
       {
-        header: "Positive Feedback",
-        value: (row) => row.Positive,
+        header: "Average Feedback",
+        value: (row) => row.Average,
+        width: "*",
+        align: "center",
+        bold: true,
+      },
+      {
+        header: "Negative Feedback",
+        value: (row) => row.Negative,
         width: "*",
         align: "center",
         bold: true,
@@ -1218,26 +1200,16 @@ const generateFeedbackReportPdf = async (data) => {
     // METADATA FILTER VALUES
     // ============================================================
 
-    const organizationFilter =
-      data.OrganizationID
-        ? data.OrganizationID
-        : "All Organizations";
+    const organizationFilter = organizationName;
 
-    const fromDateFilter =
-      data.FromDate
-        ? formatDate(data.FromDate)
-        : "All";
+    const fromDateFilter = data.FromDate ? formatDate(data.FromDate) : "All";
 
-    const toDateFilter =
-      data.ToDate
-        ? formatDate(data.ToDate)
-        : "All";
+    const toDateFilter = data.ToDate ? formatDate(data.ToDate) : "All";
 
     // Same count as the original feedback report:
     // one record per organization and feedback type
     const totalRecords = reportData.reduce(
-      (total, organization) =>
-        total + organization.FeedbackData.length,
+      (total, organization) => total + organization.FeedbackData.length,
       0,
     );
 
@@ -1247,52 +1219,46 @@ const generateFeedbackReportPdf = async (data) => {
     // ============================================================
 
     const metadata = [
-  {
-    label: "Organization",
-    value: organizationFilter,
-  },
-  {
-    label: "From Date",
-    value: fromDateFilter,
-  },
-  {
-    label: "To Date",
-    value: toDateFilter,
-  },
-  {
-    label: "Total Records",
-    value: totalRecords,
-  },
-];
+      {
+        label: "Organization",
+        value: organizationFilter,
+      },
+      {
+        label: "From Date",
+        value: fromDateFilter,
+      },
+      {
+        label: "To Date",
+        value: toDateFilter,
+      },
+      {
+        label: "Total Records",
+        value: totalRecords,
+      },
+    ];
 
     // ============================================================
     // GENERATE PDF
     // ============================================================
 
     const pdfBuffer = await generatePdf({
-      title:
-        "GUEST MEET FEEDBACK REPORT",
+      title: "GUEST MEET FEEDBACK REPORT",
 
-      reportName:
-        "Guest Meet Feedback Report",
+      reportName: "Guest Meet Feedback Report",
 
       organizationId,
 
-      logoUrl:
-        data.logoUrl,
+      logoUrl: data.logoUrl,
 
-      orientation:
-        "portrait",
+      orientation: "portrait",
 
       metadata,
 
       columns,
 
-      rows:
-        feedbackRows,
+      rows: feedbackRows,
 
-      pageMargins:
-        [24, 26, 24, 34],
+      pageMargins: [24, 26, 24, 34],
     });
 
     // ============================================================
@@ -1302,32 +1268,23 @@ const generateFeedbackReportPdf = async (data) => {
     return {
       success: true,
 
-      message:
-        "Guest Meet feedback PDF generated successfully.",
+      message: "Guest Meet feedback PDF generated successfully.",
 
-      data:
-        pdfBuffer,
+      data: pdfBuffer,
 
-      fileName:
-        `Guest_Meet_Feedback_Report_${Date.now()}.pdf`,
+      fileName: `Guest_Meet_Feedback_Report_${Date.now()}.pdf`,
 
-      contentType:
-        "application/pdf",
+      contentType: "application/pdf",
     };
   } catch (error) {
-    console.error(
-      "Guest Meet Feedback PDF Error:",
-      error,
-    );
+    console.error("Guest Meet Feedback PDF Error:", error);
 
     return {
       success: false,
 
-      message:
-        "Unable to generate Guest Meet feedback PDF.",
+      message: "Unable to generate Guest Meet feedback PDF.",
 
-      statusCode:
-        503,
+      statusCode: 503,
     };
   }
 };
@@ -1382,22 +1339,18 @@ const generateMetByReportPdf = async (data) => {
     // ============================================================
 
     const metByRows = result.rows.map((row) => ({
-      MetBy:
-        Number(row.metby),
+      MetBy: Number(row.metby),
 
-      FullName:
-        row.fullname || "-",
+      FullName: row.fullname || "-",
 
-      TotalGuestsMet:
-        Number(row.totalguestsmet),
+      TotalGuestsMet: Number(row.totalguestsmet),
     }));
 
     // ============================================================
     // ORGANIZATION FOR LOGO
     // ============================================================
 
-    const organizationId =
-      data.OrganizationID || null;
+    const organizationId = data.OrganizationID || null;
 
     // ============================================================
     // PDF COLUMNS
@@ -1422,20 +1375,13 @@ const generateMetByReportPdf = async (data) => {
     // METADATA VALUES
     // ============================================================
 
-    const organizationFilter =
-      data.OrganizationID
-        ? data.OrganizationID
-        : "All Organizations";
+    const organizationFilter = data.OrganizationID
+      ? data.OrganizationID
+      : "All Organizations";
 
-    const fromDateFilter =
-      data.FromDate
-        ? formatDate(data.FromDate)
-        : "All";
+    const fromDateFilter = data.FromDate ? formatDate(data.FromDate) : "All";
 
-    const toDateFilter =
-      data.ToDate
-        ? formatDate(data.ToDate)
-        : "All";
+    const toDateFilter = data.ToDate ? formatDate(data.ToDate) : "All";
 
     // ============================================================
     // METADATA
@@ -1465,29 +1411,23 @@ const generateMetByReportPdf = async (data) => {
     // ============================================================
 
     const pdfBuffer = await generatePdf({
-      title:
-        "GUEST MEET MET BY REPORT",
+      title: "GUEST MEET MET BY REPORT",
 
-      reportName:
-        "Guest Meet Met By Report",
+      reportName: "Guest Meet Met By Report",
 
       organizationId,
 
-      logoUrl:
-        data.logoUrl,
+      logoUrl: data.logoUrl,
 
-      orientation:
-        "portrait",
+      orientation: "portrait",
 
       metadata,
 
       columns,
 
-      rows:
-        metByRows,
+      rows: metByRows,
 
-      pageMargins:
-        [24, 26, 24, 34],
+      pageMargins: [24, 26, 24, 34],
     });
 
     // ============================================================
@@ -1497,32 +1437,23 @@ const generateMetByReportPdf = async (data) => {
     return {
       success: true,
 
-      message:
-        "Guest Meet Met By PDF generated successfully.",
+      message: "Guest Meet Met By PDF generated successfully.",
 
-      data:
-        pdfBuffer,
+      data: pdfBuffer,
 
-      fileName:
-        `Guest_Meet_Met_By_Report_${Date.now()}.pdf`,
+      fileName: `Guest_Meet_Met_By_Report_${Date.now()}.pdf`,
 
-      contentType:
-        "application/pdf",
+      contentType: "application/pdf",
     };
   } catch (error) {
-    console.error(
-      "Guest Meet Met By PDF Error:",
-      error,
-    );
+    console.error("Guest Meet Met By PDF Error:", error);
 
     return {
       success: false,
 
-      message:
-        "Unable to generate Guest Meet Met By PDF.",
+      message: "Unable to generate Guest Meet Met By PDF.",
 
-      statusCode:
-        503,
+      statusCode: 503,
     };
   }
 };
@@ -1687,9 +1618,7 @@ const generateGuestDetailPdf = async (data) => {
           label: "Met By",
           value:
             guestDetail.MetByName ||
-            (guestDetail.MetBy
-              ? `User ID: ${guestDetail.MetBy}`
-              : null),
+            (guestDetail.MetBy ? `User ID: ${guestDetail.MetBy}` : null),
         },
         {
           label: "Met On",
@@ -1738,10 +1667,7 @@ const generateGuestDetailPdf = async (data) => {
   } catch (error) {
     console.error("Generate guest detail PDF error:", error);
 
-    return databaseFailure(
-      error,
-      "Unable to generate guest detail PDF.",
-    );
+    return databaseFailure(error, "Unable to generate guest detail PDF.");
   }
 };
 
@@ -1760,5 +1686,5 @@ module.exports = {
   generateDateRangeReportPdf,
   generateFeedbackReportPdf,
   generateMetByReportPdf,
-  generateGuestDetailPdf
+  generateGuestDetailPdf,
 };

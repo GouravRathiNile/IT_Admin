@@ -131,3 +131,191 @@ test("Guest feedback report returns feedback labels as JSON keys", { concurrency
     pool.query = originalQuery;
   }
 });
+
+test("Guest Meet date-range API applies MetBy to details and TotalCount only", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    if (/ARRAY_AGG\(m\.GMMasterID/.test(sql)) {
+      return {
+        rows: [{
+          gmmasterids: [10],
+          roomsinhouse: "20",
+          guestsinhouse: "30",
+          arrivals: "4",
+          departures: "3",
+          occupancy: "75",
+          createddate: "2026-09-01",
+        }],
+      };
+    }
+    if (/COUNT\(\*\)::bigint AS TotalCount/.test(sql)) {
+      return { rows: [{ totalcount: "1" }] };
+    }
+    return {
+      rows: [{
+        gmdetailid: 8,
+        organizationid: 20,
+        gmmasterid: 10,
+        guestname: "Test Guest",
+        metby: 4,
+      }],
+    };
+  };
+
+  try {
+    const response = await GuestMeetService.getDateRangeReport({
+      OrganizationID: 20,
+      FromDate: "2026-09-01",
+      ToDate: "2026-09-07",
+      MetBy: "4",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(response.TotalCount, 1);
+    assert.deepEqual(calls[0].values, [20, "2026-09-01", "2026-09-07"]);
+
+    const detailCalls = calls.slice(1);
+    assert.equal(detailCalls.length, 2);
+    for (const call of detailCalls) {
+      assert.match(call.sql, /\$4::bigint IS NULL OR d\.MetBy = \$4::bigint/);
+      assert.equal(call.values[3], 4);
+    }
+    const pagedCall = detailCalls.find((call) => /LIMIT \$5 OFFSET \$6/.test(call.sql));
+    assert.deepEqual(pagedCall.values, [20, "2026-09-01", "2026-09-07", 4, 10, 0]);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Guest Meet date-range MetBy is optional and rejects invalid user IDs", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  let queryCount = 0;
+  pool.query = async (sql) => {
+    queryCount += 1;
+    if (/ARRAY_AGG\(m\.GMMasterID/.test(sql)) {
+      return { rows: [{ gmmasterids: null }] };
+    }
+    return { rows: [] };
+  };
+
+  try {
+    const base = {
+      OrganizationID: 20,
+      FromDate: "2026-09-01",
+      ToDate: "2026-09-07",
+    };
+    const withoutFilter = await GuestMeetService.getDateRangeReport({
+      ...base,
+      MetBy: " ",
+    });
+    assert.equal(withoutFilter.success, true);
+    assert.equal(queryCount, 1);
+
+    for (const MetBy of ["abc", 0, -1, 1.5]) {
+      const api = await GuestMeetService.getDateRangeReport({ ...base, MetBy });
+      const pdf = await GuestMeetService.generateDateRangeReportPdf({ ...base, MetBy });
+      assert.equal(api.statusCode, 400);
+      assert.equal(pdf.statusCode, 400);
+      assert.match(api.message, /MetBy must be a positive integer/);
+    }
+    assert.equal(queryCount, 1);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Guest Meet date-range PDF applies the same MetBy filter", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    if (/ARRAY_AGG\(/.test(sql)) {
+      return {
+        rows: [{
+          gmmasterids: [10],
+          roomsinhouse: "20",
+          guestsinhouse: "30",
+          arrivals: "4",
+          departures: "3",
+          occupancy: "75",
+          createddate: "2026-09-01",
+        }],
+      };
+    }
+    if (/FROM GuestMeet_Daily_Entry_Details d/.test(sql)) return { rows: [] };
+    if (/FROM Organization_Master/.test(sql)) {
+      return { rows: [{ organizationid: 20, organizationname: "Hotel Test" }] };
+    }
+    return { rows: [] };
+  };
+
+  try {
+    const response = await GuestMeetService.generateDateRangeReportPdf({
+      OrganizationID: 20,
+      FromDate: "2026-09-01",
+      ToDate: "2026-09-07",
+      MetBy: 4,
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(Buffer.isBuffer(response.data), true);
+    assert.equal(response.data.subarray(0, 4).toString(), "%PDF");
+    const detailsCall = calls.find((call) => /FROM GuestMeet_Daily_Entry_Details d/.test(call.sql));
+    assert.match(detailsCall.sql, /\$4::bigint IS NULL OR d\.MetBy = \$4::bigint/);
+    assert.deepEqual(detailsCall.values, [20, "2026-09-01", "2026-09-07", 4]);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Guest Meet date-range controllers forward MetBy", { concurrency: false }, async () => {
+  const originalApi = GuestMeetService.getDateRangeReport;
+  const originalPdf = GuestMeetService.generateDateRangeReportPdf;
+  const forwarded = [];
+  GuestMeetService.getDateRangeReport = async (data) => {
+    forwarded.push(data);
+    return { success: true, data: [] };
+  };
+  GuestMeetService.generateDateRangeReportPdf = async (data) => {
+    forwarded.push(data);
+    return {
+      success: true,
+      data: Buffer.from("%PDF-test"),
+      fileName: "report.pdf",
+      contentType: "application/pdf",
+    };
+  };
+
+  const response = () => {
+    const res = {
+      setHeader: () => {},
+      status: () => res,
+      json: () => res,
+      send: () => res,
+    };
+    return res;
+  };
+
+  try {
+    const req = {
+      query: {
+        OrganizationID: "20",
+        FromDate: "2026-09-01",
+        ToDate: "2026-09-07",
+        MetBy: "4",
+      },
+    };
+    await GuestMeetController.getDateRangeReport(req, response());
+    await GuestMeetController.getDateRangeReportPdf(req, response());
+    assert.equal(forwarded.length, 2);
+    assert.equal(forwarded[0].MetBy, "4");
+    assert.equal(forwarded[1].MetBy, "4");
+  } finally {
+    GuestMeetService.getDateRangeReport = originalApi;
+    GuestMeetService.generateDateRangeReportPdf = originalPdf;
+  }
+});
