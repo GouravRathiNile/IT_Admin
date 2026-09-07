@@ -5,14 +5,12 @@ const { formatDate } = require("./dateFormatter");
 const generateOrganizationLogoUrl = require("../AzurConfigration/ITAdmin/OrganizationMaster/AzureGetData");
 
 const COLORS = Object.freeze({ navy: "#082B5C", border: "#CFD7E3", light: "#F4F6F9", text: "#172033" });
-const fonts = {
-  Roboto: {
-    normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
-    bold: path.join(process.cwd(), "fonts/Roboto-Medium.ttf"),
-    italics: path.join(process.cwd(), "fonts/Roboto-SemiBold.ttf"),
-    bolditalics: path.join(process.cwd(), "fonts/Roboto-Bold.ttf"),
-  }
-};
+const fonts = { Roboto: {
+  normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
+  bold: path.join(process.cwd(), "fonts/Roboto-Medium.ttf"),
+  italics: path.join(process.cwd(), "fonts/Roboto-SemiBold.ttf"),
+  bolditalics: path.join(process.cwd(), "fonts/Roboto-Bold.ttf"),
+} };
 const display = (value) => {
   if (value === null || value === undefined || value === "") return "-";
   if (Array.isArray(value)) return value.map((item) => item?.name || item?.comment || String(item)).join(", ") || "-";
@@ -75,260 +73,23 @@ const loadLogo = async (organizationId, suppliedUrl) => {
 
 const buildHeader = async (title, organizationId, logoUrl) => {
   const logo = await loadLogo(organizationId, logoUrl);
-  return {
-    table: {
-      widths: [100, "*", 100], body: [[
-        { ...(logo ? { image: logo, fit: [78, 45], alignment: "left" } : { text: "" }), border: [false, false, false, false] },
-        { text: title, style: "pdfTitle", alignment: "center", margin: [0, 15, 0, 0], border: [false, false, false, false] },
-        { text: "", border: [false, false, false, false] },
-      ]]
-    }, layout: "noBorders", margin: [0, 0, 0, 10]
-  };
+  return { table: { widths: [100, "*", 100], body: [[
+    { ...(logo ? { image: logo, fit: [78, 45], alignment: "left" } : { text: "" }), border: [false, false, false, false] },
+    { text: title, style: "pdfTitle", alignment: "center", margin: [0, 15, 0, 0], border: [false, false, false, false] },
+    { text: "", border: [false, false, false, false] },
+  ]] }, layout: "noBorders", margin: [0, 0, 0, 10] };
 };
 
-// const metadataTable = (items = []) => ({
-//   table: { widths: [72, "*", 72, "*"], body: Array.from({ length: Math.ceil(items.length / 2) }, (_, row) => {
-//     const left = items[row * 2]; const right = items[(row * 2) + 1];
-//     return [
-//       { text: left?.label || "", style: "pdfLabel", fillColor: COLORS.light }, { text: left ? display(left.value) : "", style: "pdfValue" },
-//       { text: right?.label || "", style: "pdfLabel", fillColor: COLORS.light }, { text: right ? display(right.value) : "", style: "pdfValue" },
-//     ];
-//   }) },
-//   layout: { hLineColor: () => COLORS.border, vLineColor: () => COLORS.border, hLineWidth: () => 0.4, vLineWidth: () => 0.4, paddingLeft: () => 5, paddingRight: () => 5, paddingTop: () => 4, paddingBottom: () => 4 },
-//   margin: [0, 0, 0, 12],
-// });
-// const metadataTable = (items = []) => {
-//   const normalItems = items.filter((item) => !item?.fullWidth);
-//   const fullWidthItems = items.filter((item) => item?.fullWidth);
-
-//   const body = [];
-
-//   for (let index = 0; index < normalItems.length; index += 2) {
-//     const left = normalItems[index];
-//     const right = normalItems[index + 1];
-
-//     body.push([
-//       {
-//         text: left?.label || "",
-//         style: "pdfLabel",
-//         fillColor: COLORS.light,
-//       },
-//       {
-//         text: left ? display(left.value) : "",
-//         style: "pdfValue",
-//       },
-//       {
-//         text: right?.label || "",
-//         style: "pdfLabel",
-//         fillColor: COLORS.light,
-//       },
-//       {
-//         text: right ? display(right.value) : "",
-//         style: "pdfValue",
-//       },
-//     ]);
-//   }
-
-//   fullWidthItems.forEach((item) => {
-//     body.push([
-//       {
-//         text: item.label || "",
-//         style: "pdfLabel",
-//         fillColor: COLORS.light,
-//       },
-//       {
-//         text: display(item.value),
-//         style: "pdfValue",
-//         colSpan: 3,
-//       },
-//       {},
-//       {},
-//     ]);
-//   });
-
-//   return {
-//     table: {
-//       widths: [72, "*", 72, "*"],
-//       body,
-//     },
-//     layout: {
-//       hLineColor: () => COLORS.border,
-//       vLineColor: () => COLORS.border,
-//       hLineWidth: () => 0.4,
-//       vLineWidth: () => 0.4,
-//       paddingLeft: () => 5,
-//       paddingRight: () => 5,
-//       paddingTop: () => 4,
-//       paddingBottom: () => 4,
-//     },
-//     margin: [0, 0, 0, 12],
-//   };
-// };
-
-const metadataTable = (items = []) => {
-  const normalItems = items.filter((item) => !item?.fullWidth);
-  const fullWidthItems = items.filter((item) => item?.fullWidth);
-
-  const body = [];
-
-  for (let index = 0; index < normalItems.length; index += 2) {
-    const left = normalItems[index];
-    const right = normalItems[index + 1];
-
-    body.push([
-      {
-        text: left?.label || "",
-        style: "pdfLabel",
-        fillColor: COLORS.light,
-        alignment: "left",
-      },
-      {
-        text: left ? display(left.value) : "",
-        style: "pdfValue",
-        alignment: "left",
-      },
-      {
-        text: right?.label || "",
-        style: "pdfLabel",
-        fillColor: COLORS.light,
-        alignment: "left",
-      },
-      {
-        text: right ? display(right.value) : "",
-        style: "pdfValue",
-        alignment: "left",
-      },
-    ]);
-  }
-
-  fullWidthItems.forEach((item) => {
-    body.push([
-      {
-        text: item.label || "",
-        style: "pdfLabel",
-        fillColor: COLORS.light,
-        alignment: "left",
-      },
-      {
-        text: display(item.value),
-        style: "pdfValue",
-        colSpan: 3,
-        alignment: "left",
-      },
-      {},
-      {},
-    ]);
-  });
-
-  return {
-    table: {
-      widths: [72, "*", 72, "*"],
-      body,
-    },
-
-    layout: {
-      hLineColor: () => COLORS.border,
-      vLineColor: () => COLORS.border,
-      hLineWidth: () => 0.4,
-      vLineWidth: () => 0.4,
-
-      paddingLeft: () => 5,
-      paddingRight: () => 5,
-      paddingTop: () => 4,
-      paddingBottom: () => 4,
-    },
-
-    margin: [0, 0, 0, 12],
-  };
-};
-
-const sectionTable = (title, value) => ({
-  table: {
-    widths: ["*"],
-    body: [
-      [
-        {
-          text: title,
-          style: "pdfSectionHeader",
-          margin: [5, 3, 5, 3],
-        },
-      ],
-      [
-        {
-          text: display(value),
-          style: "pdfSectionContent",
-          margin: [5, 5, 5, 5],
-        },
-      ],
-    ],
-  },
-  layout: {
-    hLineColor: () => COLORS.border,
-    vLineColor: () => COLORS.border,
-    hLineWidth: () => 0.4,
-    vLineWidth: () => 0.4,
-  },
-  margin: [0, 0, 0, 8],
-});
-
-
-const bottomTable = (items = []) => ({
-  table: {
-    widths: [90, "*", 145, "*"],
-    body: [
-      [
-        {
-          text: items[0]?.label || "",
-          style: "pdfLabel",
-          fillColor: COLORS.light,
-        },
-        {
-          text: display(items[0]?.value),
-          style: "pdfValue",
-        },
-        {
-          text: items[1]?.label || "",
-          style: "pdfLabel",
-          fillColor: COLORS.light,
-        },
-        {
-          text: display(items[1]?.value),
-          style: "pdfValue",
-        },
-      ],
-      [
-        {
-          text: items[2]?.label || "",
-          style: "pdfLabel",
-          fillColor: COLORS.light,
-        },
-        {
-          text: display(items[2]?.value),
-          style: "pdfValue",
-        },
-        {
-          text: items[3]?.label || "",
-          style: "pdfLabel",
-          fillColor: COLORS.light,
-        },
-        {
-          text: display(items[3]?.value),
-          style: "pdfValue",
-        },
-      ],
-    ],
-  },
-  layout: {
-    hLineColor: () => COLORS.border,
-    vLineColor: () => COLORS.border,
-    hLineWidth: () => 0.4,
-    vLineWidth: () => 0.4,
-    paddingLeft: () => 5,
-    paddingRight: () => 5,
-    paddingTop: () => 4,
-    paddingBottom: () => 4,
-  },
-  margin: [0, 4, 0, 0],
+const metadataTable = (items = []) => ({
+  table: { widths: [72, "*", 72, "*"], body: Array.from({ length: Math.ceil(items.length / 2) }, (_, row) => {
+    const left = items[row * 2]; const right = items[(row * 2) + 1];
+    return [
+      { text: left?.label || "", style: "pdfLabel", fillColor: COLORS.light }, { text: left ? display(left.value) : "", style: "pdfValue" },
+      { text: right?.label || "", style: "pdfLabel", fillColor: COLORS.light }, { text: right ? display(right.value) : "", style: "pdfValue" },
+    ];
+  }) },
+  layout: { hLineColor: () => COLORS.border, vLineColor: () => COLORS.border, hLineWidth: () => 0.4, vLineWidth: () => 0.4, paddingLeft: () => 5, paddingRight: () => 5, paddingTop: () => 4, paddingBottom: () => 4 },
+  margin: [0, 0, 0, 12],
 });
 
 const baseTableLayout = {
@@ -349,78 +110,27 @@ const dataTable = ({ columns, rows = [], layout, table = {}, headerStyle = "pdfT
   return { table: { headerRows: 1, dontBreakRows: true, widths: columns.map((column) => column.width || "*"), body, ...table }, layout: { ...baseTableLayout, ...layout } };
 };
 
-const footer = (reportName, timestamp) => (page, count) => ({
-  columns: [
-    { text: reportName, alignment: "left", width: "*" },
-    { text: `Page ${page} of ${count}`, alignment: "center", width: "auto", bold: true },
-    { text: `Generated: ${timestamp}`, alignment: "right", width: "*" },
-  ], fontSize: 7.5, color: COLORS.navy, margin: [24, 6, 24, 0]
-});
+const footer = (reportName, timestamp) => (page, count) => ({ columns: [
+  { text: reportName, alignment: "left", width: "*" },
+  { text: `Page ${page} of ${count}`, alignment: "center", width: "auto", bold: true },
+  { text: `Generated: ${timestamp}`, alignment: "right", width: "*" },
+], fontSize: 7.5, color: COLORS.navy, margin: [24, 6, 24, 0] });
 
-// const generatePdf = async ({ title, reportName, organizationId, logoUrl, orientation = "portrait", metadata = [], columns, rows, sections = [], pageMargins, styles = {}, tableOptions = {} }) => {
-const generatePdf = async ({
-  title,
-  reportName,
-  organizationId,
-  logoUrl,
-  orientation = "portrait",
-  metadata = [],
-  columns,
-  rows,
-  sections = [],
-  bottomItems = [],
-  pageMargins,
-  styles = {},
-  tableOptions = {}
-}) => {
-  // const content = [await buildHeader(title, organizationId, logoUrl)];
-  // if (metadata.length) content.push(metadataTable(metadata));
-  // if (columns) content.push(dataTable({ columns, rows, ...tableOptions }));
-  // for (const section of sections) {
-  //   content.push({ text: section.title, style: "pdfSection", margin: [0, 8, 0, 4] });
-  //   content.push(metadataTable(section.items));
-  // }
+const generatePdf = async ({ title, reportName, organizationId, logoUrl, orientation = "portrait", metadata = [], columns, rows, sections = [], pageMargins, styles = {}, tableOptions = {} }) => {
   const content = [await buildHeader(title, organizationId, logoUrl)];
-
-  if (metadata.length) {
-    content.push({
-      text: "Information",
-      style: "pdfSectionHeader",
-      margin: [5, 3, 5, 3],
-    });
-
-    content.push(metadataTable(metadata));
-  }
-
-  if (columns) {
-    content.push(dataTable({ columns, rows, ...tableOptions }));
-  }
-
+  if (metadata.length) content.push(metadataTable(metadata));
+  if (columns) content.push(dataTable({ columns, rows, ...tableOptions }));
   for (const section of sections) {
-    content.push(sectionTable(section.title, section.items[0]?.value));
-  }
-
-  if (bottomItems.length) {
-    content.push(bottomTable(bottomItems));
+    content.push({ text: section.title, style: "pdfSection", margin: [0, 8, 0, 4] });
+    content.push(metadataTable(section.items));
   }
   const definition = {
     pageSize: "A4", pageOrientation: orientation, pageMargins: pageMargins || [24, 26, 24, 34], content,
     defaultStyle: { font: "Roboto", fontSize: orientation === "landscape" ? 8 : 9 },
     styles: {
       pdfTitle: { fontSize: 18, bold: true, color: COLORS.navy }, pdfLabel: { fontSize: 8, bold: true, color: COLORS.navy },
-      pdfValue: { fontSize: 8.5, color: COLORS.text }, pdfTableHeader: { fontSize: 8, bold: true, color: COLORS.navy },
-      pdfTableCell: { fontSize: 8, color: COLORS.text }, pdfSection: { fontSize: 12, bold: true, color: COLORS.navy }, pdfSectionHeader: {
-        fontSize: 8,
-        bold: true,
-        color: COLORS.navy,
-        fillColor: COLORS.light,
-      },
-
-      pdfSectionContent: {
-        fontSize: 8,
-        color: COLORS.text,
-        lineHeight: 1.15,
-      }, ...styles,
+      pdfValue: { fontSize: 8.5, color: COLORS.text }, pdfTableHeader: { fontSize: 8, bold: true, color: "#FFFFFF" },
+      pdfTableCell: { fontSize: 8, color: COLORS.text }, pdfSection: { fontSize: 12, bold: true, color: COLORS.navy }, ...styles,
     },
     footer: footer(reportName, formatDate(new Date(), "DD MMM YYYY hh:mm A")),
   };
