@@ -1015,7 +1015,7 @@ const generateDateRangeReportPdf = async (data) => {
             {
               header: "Total Guests Met",
               value: (row) => row.TotalGuestsMet,
-              width: 130,
+              width: 230,
               align: "center",
               bold: true,
             },
