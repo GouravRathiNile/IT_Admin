@@ -2,7 +2,17 @@ const { pool } = require("../../db");
 const {retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
 const generateDocumentUrl = require("../../AzurConfigration/Capex/AzureGetData");
 const { formatDate } = require("../../utils/dateFormatter");
-const { generatePdf } = require("../../utils/pdfHelper");
+const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
+const PdfPrinter = require("pdfmake");
+const path = require("path");
+const CAPEX_DETAIL_PDF_FONTS = {
+  Roboto: {
+    normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
+    bold: path.join(process.cwd(), "fonts/Roboto-Medium.ttf"),
+    italics: path.join(process.cwd(), "fonts/Roboto-SemiBold.ttf"),
+    bolditalics: path.join(process.cwd(), "fonts/Roboto-Bold.ttf"),
+  },
+};
 // ==============================================================Default roles
 const DEFAULT_APPROVALS = Object.freeze([
   { LevelNo: 1, ApprovalRole: "GM" },
@@ -296,7 +306,6 @@ const CAPEX_SELECT = `
     cm.CapexID,
     cm.OrganizationID,
     om.ShortName AS OrganizationShortName,
-    om.OrganizationName AS OrganizationName,
     cm.CapexNumber,
     cm.Department,
     cm.Item,
@@ -3884,7 +3893,7 @@ const generateCapexListPdfDocument = async (data) => {
       {
         header: "QTY",
         value: (row) => row.Qty,
-        width: 35,
+        width: 32,
         align: "left",
       },
       {
@@ -3914,7 +3923,28 @@ const generateCapexListPdfDocument = async (data) => {
         align: "left",
       })),
     ];
+// ============================================================
+// METADATA
+// ============================================================
 
+let organizationName =
+  capexRows[0]?.OrganizationName || data.OrganizationName || null;
+
+if (!organizationName && organizationId) {
+  const organizationResult = await pool.query(
+    `SELECT OrganizationName
+     FROM Organization_Master
+     WHERE OrganizationID = $1
+       AND IsDeleted = FALSE
+     LIMIT 1`,
+    [organizationId],
+  );
+
+  organizationName =
+    organizationResult.rows[0]?.organizationname || null;
+}
+
+organizationName ||= "All Organizations";
     // ============================================================
     // METADATA
     // ============================================================
@@ -3937,7 +3967,7 @@ const generateCapexListPdfDocument = async (data) => {
     organizationShortName ||= "All Organizations";
 
     const metadata = [
-      { label: "Organization", value: organizationName },
+      { label: "Organization", value: organizationName  },
       { label: "Department", value: data.Department || "All" },
       {
         label: "From Date",
@@ -3987,6 +4017,9 @@ const generateCapexListPdfDocument = async (data) => {
     };
   }
 };
+// Export the exact same records as getAllCapex. Keeping list visibility in one
+// place prevents configured-flow differences (for example, a flow without
+// OWNER) from making the screen and PDF disagree.
 const generateCapexListPdf = async (data) => {
   try {
     const rows = [];
@@ -4052,7 +4085,23 @@ const getCapexDepartmentReportPdf = async (data) => {
     );
 
     const rows = result.rows;
+const organizationId = data?.Filters?.OrganizationID || null;
 
+let organizationName = "All Organizations";
+
+if (organizationId) {
+  const organizationResult = await pool.query(
+    `SELECT OrganizationName
+     FROM Organization_Master
+     WHERE OrganizationID = $1
+       AND IsDeleted = FALSE
+     LIMIT 1`,
+    [organizationId],
+  );
+
+  organizationName =
+    organizationResult.rows[0]?.organizationname || "All Organizations";
+}
     const pdfBuffer = await generatePdf({
       title: "CAPEX Department Report",
       reportName: "CAPEX Department Report",
@@ -4063,6 +4112,10 @@ const getCapexDepartmentReportPdf = async (data) => {
       orientation: "landscape",
 
       metadata: [
+        {
+      label: "Organization",
+      value: organizationName,
+    },
         {
           label: "Department",
           value: data?.Filters?.Department || "All",
@@ -4090,40 +4143,41 @@ const getCapexDepartmentReportPdf = async (data) => {
         {
           header: "Total Count",
           key: "count",
-          width: 60,
+          width: 90,
           align: "center",
         },
 
         {
           header: "Approved",
           key: "approvedcount",
-          width: 70,
+          width: 90,
           align: "center",
         },
         {
           header: "Pending",
           key: "pendingcount",
-          width: 70,
+          width: 90,
           align: "center",
         },
         {
           header: "Rejected",
           key: "rejectedcount",
-          width: 70,
+          width: 90,
+          align: "center",
+        },
+         {
+          header: "Returned",
+          key: "returnedcount",
+          width: 90,
           align: "center",
         },
         {
           header: "Hold",
           key: "holdcount",
-          width: 70,
+          width: 90,
           align: "center",
         },
-        {
-          header: "Returned",
-          key: "returnedcount",
-          width: 70,
-          align: "center",
-        },
+       
       ],
 
       rows,
@@ -4230,40 +4284,41 @@ const getCapexOrganizationReportPdf = async (data) => {
         {
           header: "Total Count",
           key: "count",
-          width: 60,
+          width: 100,
           align: "center",
         },
 
         {
           header: "Approved",
           key: "approvedcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
         {
           header: "Pending",
           key: "pendingcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
         {
           header: "Rejected",
           key: "rejectedcount",
-          width: 75,
+          width: 100,
+          align: "center",
+        },
+         {
+          header: "Returned",
+          key: "returnedcount",
+          width: 100,
           align: "center",
         },
         {
           header: "Hold",
           key: "holdcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
-        {
-          header: "Returned",
-          key: "returnedcount",
-          width: 75,
-          align: "center",
-        },
+       
       ],
 
       rows,
@@ -4375,7 +4430,7 @@ const generateCapexByIdPdf = async (data) => {
     // Only roles available inside capex.Approvals will be shown.
     // ==========================================================
 
-    const approvalItems = [];
+    const approvalRows = [];
 
     approvals.forEach((approval) => {
       if (
@@ -4399,160 +4454,222 @@ const generateCapexByIdPdf = async (data) => {
             )
           : "-";
 
-      approvalItems.push(
-        {
-          label: `${approvalRole} Status`,
-          value: capexPdfValue(approval.Status),
-        },
-        {
-          label: `${approvalRole}  Qty`,
-          value: approvedQuantity,
-        },
-        {
-          label: `${approvalRole} Remarks`,
-          value: capexPdfValue(approval.Remarks),
-        },
-      );
+      const status = capexPdfValue(approval.Status);
+
+      approvalRows.push([
+        { text: approvalRole, style: "approvalRole" },
+        { text: status, alignment: "center" },
+        { text: approvedQuantity, alignment: "center" },
+        { text: capexPdfValue(approval.Remarks) },
+      ]);
     });
 
-    if (approvalItems.length === 0) {
-      approvalItems.push({
-        label: "Approval",
-        value: "No approval details available",
-      });
+    if (approvalRows.length === 0) {
+      approvalRows.push([
+        {
+          text: "No approval details available",
+          colSpan: 4,
+          alignment: "center",
+          color: "#64748B",
+        },
+        {},
+        {},
+        {},
+      ]);
     }
 
     // ==========================================================
-    // Generate PDF
-    // Existing pdfGenerator.js is used without any changes
+    // Generate the dedicated CAPEX detail layout directly with pdfmake.
     // ==========================================================
 
-    const pdfBuffer = await generatePdf({
-      title: "CAPEX Detail Report",
+    const navy = "#073B84";
+    const border = "#B9CEE8";
+    const labelFill = "#EDF6FF";
+    const logo = await loadLogo(capex.OrganizationID);
+    const generatedOn = formatDate(new Date(), "DD MMM YYYY hh:mm A");
+    const fieldIcon = (type) => {
+      const stroke = navy;
+      const line = (x1, y1, x2, y2, lineWidth = 1.2) => ({
+        type: "line", x1, y1, x2, y2, lineWidth, lineColor: stroke,
+      });
+      const rect = (x, y, w, h, r = 0) => ({
+        type: "rect", x, y, w, h, r, lineWidth: 1.2, lineColor: stroke,
+      });
+      const ellipse = (x, y, r1, r2 = r1) => ({
+        type: "ellipse", x, y, r1, r2, lineWidth: 1.2, lineColor: stroke,
+      });
 
-      reportName: `CAPEX #${capex.CapexNumber}`,
-
-      organizationId: capex.OrganizationID,
-
-      orientation: "portrait",
-
-      pageMargins: [40, 30, 40, 38],
-
-      // ========================================================
-      // Main Information
-      // ========================================================
-
-      metadata: [
-        {
-          label: "Organization",
-          value:
-            capex.OrganizationShortName ||
-            capex.OrganizationID,
-        },
-        {
-          label: "CAPEX No.",
-          value: capex.CapexNumber,
-        },
-        {
-          label: "Created Date",
-          value: capex.CreatedDate,
-        },
-        {
-          label: "Department",
-          value: capex.Department,
-        },
-        
+      const icons = {
+        organization: [rect(4, 3, 11, 15), line(2, 18, 17, 18), ...[7, 11, 15].flatMap((y) => [line(7, y, 8, y), line(11, y, 12, y)])],
+        capex: [rect(4, 2, 11, 16), line(7, 7, 12, 7), line(7, 10, 12, 10), line(7, 13, 12, 13)],
+        calendar: [rect(2, 4, 16, 14, 1), line(2, 8, 18, 8), line(6, 2, 6, 6), line(14, 2, 14, 6), line(6, 11, 8, 11), line(11, 11, 13, 11), line(6, 14, 8, 14)],
+        department: [ellipse(10, 5, 2.5), ellipse(4, 7, 2), ellipse(16, 7, 2), line(6, 18, 6, 13), line(14, 18, 14, 13), line(6, 13, 14, 13), line(2, 18, 18, 18)],
+        item: [{ type: "polyline", points: [{ x: 2, y: 8 }, { x: 9, y: 1 }, { x: 18, y: 10 }, { x: 10, y: 18 }, { x: 2, y: 10 }], closePath: true, lineWidth: 1.2, lineColor: stroke }, ellipse(8, 6, 1.2)],
+        make: [ellipse(10, 10, 5), ellipse(10, 10, 2), line(10, 1, 10, 5), line(10, 15, 10, 19), line(1, 10, 5, 10), line(15, 10, 19, 10), line(4, 4, 7, 7), line(13, 13, 16, 16)],
+        quantity: [{ type: "polyline", points: [{ x: 10, y: 1 }, { x: 18, y: 5 }, { x: 10, y: 9 }, { x: 2, y: 5 }], closePath: true, lineWidth: 1.2, lineColor: stroke }, line(2, 5, 2, 14), line(18, 5, 18, 14), line(2, 14, 10, 19), line(18, 14, 10, 19), line(10, 9, 10, 19)],
+        rate: [line(5, 3, 15, 3), line(5, 7, 15, 7), line(8, 3, 8, 17), line(8, 7, 16, 18), line(8, 7, 11, 7)],
+        total: [ellipse(10, 5, 7, 3), ellipse(10, 10, 7, 3), ellipse(10, 15, 7, 3), line(3, 5, 3, 15), line(17, 5, 17, 15)],
+        description: [rect(4, 2, 12, 16), line(7, 7, 13, 7), line(7, 10, 13, 10), line(7, 13, 12, 13)],
+      };
+      return icons[type] || icons.capex;
+    };
+    const labelCell = (text, icon) => ({
+      columns: [
+        { width: 25, canvas: fieldIcon(icon) },
+        { width: "*", text, style: "fieldLabel", margin: [3, 3, 0, 0] },
       ],
+      fillColor: labelFill,
+      margin: [8, 6, 5, 6],
+    });
+    const valueCell = (value) => ({
+      text: capexPdfValue(value),
+      style: "fieldValue",
+      margin: [8, 7, 6, 7],
+    });
+    const borderedLayout = {
+      hLineColor: () => border,
+      vLineColor: () => border,
+      hLineWidth: () => 0.7,
+      vLineWidth: () => 0.7,
+      paddingLeft: () => 0,
+      paddingRight: () => 0,
+      paddingTop: () => 0,
+      paddingBottom: () => 0,
+    };
 
-      // Main data table is not required
-      columns: null,
-
-      rows: [],
-
-      // ========================================================
-      // PDF Sections
-      // ========================================================
-
-      sections: [
+    const documentDefinition = {
+      pageSize: "A4",
+      pageOrientation: "portrait",
+      pageMargins: [22, 28, 22, 72],
+      defaultStyle: { font: "Roboto", fontSize: 9, color: "#10234A" },
+      content: [
         {
-          title: "CAPEX Information",
-
-          items: [
-            {
-              label: "Item",
-              value: capex.Item,
-            },
-            {
-              label: "Make",
-              value: capex.Make,
-            },
-            {
-              label: "Quantity",
-              value: formatCapexAmount(capex.Qty),
-            },
-            {
-              label: "Rate",
-              value: `INR ${formatCapexAmount(
-                capex.Rate,
-              )}`,
-            },
-         
-          ],
+          table: {
+            widths: [130, "*"],
+            body: [[
+              logo
+                ? { image: logo, fit: [112, 58], border: [false, false, false, false] }
+                : { text: "", border: [false, false, false, false] },
+              {
+                text: "CAPEX Detail Report",
+                style: "title",
+                alignment: "center",
+                margin: [0, 18, 80, 0],
+                border: [false, false, false, false],
+              },
+            ]],
+          },
+          layout: "noBorders",
         },
-
+        { canvas: [{ type: "line", x1: 0, y1: 0, x2: 551, y2: 0, lineWidth: 0.8, lineColor: navy }], margin: [0, 8, 0, 18] },
         {
-          title: "Description",
-
-          items: [
-            {
-              label: "Description",
-              value: capex.Description,
-            },
-            {
-              label: "Total",
-              value: `INR ${formatCapexAmount(
-                capex.Total,
-              )}`,
-            },
-          ],
+          table: {
+            widths: [105, "*", 105, "*"],
+            body: [
+              [labelCell("Organization", "organization"), valueCell(capex.OrganizationShortName || capex.OrganizationID), labelCell("CAPEX No.", "capex"), valueCell(capex.CapexNumber)],
+              [labelCell("Created Date", "calendar"), valueCell(capex.CreatedDate), labelCell("Department", "department"), valueCell(capex.Department)],
+            ],
+          },
+          layout: borderedLayout,
+          margin: [0, 0, 0, 18],
         },
-
         {
-          title: "Approval Workflow",
-
-          // Dynamic approval details
-          items: approvalItems,
+          table: {
+            widths: [95, "*", 85, "*"],
+            body: [[labelCell("Item", "item"), valueCell(capex.Item), labelCell("Make", "make"), valueCell(capex.Make)]],
+          },
+          layout: borderedLayout,
+          margin: [0, 0, 0, 12],
+        },
+        {
+          table: {
+            widths: [80, "*", 70, "*", 70, "*"],
+            body: [[
+              labelCell("Quantity", "quantity"), valueCell(formatCapexAmount(capex.Qty)),
+              labelCell("Rate", "rate"), valueCell(`INR ${formatCapexAmount(capex.Rate)}`),
+              labelCell("Total", "total"), valueCell(`INR ${formatCapexAmount(capex.Total)}`),
+            ]],
+          },
+          layout: borderedLayout,
+          margin: [0, 0, 0, 18],
+        },
+        {
+          table: {
+            widths: [105, "*"],
+            body: [[labelCell("Description", "description"), valueCell(capex.Description)]],
+          },
+          layout: borderedLayout,
+          margin: [0, 0, 0, 18],
+        },
+        {
+          table: {
+            headerRows: 1,
+            widths: [95, 120, 100, "*"],
+            body: [
+              [
+                { text: "Approval", style: "tableHeader" },
+                { text: "Status", style: "tableHeader" },
+                { text: "Qty", style: "tableHeader" },
+                { text: "Remarks", style: "tableHeader" },
+              ],
+              ...approvalRows,
+            ],
+          },
+          layout: {
+            ...borderedLayout,
+            fillColor: (rowIndex) => (rowIndex === 0 ? labelFill : null),
+            paddingLeft: () => 8,
+            paddingRight: () => 8,
+            paddingTop: () => 7,
+            paddingBottom: () => 7,
+          },
         },
       ],
-
-      // ========================================================
-      // PDF Styles
-      // ========================================================
-
+      footer: () => ({
+        margin: [22, 8, 22, 0],
+        stack: [
+          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 551, y2: 0, lineWidth: 0.7, lineColor: navy }], margin: [0, 0, 0, 8] },
+          {
+            columns: [
+              {
+                stack: [
+                  { text: "Howard Johnson by Wyndham", bold: true, color: navy, fontSize: 8 },
+                  { text: "Hospitality with a Heart", color: "#64748B", fontSize: 7 },
+                ],
+              },
+              {
+                width: 190,
+                stack: [
+                  { text: `Generated On   :  ${generatedOn}`, fontSize: 7, color: navy },
+                  { text: "Generated By   :  System", fontSize: 7, color: navy },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
       styles: {
-        pdfTitle: {
-          fontSize: 18,
-          bold: true,
-          color: "#082B5C",
-        },
-
-        pdfSection: {
-          fontSize: 11,
-          bold: true,
-          color: "#082B5C",
-        },
-
-        pdfLabel: {
-          fontSize: 8,
-          bold: true,
-          color: "#082B5C",
-        },
-
-        pdfValue: {
-          fontSize: 8.5,
-          color: "#172033",
-        },
+        title: { fontSize: 22, bold: true, color: navy },
+        fieldLabel: { fontSize: 9, bold: true, color: navy },
+        fieldValue: { fontSize: 9, color: "#10234A" },
+        tableHeader: { fontSize: 9, bold: true, color: navy, fillColor: labelFill, margin: [0, 1, 0, 1] },
+        approvalRole: { fontSize: 9, bold: true, color: "#10234A" },
       },
+    };
+
+    const pdfBuffer = await new Promise((resolve, reject) => {
+      try {
+        const pdfDocument = new PdfPrinter(
+          CAPEX_DETAIL_PDF_FONTS,
+        ).createPdfKitDocument(documentDefinition);
+        const chunks = [];
+        pdfDocument.on("data", (chunk) => chunks.push(chunk));
+        pdfDocument.on("end", () => resolve(Buffer.concat(chunks)));
+        pdfDocument.on("error", reject);
+        pdfDocument.end();
+      } catch (error) {
+        reject(error);
+      }
     });
 
     // ==========================================================

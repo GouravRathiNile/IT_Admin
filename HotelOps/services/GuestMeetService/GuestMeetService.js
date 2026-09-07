@@ -824,6 +824,28 @@ const generateDateRangeReportPdf = async (data) => {
     // ============================================================
 
     const guestDetails = detailsResult.rows.map(mapDetail);
+    const metBySummary = Array.from(
+      guestDetails.reduce((summary, guest) => {
+        if (guest.MetBy === null) return summary;
+
+        const existing = summary.get(guest.MetBy);
+        if (existing) {
+          existing.TotalGuestsMet += 1;
+        } else {
+          summary.set(guest.MetBy, {
+            MetBy: guest.MetBy,
+            FullName: guest.MetByName || "-",
+            TotalGuestsMet: 1,
+          });
+        }
+
+        return summary;
+      }, new Map()).values(),
+    ).sort(
+      (left, right) =>
+        right.TotalGuestsMet - left.TotalGuestsMet ||
+        left.FullName.localeCompare(right.FullName),
+    );
 
     const organizationId = Number(data.OrganizationID);
     // ============================================================
@@ -965,9 +987,9 @@ const generateDateRangeReportPdf = async (data) => {
     // ============================================================
 
     const pdfBuffer = await generatePdf({
-      title: "GUEST MEET DATE RANGE REPORT",
+      title: "GUEST MET DATE RANGE REPORT",
 
-      reportName: "Guest Meet Date Range Report",
+      reportName: "Guest Met Date Range Report",
 
       organizationId,
 
@@ -981,6 +1003,27 @@ const generateDateRangeReportPdf = async (data) => {
 
       rows: guestDetails,
 
+      sections: [
+        {
+          title: "Met By Summary",
+          columns: [
+            {
+              header: "Met By",
+              value: (row) => row.FullName,
+              width: "*",
+            },
+            {
+              header: "Total Guests Met",
+              value: (row) => row.TotalGuestsMet,
+              width: 230,
+              align: "center",
+              bold: true,
+            },
+          ],
+          rows: metBySummary,
+        },
+      ],
+
       pageMargins: [20, 25, 20, 35],
     });
 
@@ -991,21 +1034,21 @@ const generateDateRangeReportPdf = async (data) => {
     return {
       success: true,
 
-      message: "Guest Meet date range PDF generated successfully.",
+      message: "Guest Met date range PDF generated successfully.",
 
       data: pdfBuffer,
 
-      fileName: `Guest_Meet_Date_Range_Report_${Date.now()}.pdf`,
+      fileName: `Guest_Met_Date_Range_Report_${Date.now()}.pdf`,
 
       contentType: "application/pdf",
     };
   } catch (error) {
-    console.error("Guest Meet Date Range PDF Error:", error);
+    console.error("Guest Met Date Range PDF Error:", error);
 
     return {
       success: false,
 
-      message: "Unable to generate Guest Meet date range PDF.",
+      message: "Unable to generate Guest Met date range PDF.",
 
       statusCode: 503,
     };
@@ -1242,9 +1285,9 @@ if (data.OrganizationID) {
     // ============================================================
 
     const pdfBuffer = await generatePdf({
-      title: "GUEST MEET FEEDBACK REPORT",
+      title: "GUEST MET FEEDBACK REPORT",
 
-      reportName: "Guest Meet Feedback Report",
+      reportName: "Guest Met Feedback Report",
 
       organizationId,
 
@@ -1268,7 +1311,7 @@ if (data.OrganizationID) {
     return {
       success: true,
 
-      message: "Guest Meet feedback PDF generated successfully.",
+      message: "Guest Met feedback PDF generated successfully.",
 
       data: pdfBuffer,
 
@@ -1437,7 +1480,7 @@ const generateMetByReportPdf = async (data) => {
     return {
       success: true,
 
-      message: "Guest Meet Met By PDF generated successfully.",
+      message: "Guest Met By PDF generated successfully.",
 
       data: pdfBuffer,
 

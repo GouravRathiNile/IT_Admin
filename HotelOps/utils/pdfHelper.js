@@ -122,7 +122,15 @@ const generatePdf = async ({ title, reportName, organizationId, logoUrl, orienta
   if (columns) content.push(dataTable({ columns, rows, ...tableOptions }));
   for (const section of sections) {
     content.push({ text: section.title, style: "pdfSection", margin: [0, 8, 0, 4] });
-    content.push(metadataTable(section.items));
+    content.push(
+      section.columns
+        ? dataTable({
+            columns: section.columns,
+            rows: section.rows || [],
+            ...(section.tableOptions || {}),
+          })
+        : metadataTable(section.items || []),
+    );
   }
   const definition = {
     pageSize: "A4", pageOrientation: orientation, pageMargins: pageMargins || [24, 26, 24, 34], content,

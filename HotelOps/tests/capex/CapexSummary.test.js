@@ -6,6 +6,83 @@ const path = require("node:path");
 const { pool } = require("../../db");
 const CapexService = require("../../services/CapexService/CapexService");
 
+test("CAPEX detail PDF uses its dedicated pdfmake layout and configured approval rows", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  pool.query = async (sql) => {
+    if (/AND cm\.CapexID = \$1/.test(sql)) {
+      return {
+        rows: [{
+          capexid: 14,
+          organizationid: 20,
+          organizationshortname: "HJU",
+          capexnumber: 14,
+          department: "Finance",
+          item: "Test Item",
+          description: "Test description",
+          make: "Test Make",
+          qty: "100",
+          rate: "15",
+          total: "1500",
+          isvoid: false,
+          createddate: "2026-09-03",
+          currentstatus: "Pending",
+        }],
+      };
+    }
+    if (/FROM Capex_Documents/.test(sql)) return { rows: [] };
+    if (/FROM Capex_Approval ca/.test(sql)) {
+      return {
+        rows: [
+          {
+            capexapprovalid: 14,
+            capexid: 14,
+            approvalrole: "GM",
+            status: "Approved",
+            approvedquantity: "100",
+            remarks: null,
+          },
+          {
+            capexapprovalid: 14,
+            capexid: 14,
+            approvalrole: "CEO",
+            status: "Pending",
+            approvedquantity: null,
+            remarks: null,
+          },
+        ],
+      };
+    }
+    return { rows: [] };
+  };
+
+  try {
+    const response = await CapexService.generateCapexByIdPdf({ CapexID: 14 });
+    assert.equal(response.success, true);
+    assert.equal(Buffer.isBuffer(response.PdfBuffer), true);
+    assert.equal(response.PdfBuffer.subarray(0, 4).toString(), "%PDF");
+
+    const source = fs.readFileSync(
+      path.join(__dirname, "../../services/CapexService/CapexService.js"),
+      "utf8",
+    );
+    const handler = source.match(
+      /const generateCapexByIdPdf[\s\S]*?\/\/ =+ Exports/,
+    )[0];
+    assert.match(handler, /new PdfPrinter/);
+    assert.match(handler, /CAPEX Detail Report/);
+    assert.match(handler, /text: "Approval"/);
+    assert.match(handler, /text: "Status"/);
+    assert.match(handler, /text: "Qty"/);
+    assert.match(handler, /text: "Remarks"/);
+    assert.match(handler, /const fieldIcon =/);
+    assert.match(handler, /await loadLogo\(capex\.OrganizationID\)/);
+    assert.doesNotMatch(handler, /statusTheme/);
+    assert.doesNotMatch(handler, /await generatePdf\(/);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
 test("CAPEX approval responses expose role-wise approved quantity", () => {
   const serviceSource = fs.readFileSync(
     path.join(__dirname, "../../services/CapexService/CapexService.js"),
