@@ -185,11 +185,17 @@ test("monthly PDF uses the compact single-page landscape table layout", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
   const helper = read("utils/pdfHelper.js");
   assert.match(source, /orientation: "landscape"/);
+  assert.match(source, /key: "Title", header: "Title", width: "\*"/);
   assert.match(source, /width: dayWidth/);
   assert.match(source, /paddingLeft: \(\) => 1, paddingRight: \(\) => 1/);
   assert.match(source, /noWrap: false/);
   assert.match(helper, /Generated: \$\{timestamp\}/);
   assert.match(helper, /Page \$\{page\} of \$\{count\}/);
+});
+
+test("monthly and last-year rows retain master configuration order", () => {
+  const source = read("services/HLPReportService/HLPReportService.js");
+  assert.match(source, /\) configured\s+ORDER BY configured\.orderby NULLS LAST, configured\.id/);
 });
 
 test("master export exposes its server-provided XLSX filename to browser clients", () => {

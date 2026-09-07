@@ -15,12 +15,27 @@ const INCIDENT_EXPORT_COLUMNS = Object.freeze([
   { key: "InvestigatedBy", header: "Investigated By", width: 24 }, { key: "PresentDuringIncident", header: "Present During Incident", width: 30 },
   { key: "ReportTo", header: "Report To", width: 24 }, { key: "ReportBy", header: "Report By", width: 24 },
 ]);
-const INCIDENT_PDF_FIELDS = Object.freeze([
-  ["Incident Report ID", "ID"], ["Organization", "OrganizationName"], ["Report Date", "ReportDate"], ["Incident Date", "IncidentDate"],
-  ["Time", "Time"], ["Location", "Location"], ["Accident Cause", "AccidentCause"], ["Any Casualty", "Anycasualty"],
-  ["Description", "Description"], ["Damage Caused", "Damagedcaused"], ["Investigation", "Investigation"], ["Investigated By", "InvestigatedBy"],
-  ["Present During Incident", "PresentDuringIncident"], ["Reported To", "ReportTo"], ["Report Made By", "ReportBy"], ["Created By", "CreatedBy"],
-  ["Created Date", "CreatedDate"], ["Modified By", "ModifyBy"], ["Modified Date", "ModifyDate"],
+// const INCIDENT_PDF_FIELDS = Object.freeze([
+//   ["Incident Report ID", "ID"], ["Organization", "OrganizationName"], ["Report Date", "ReportDate"], ["Incident Date", "IncidentDate"],
+//   ["Time", "Time"], ["Location", "Location"], ["Accident Cause", "AccidentCause"], ["Any Casualty", "Anycasualty"],
+//   ["Description", "Description"], ["Damage Caused", "Damagedcaused"], ["Investigation", "Investigation"], ["Investigated By", "InvestigatedBy"],
+//   ["Present During Incident", "PresentDuringIncident"], ["Reported To", "ReportTo"], ["Report Made By", "ReportBy"], ["Created By", "CreatedBy"],
+//   ["Created Date", "CreatedDate"], ["Modified By", "ModifyBy"], ["Modified Date", "ModifyDate"],
+// ]);
+
+const INCIDENT_PDF_INFORMATION = Object.freeze([
+  { label: "Report Date", key: "ReportDate" },
+  { label: "Incident Date", key: "IncidentDate" },
+  { label: "Incident Time", key: "Time" },
+  { label: "Location", key: "Location" },
+  { label: "Accident Cause", key: "AccidentCause" },
+  { label: "Any Casualty", key: "Anycasualty" },
+]);
+
+const INCIDENT_PDF_SECTIONS = Object.freeze([
+  { title: "Description", key: "Description" },
+  { title: "Damaged caused", key: "Damagedcaused" },
+  { title: "Investigation", key: "Investigation" },
 ]);
 
 const fail = (message, statusCode = 400) => ({ success: false, statusCode, message });
@@ -124,14 +139,22 @@ const reportListPdf = async (data) => {
     const organization = await resolveOrganization(data.UserID, data.Query.organizationId);
     if (organization.error) return organization.error;
     const query = data.Query;
+    // const metadata = [
+    //   { label: "Organization", value: organization.OrganizationShortName || organization.OrganizationName },
+    //   { label: "Year", value: query.year || "All" },
+    //   { label: "Month", value: query.month || "All" },
+    //   { label: "Search", value: query.search || "All" },
+    //   { label: "From Date", value: query.fromDate ? formatDate(query.fromDate) : "All" },
+    //   { label: "To Date", value: query.toDate ? formatDate(query.toDate) : "All" },
+    //   { label: "Page", value: Number(query.page) },
+    //   { label: "Total Records", value: response.pagination.totalRecords },
+    // ];
     const metadata = [
-      { label: "Organization", value: organization.OrganizationShortName || organization.OrganizationName },
-      { label: "Year", value: query.year || "All" },
-      { label: "Month", value: query.month || "All" },
-      { label: "Search", value: query.search || "All" },
-      { label: "From Date", value: query.fromDate ? formatDate(query.fromDate) : "All" },
-      { label: "To Date", value: query.toDate ? formatDate(query.toDate) : "All" },
-      { label: "Page", value: Number(query.page) },
+      { label: "Organization", value: organization.OrganizationName },
+      ...(query.year ? [{ label: "Year", value: query.year }] : []),
+      ...(query.month ? [{ label: "Month", value: query.month }] : []),
+      ...(query.fromDate ? [{ label: "From Date", value: formatDate(query.fromDate) }] : []),
+      ...(query.toDate ? [{ label: "To Date", value: formatDate(query.toDate) }] : []),
       { label: "Total Records", value: response.pagination.totalRecords },
     ];
     const buffer = await generatePdf({
@@ -182,7 +205,7 @@ const update = async (data) => {
     await client.query("COMMIT");
     return { success: true, message: "Incident report updated successfully.", data: { ID: data.ID } };
   } catch (error) {
-    if (client) await client.query("ROLLBACK").catch(() => {});
+    if (client) await client.query("ROLLBACK").catch(() => { });
     console.error("Update Incident Report Error:", error.message);
     return retryableDatabaseResponse(error) || fail("Unable to update incident report at this time.", 503);
   } finally { if (client) client.release(); }
@@ -212,10 +235,54 @@ const reportPdf = async (data) => {
     if (organization.error) return organization.error;
     const row = await repository.findByID(client, data.ID, organization.OrganizationID);
     if (!row) return fail("Incident report not found.", 404);
-    const detail = { ...detailDTO(row), OrganizationName: row.organizationshortname ?? organization.OrganizationShortName };
+    // const detail = { ...detailDTO(row), OrganizationName: row.organizationshortname ?? organization.OrganizationShortName };
+    // const buffer = await generatePdf({
+    //   title: "INCIDENT REPORT", reportName: "Incident Report", organizationId: organization.OrganizationID,
+    //   metadata: INCIDENT_PDF_FIELDS.map(([label, key]) => ({ label, value: detail[key] })),
+    // });
+    const detail = {
+      ...detailDTO(row),
+      OrganizationName: row.organizationshortname ?? organization.OrganizationShortName,
+    };
+
+    const informationItems = [
+      { label: "Report Date", value: detail.ReportDate },
+      { label: "Incident Date", value: detail.IncidentDate },
+      { label: "Incident Time", value: detail.Time },
+      { label: "Location", value: detail.Location },
+      { label: "Accident Cause", value: detail.AccidentCause },
+      { label: "Any Casualty", value: detail.Anycasualty },
+    ];
+
+    const sections = [
+      {
+        title: "Description",
+        items: [{ label: "", value: detail.Description, fullWidth: true }],
+      },
+      {
+        title: "Damaged caused",
+        items: [{ label: "", value: detail.Damagedcaused, fullWidth: true }],
+      },
+      {
+        title: "Investigation",
+        items: [{ label: "", value: detail.Investigation, fullWidth: true }],
+      },
+    ];
+
+    const bottomItems = [
+      { label: "Investigated by", value: detail.InvestigatedBy },
+      { label: "Personnel present during incident", value: detail.PresentDuringIncident },
+      { label: "Personnel reporting the incident", value: detail.ReportTo },
+      { label: "Report made by", value: detail.ReportBy },
+    ];
+
     const buffer = await generatePdf({
-      title: "INCIDENT REPORT", reportName: "Incident Report", organizationId: organization.OrganizationID,
-      metadata: INCIDENT_PDF_FIELDS.map(([label, key]) => ({ label, value: detail[key] })),
+      title: "INCIDENT REPORT",
+      reportName: "Incident Report",
+      organizationId: organization.OrganizationID,
+      metadata: informationItems,
+      sections,
+      bottomItems,
     });
     return { success: true, message: "Incident report PDF generated successfully.", pdfBase64: buffer.toString("base64"), filename: `incident-report-${data.ID}.pdf` };
   } catch (error) {

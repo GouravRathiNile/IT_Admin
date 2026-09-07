@@ -536,10 +536,15 @@ const getMonthlyReport = async ({ UserID, OrganizationID, OrganizationIDs, Year,
       ? [Number(OrganizationID)] : (Array.isArray(OrganizationIDs) ? OrganizationIDs.map(Number) : []);
     const mastersResult = masterOrganizationIDs.length
       ? await client.query(
-        `SELECT DISTINCT ON (LOWER(title)) id AS "ID", title AS "Title", orderby AS "OrderBy", isactive AS "IsActive"
-           FROM hlpreport_master_list
-          WHERE organizationid = ANY($1::bigint[])
-          ORDER BY LOWER(title), isactive DESC, orderby NULLS LAST, id`,
+        `SELECT configured.id AS "ID", configured.title AS "Title",
+                configured.orderby AS "OrderBy", configured.isactive AS "IsActive"
+           FROM (
+             SELECT DISTINCT ON (LOWER(title)) id, title, orderby, isactive
+               FROM hlpreport_master_list
+              WHERE organizationid = ANY($1::bigint[])
+              ORDER BY LOWER(title), isactive DESC, orderby NULLS LAST, id
+           ) configured
+          ORDER BY configured.orderby NULLS LAST, configured.id`,
         [masterOrganizationIDs]
       )
       : { rows: [] };
@@ -842,7 +847,10 @@ const generateMonthlyPivotPdf = async (data, lastYear = false) => {
     }
     const organization = await reportOrganizationMetadata(data.OrganizationID);
     const days = new Date(Date.UTC(Number(data.Year), Number(data.Month), 0)).getUTCDate();
-    const dayWidth = Math.min(20, Math.floor((826 - 68 - 34 - ((days + 2) * 2) - 18) / days));
+    // Day and Total columns remain compact while the Title column consumes the
+    // remaining page width. This keeps the metadata and data tables flush on
+    // both edges for every 28/29/30/31-day month.
+    const dayWidth = 20;
     const wrapTitle = (row) => {
       const title = String(row.Title || "-"); if (title.length <= 14 || !title.includes(" ")) return title;
       const words = title.split(/\s+/); let split = 1; let distance = Infinity;
@@ -856,7 +864,7 @@ const generateMonthlyPivotPdf = async (data, lastYear = false) => {
       logoUrl: organization.LogoUrl, pageMargins: [8, 18, 8, 32],
       metadata: [{ label: "Organization", value: organization.Name }, { label: "Month", value: formatDate(`${data.Year}-${String(data.Month).padStart(2, "0")}-01`, "MMMM YYYY") }],
       columns: [
-        { key: "Title", header: "Title", width: 68, align: "left", value: wrapTitle, noWrap: false, style: "monthlyTitle" },
+        { key: "Title", header: "Title", width: "*", align: "left", value: wrapTitle, noWrap: false, style: "monthlyTitle" },
         ...Array.from({ length: days }, (_, index) => ({ key: String(index + 1), header: String(index + 1), width: dayWidth, align: "center" })),
         { key: "Total", header: "Total", width: 34, align: "center", bold: true },
       ], rows,
