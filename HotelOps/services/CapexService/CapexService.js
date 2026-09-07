@@ -296,7 +296,6 @@ const CAPEX_SELECT = `
     cm.CapexID,
     cm.OrganizationID,
     om.ShortName AS OrganizationShortName,
-    om.OrganizationName AS OrganizationName,
     cm.CapexNumber,
     cm.Department,
     cm.Item,
@@ -3884,7 +3883,7 @@ const generateCapexListPdfDocument = async (data) => {
       {
         header: "QTY",
         value: (row) => row.Qty,
-        width: 35,
+        width: 32,
         align: "left",
       },
       {
@@ -3914,7 +3913,28 @@ const generateCapexListPdfDocument = async (data) => {
         align: "left",
       })),
     ];
+// ============================================================
+// METADATA
+// ============================================================
 
+let organizationName =
+  capexRows[0]?.OrganizationName || data.OrganizationName || null;
+
+if (!organizationName && organizationId) {
+  const organizationResult = await pool.query(
+    `SELECT OrganizationName
+     FROM Organization_Master
+     WHERE OrganizationID = $1
+       AND IsDeleted = FALSE
+     LIMIT 1`,
+    [organizationId],
+  );
+
+  organizationName =
+    organizationResult.rows[0]?.organizationname || null;
+}
+
+organizationName ||= "All Organizations";
     // ============================================================
     // METADATA
     // ============================================================
@@ -3937,7 +3957,7 @@ const generateCapexListPdfDocument = async (data) => {
     organizationShortName ||= "All Organizations";
 
     const metadata = [
-      { label: "Organization", value: organizationName },
+      { label: "Organization", value: organizationName  },
       { label: "Department", value: data.Department || "All" },
       {
         label: "From Date",
@@ -3987,6 +4007,9 @@ const generateCapexListPdfDocument = async (data) => {
     };
   }
 };
+// Export the exact same records as getAllCapex. Keeping list visibility in one
+// place prevents configured-flow differences (for example, a flow without
+// OWNER) from making the screen and PDF disagree.
 const generateCapexListPdf = async (data) => {
   try {
     const rows = [];
@@ -4052,7 +4075,23 @@ const getCapexDepartmentReportPdf = async (data) => {
     );
 
     const rows = result.rows;
+const organizationId = data?.Filters?.OrganizationID || null;
 
+let organizationName = "All Organizations";
+
+if (organizationId) {
+  const organizationResult = await pool.query(
+    `SELECT OrganizationName
+     FROM Organization_Master
+     WHERE OrganizationID = $1
+       AND IsDeleted = FALSE
+     LIMIT 1`,
+    [organizationId],
+  );
+
+  organizationName =
+    organizationResult.rows[0]?.organizationname || "All Organizations";
+}
     const pdfBuffer = await generatePdf({
       title: "CAPEX Department Report",
       reportName: "CAPEX Department Report",
@@ -4063,6 +4102,10 @@ const getCapexDepartmentReportPdf = async (data) => {
       orientation: "landscape",
 
       metadata: [
+        {
+      label: "Organization",
+      value: organizationName,
+    },
         {
           label: "Department",
           value: data?.Filters?.Department || "All",
@@ -4090,40 +4133,41 @@ const getCapexDepartmentReportPdf = async (data) => {
         {
           header: "Total Count",
           key: "count",
-          width: 60,
+          width: 90,
           align: "center",
         },
 
         {
           header: "Approved",
           key: "approvedcount",
-          width: 70,
+          width: 90,
           align: "center",
         },
         {
           header: "Pending",
           key: "pendingcount",
-          width: 70,
+          width: 90,
           align: "center",
         },
         {
           header: "Rejected",
           key: "rejectedcount",
-          width: 70,
+          width: 90,
+          align: "center",
+        },
+         {
+          header: "Returned",
+          key: "returnedcount",
+          width: 90,
           align: "center",
         },
         {
           header: "Hold",
           key: "holdcount",
-          width: 70,
+          width: 90,
           align: "center",
         },
-        {
-          header: "Returned",
-          key: "returnedcount",
-          width: 70,
-          align: "center",
-        },
+       
       ],
 
       rows,
@@ -4230,40 +4274,41 @@ const getCapexOrganizationReportPdf = async (data) => {
         {
           header: "Total Count",
           key: "count",
-          width: 60,
+          width: 100,
           align: "center",
         },
 
         {
           header: "Approved",
           key: "approvedcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
         {
           header: "Pending",
           key: "pendingcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
         {
           header: "Rejected",
           key: "rejectedcount",
-          width: 75,
+          width: 100,
+          align: "center",
+        },
+         {
+          header: "Returned",
+          key: "returnedcount",
+          width: 100,
           align: "center",
         },
         {
           header: "Hold",
           key: "holdcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
-        {
-          header: "Returned",
-          key: "returnedcount",
-          width: 75,
-          align: "center",
-        },
+       
       ],
 
       rows,
