@@ -7,6 +7,7 @@ const {
   getEquipmentById,
   updateEquipment,
   deleteEquipment,
+  getEquipmentDescriptions
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -16,5 +17,6 @@ router.get("/EquipmentList", authenticateToken, getAllEquipment);
 router.get("/EquipmentById/:id", authenticateToken, getEquipmentById);
 router.put( "/UpdateEquipment/:id",authenticateToken,upload.array("Documents", 10),updateEquipment,);
 router.delete("/DeleteEquipment/:id", authenticateToken, deleteEquipment);
+router.get("/EquipmentNames", authenticateToken, getEquipmentDescriptions);
 
 module.exports = router;

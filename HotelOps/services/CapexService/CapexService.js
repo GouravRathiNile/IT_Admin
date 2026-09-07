@@ -296,6 +296,7 @@ const CAPEX_SELECT = `
     cm.CapexID,
     cm.OrganizationID,
     om.ShortName AS OrganizationShortName,
+    om.OrganizationName AS OrganizationName,
     cm.CapexNumber,
     cm.Department,
     cm.Item,
@@ -1249,331 +1250,6 @@ const capexExists = async (client, capexID) => {
   return result.rows.length > 0;
 };
 // ============================================================ Partial Update CAPEX
-// const updateCapex = async (data) => {
-//   let client;
-//   let transactionStarted = false;
-
-//   const documents = Array.isArray(data.Documents) ? data.Documents : [];
-
-//   const deleteDocumentIDs = Array.isArray(data.DeleteDocumentIDs)
-//     ? data.DeleteDocumentIDs
-//     : [];
-
-//   try {
-//     client = await pool.connect();
-
-//     await client.query("BEGIN");
-//     transactionStarted = true;
-
-//     // ============================================================
-//     // Changes
-//     // ============================================================
-
-//     const changes = data.Changes || {};
-
-//     const assignments = [];
-//     const values = [];
-
-//     const addValue = (column, value) => {
-//       values.push(value);
-//       assignments.push(`${column} = $${values.length}`);
-//     };
-
-//     // ============================================================
-//     // CAPEX Fields
-//     // OrganizationID and CapexNumber are NOT updated
-//     // ============================================================
-
-//     if (changes.Department !== undefined) {
-//       addValue("Department", changes.Department);
-//     }
-
-//     if (changes.Item !== undefined) {
-//       addValue("Item", changes.Item);
-//     }
-
-//     if (changes.Description !== undefined) {
-//       addValue("Description", changes.Description);
-//     }
-
-//     if (changes.Make !== undefined) {
-//       addValue("Make", changes.Make);
-//     }
-
-//     if (changes.Qty !== undefined) {
-//       addValue("Qty", changes.Qty);
-//     }
-
-//     if (changes.Rate !== undefined) {
-//       addValue("Rate", changes.Rate);
-//     }
-
-//     // ============================================================
-//     // Total comes directly from Frontend
-//     // ============================================================
-
-//     if (changes.Total !== undefined) {
-//       addValue("Total", changes.Total);
-//     }
-
-//     if (changes.IsVoid !== undefined) {
-//       addValue("IsVoid", changes.IsVoid);
-//     }
-
-//     if (changes.VoidRemarks !== undefined) {
-//       addValue("VoidRemarks", changes.VoidRemarks);
-//     }
-
-//     // ============================================================
-//     // Modified Information
-//     // ============================================================
-
-//     addValue("ModifiedBy", data.UserID);
-
-//     assignments.push("ModifiedDate = CURRENT_TIMESTAMP");
-
-//     // ============================================================
-//     // Update CAPEX
-//     // ============================================================
-
-//     values.push(data.CapexID);
-
-//     const capexIDParameter = values.length;
-
-//     const updateResult = await client.query(
-//       `
-//       UPDATE Capex_Master
-//       SET ${assignments.join(", ")}
-//       WHERE CapexID = $${capexIDParameter}
-//         AND IsDeleted = FALSE
-//       RETURNING
-//         CapexID,
-//         OrganizationID,
-//         CapexNumber,
-//         Department,
-//         Item,
-//         Description,
-//         Make,
-//         Qty,
-//         Rate,
-//         Total,
-//         IsVoid,
-//         VoidRemarks,
-//         ModifiedBy,
-//         ModifiedDate;
-//       `,
-//       values,
-//     );
-
-//     // ============================================================
-//     // CAPEX Not Found
-//     // ============================================================
-
-//     if (updateResult.rows.length === 0) {
-//       await client.query("ROLLBACK");
-//       transactionStarted = false;
-
-//       return fail("CAPEX record not found.", 404);
-//     }
-
-//     // ============================================================
-//     // DOCUMENTS
-//     //
-//     // If new documents are provided:
-//     //   1. Old documents are soft deleted
-//     //   2. New documents are inserted
-//     //
-//     // If no documents are provided:
-//     //   Old documents remain unchanged
-//     // ============================================================
-
-//     if (documents.length > 0) {
-//       // ----------------------------------------------------------
-//       // Get existing CAPEX number
-//       // ----------------------------------------------------------
-
-//       const capexInfo = updateResult.rows[0];
-
-//       const capexNumber = Number(capexInfo.capexnumber);
-
-//       // ----------------------------------------------------------
-//       // Soft delete old documents
-//       // ----------------------------------------------------------
-
-//       await client.query(
-//         `
-//         UPDATE Capex_Documents
-//         SET
-//           IsDeleted = TRUE,
-//           DeletedBy = $1,
-//           DeletedDate = CURRENT_TIMESTAMP,
-//           ModifiedBy = $1,
-//           ModifiedDate = CURRENT_TIMESTAMP
-//         WHERE CapexID = $2
-//           AND IsDeleted = FALSE;
-//         `,
-//         [data.UserID, data.CapexID],
-//       );
-
-//       // ----------------------------------------------------------
-//       // Generate IDs for new documents
-//       // ----------------------------------------------------------
-
-//       const newDocumentIDs = await reserveNumericIDs(
-//         client,
-//         "Capex_Documents",
-//         "CapexDocumentID",
-//         documents.length,
-//       );
-
-//       // ----------------------------------------------------------
-//       // Insert new documents
-//       // ----------------------------------------------------------
-
-//       for (const [index, document] of documents.entries()) {
-//         await client.query(
-//           `
-//           INSERT INTO Capex_Documents
-//           (
-//             CapexDocumentID,
-//             CapexID,
-//             CapexNumber,
-//             FileName,
-//             FilePath,
-//             FileType,
-//             FileSize,
-//             IsDeleted,
-//             CreatedBy,
-//             CreatedDate
-//           )
-//           VALUES
-//           (
-//             $1,
-//             $2,
-//             $3,
-//             $4,
-//             $5,
-//             $6,
-//             $7,
-//             FALSE,
-//             $8,
-//             CURRENT_TIMESTAMP
-//           );
-//           `,
-//           [
-//             newDocumentIDs[index],
-//             data.CapexID,
-//             capexNumber,
-//             document.FileName,
-//             document.FilePath,
-//             document.FileType,
-//             document.FileSize,
-//             data.UserID,
-//           ],
-//         );
-//       }
-//     }
-
-//     // ============================================================
-//     // Specific old documents delete
-//     //
-//     // Only execute when DeleteDocumentIDs are provided
-//     // ============================================================
-
-//     if (deleteDocumentIDs.length > 0) {
-//       const ownedDocuments = await client.query(
-//         `
-//         SELECT CapexDocumentID
-//         FROM Capex_Documents
-//         WHERE CapexID = $1
-//           AND CapexDocumentID = ANY($2::bigint[])
-//           AND IsDeleted = FALSE;
-//         `,
-//         [data.CapexID, deleteDocumentIDs],
-//       );
-
-//       if (ownedDocuments.rows.length !== deleteDocumentIDs.length) {
-//         await client.query("ROLLBACK");
-//         transactionStarted = false;
-
-//         return fail("One or more selected CAPEX documents are invalid.", 400);
-//       }
-
-//       await client.query(
-//         `
-//         UPDATE Capex_Documents
-//         SET
-//           IsDeleted = TRUE,
-//           DeletedBy = $1,
-//           DeletedDate = CURRENT_TIMESTAMP,
-//           ModifiedBy = $1,
-//           ModifiedDate = CURRENT_TIMESTAMP
-//         WHERE CapexID = $2
-//           AND CapexDocumentID = ANY($3::bigint[])
-//           AND IsDeleted = FALSE;
-//         `,
-//         [data.UserID, data.CapexID, deleteDocumentIDs],
-//       );
-//     }
-
-//     // ============================================================
-//     // COMMIT
-//     // ============================================================
-
-//     await client.query("COMMIT");
-//     transactionStarted = false;
-
-//     const updated = updateResult.rows[0];
-
-//     return {
-//       success: true,
-//       message: "CAPEX updated successfully.",
-
-//       // data: {
-//       //   CapexID: Number(updated.capexid),
-//       //   OrganizationID: Number(updated.organizationid),
-//       //   CapexNumber: Number(updated.capexnumber),
-//       //   Department: updated.department,
-//       //   Item: updated.item,
-//       //   Description: updated.description,
-//       //   Make: updated.make,
-//       //   Qty: Number(updated.qty),
-//       //   Rate: Number(updated.rate),
-//       //   Total: Number(updated.total),
-//       //   IsVoid: updated.isvoid,
-//       //   VoidRemarks: updated.voidremarks,
-//       //   DocumentsUpdated: documents.length,
-//       //   DocumentsDeleted: deleteDocumentIDs.length,
-//       // },
-//     };
-//   } catch (error) {
-//     if (client && transactionStarted) {
-//       await client.query("ROLLBACK");
-//     }
-
-//     console.error("Update CAPEX Error:", error.message);
-
-//     const retryResponse = retryableDatabaseResponse(error);
-
-//     if (retryResponse) {
-//       return retryResponse;
-//     }
-
-//     if (error.code === "23503") {
-//       return fail("Invalid CAPEX related data.", 400);
-//     }
-
-//     if (error.code === "23505") {
-//       return fail("CAPEX organization number already exists.", 409);
-//     }
-
-//     return fail("Unable to update CAPEX at this time.", 500);
-//   } finally {
-//     if (client) {
-//       client.release();
-//     }
-//   }
-// };
 const updateCapex = async (data) => {
   let client;
   let transactionStarted = false;
@@ -4192,12 +3868,12 @@ const generateCapexListPdfDocument = async (data) => {
       {
         header: "HTL",
         value: (row) => row.OrganizationShortName,
-        width: 48,
+        width: 38,
       },
       {
         header: "DEPT",
         value: (row) => row.Department,
-        width: 65,
+        width: 55,
       },
       {
         header: "ITEM DETAILS",
@@ -4208,8 +3884,8 @@ const generateCapexListPdfDocument = async (data) => {
       {
         header: "QTY",
         value: (row) => row.Qty,
-        width: 42,
-        align: "right",
+        width: 35,
+        align: "left",
       },
       {
         header: "RATE",
@@ -4219,7 +3895,7 @@ const generateCapexListPdfDocument = async (data) => {
             maximumFractionDigits: 2,
           }),
         width: 62,
-        align: "right",
+        align: "left",
       },
       {
         header: "TOTAL",
@@ -4229,8 +3905,7 @@ const generateCapexListPdfDocument = async (data) => {
             maximumFractionDigits: 2,
           }),
         width: 72,
-        align: "right",
-        bold: true,
+        align: "left",
       },
       ...approvalRoles.map((role) => ({
         header: role,
@@ -4262,7 +3937,7 @@ const generateCapexListPdfDocument = async (data) => {
     organizationShortName ||= "All Organizations";
 
     const metadata = [
-      { label: "Organization", value: organizationShortName },
+      { label: "Organization", value: organizationName },
       { label: "Department", value: data.Department || "All" },
       {
         label: "From Date",
@@ -4312,9 +3987,6 @@ const generateCapexListPdfDocument = async (data) => {
     };
   }
 };
-// Export the exact same records as getAllCapex. Keeping list visibility in one
-// place prevents configured-flow differences (for example, a flow without
-// OWNER) from making the screen and PDF disagree.
 const generateCapexListPdf = async (data) => {
   try {
     const rows = [];
@@ -4789,10 +4461,7 @@ const generateCapexByIdPdf = async (data) => {
           label: "Department",
           value: capex.Department,
         },
-        {
-          label: "Status",
-          value: capex.CurrentStatus,
-        },
+        
       ],
 
       // Main data table is not required
@@ -4827,12 +4496,7 @@ const generateCapexByIdPdf = async (data) => {
                 capex.Rate,
               )}`,
             },
-            {
-              label: "Total",
-              value: `INR ${formatCapexAmount(
-                capex.Total,
-              )}`,
-            },
+         
           ],
         },
 
@@ -4843,6 +4507,12 @@ const generateCapexByIdPdf = async (data) => {
             {
               label: "Description",
               value: capex.Description,
+            },
+            {
+              label: "Total",
+              value: `INR ${formatCapexAmount(
+                capex.Total,
+              )}`,
             },
           ],
         },
