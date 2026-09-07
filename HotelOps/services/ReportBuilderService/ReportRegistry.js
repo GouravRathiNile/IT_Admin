@@ -62,6 +62,13 @@ const guestGlitchMaster = Object.freeze({
   title: "Guest Glitch Master Report",
   runnable: true,
   execution: "guestGlitchMaster",
+  export: Object.freeze({
+    formats: Object.freeze(["pdf"]),
+    maxRows: 2500,
+    pdfMaxRows: 2500,
+    orientation: "landscape",
+    filename: "Guest_Glitch_Master_Report",
+  }),
   filters: Object.freeze([
     { key: "organizationId", optionKey: "organization", label: "Organization", type: "organization", required: false, optionSource: "organization", targetKey: "organizationId" },
     { key: "fromDate", label: "From Date", type: "date", required: false, targetKey: "fromDate" },

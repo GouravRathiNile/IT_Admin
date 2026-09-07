@@ -358,7 +358,7 @@ const run = (data) => execute(async () => {
 // Export uses the normalized Guest Glitch provider result for every output format.
 const exportReport = (data) => execute(async () => {
   const report = requireReport(data.module, data.reportType);
-  if (report.execution !== "guestGlitchCompact" || !report.export) {
+  if (!["guestGlitchCompact", "guestGlitchMaster"].includes(report.execution) || !report.export) {
     throw new ReportBuilderValidationError("Export is not available for this report type.");
   }
   const body = data.body;
@@ -367,9 +367,36 @@ const exportReport = (data) => execute(async () => {
   }
   const format = typeof body.format === "string" ? body.format.trim().toLowerCase() : "";
   if (!report.export.formats.includes(format)) {
-    throw new ReportBuilderValidationError("Export format must be csv, excel, or pdf.");
+    throw new ReportBuilderValidationError(
+      report.execution === "guestGlitchMaster"
+        ? "Export format must be pdf."
+        : "Export format must be csv, excel, or pdf."
+    );
   }
   const access = await resolveAccess(data.UserID);
+
+  // Master PDF export delegates to the existing Guest Glitch master-report
+  // reader/PDF pipeline so its filters, organization security and DTO mapping
+  // remain identical to the on-screen report.
+  if (report.execution === "guestGlitchMaster") {
+    const query = translateMasterRequest(report, body, access);
+    const response = await guestGlitchService.masterReportListPdf({
+      ...query,
+      UserID: Number(data.UserID),
+    });
+    if (!response.success) return response;
+    const fromDate = body.filters?.fromDate;
+    const toDate = body.filters?.toDate;
+    const range = fromDate || toDate ? `_${fromDate || "All"}_to_${toDate || "All"}` : "";
+    return {
+      success: true,
+      message: "Report exported successfully",
+      fileBase64: response.pdfBase64,
+      contentType: "application/pdf",
+      filename: `${report.export.filename}${range}.pdf`,
+    };
+  }
+
   const definition = translateRequest(report, body, access);
   const maxRows = format === "pdf" ? report.export.pdfMaxRows : report.export.maxRows;
   const result = await guestGlitchReportProvider.getNormalized({

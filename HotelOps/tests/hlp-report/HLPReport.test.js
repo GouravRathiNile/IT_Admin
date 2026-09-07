@@ -318,7 +318,9 @@ test("HLP PDFs share the requested logo, metadata, and footer design", () => {
   const serviceSource = read("services/HLPReportService/HLPReportService.js");
 
   assert.match(pdfSource, /const buildHeader = async \(title, organizationId, logoUrl\)/);
-  assert.match(pdfSource, /const fallbackLogo = \(\)/);
+  assert.doesNotMatch(pdfSource, /const fallbackLogo = \(\)/);
+  assert.match(pdfSource, /const officialNileLogoUrl = async/);
+  assert.match(pdfSource, /const organizationLogo = await fetchLogo\(organizationUrl\)/);
   assert.match(pdfSource, /const footer = \(reportName, timestamp\)/);
   assert.match(pdfSource, /widths: \[72, "\*", 72, "\*"\]/);
   assert.match(serviceSource, /FROM organization_master_logo/);

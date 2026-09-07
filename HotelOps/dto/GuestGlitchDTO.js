@@ -167,7 +167,7 @@ const listResponseDTO = (row, resolved = {}) => ({
       ? null
       : Number(row.organizationid),
 
-  OrganizationName: row.shortname ?? null,
+  OrganizationName: row.shortname ?? row.organizationname ?? null,
 
   EntryDate: formatDate(row.entrydate),
   Time: row.time,
@@ -178,7 +178,8 @@ const listResponseDTO = (row, resolved = {}) => ({
   Departments: resolved.departments || [],
   ReceivedByUsers: resolved.receivedByUsers || [],
   InformedToUsers: resolved.informedToUsers || [],
-  ResolvedBy: row.resolvedby ?? null,
+  ResolvedBy: resolved.resolvedByUser?.ID ?? (/^\d+$/.test(String(row.resolvedby ?? "")) ? Number(row.resolvedby) : row.resolvedby ?? null),
+  ResolvedByName: resolved.resolvedByUser?.Name ?? (/^\d+$/.test(String(row.resolvedby ?? "")) ? null : row.resolvedby ?? null),
 
   Complaint: row.complaint,
   Status: row.status,
@@ -196,7 +197,7 @@ const listResponseDTO = (row, resolved = {}) => ({
   SRA_Other: row.sra_other == null ? null : Number(row.sra_other),
 
   DepartmentHODComments: mapHODComments(row.departmenthodcomments || [], resolved.departments || []),
-  GetMetJson: row.getmetjson || [],
+  GetMetJson: row.getmetjson ?? [],
 
   CompanyName: row.companyname ?? null,
   Rate: row.rate == null ? null : Number(row.rate),
@@ -222,7 +223,10 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
     row.organizationid ?? row.OrganizationID,
 
   OrganizationName:
-    row.organizationname ?? row.OrganizationName ?? null,
+    row.hotel ?? row.Hotel ?? row.shortname ?? row.organizationname ?? row.OrganizationName ?? null,
+
+  OrganizationFullName:
+    row.organizationfullname ?? row.OrganizationFullName ?? row.organizationname ?? null,
 
   EntryDate: formatDate(row.entrydate ?? row.EntryDate),
 
@@ -231,7 +235,7 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
 
 
   ResolvedBy:
-    row.resolvedby ?? row.ResolvedBy ?? null,
+    resolved.resolvedByUser?.Name ?? row.resolvedby ?? row.ResolvedBy ?? null,
 
   GuestName:
     row.guestname ?? row.GuestName ?? null,

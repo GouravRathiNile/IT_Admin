@@ -88,6 +88,16 @@ test("Guest Glitch list PDFs reuse report filters and render trusted metadata", 
   assert.match(serviceSource, /params\.SelectedOrganizationName \|\| rows\[0\]\?\.OrganizationName/);
   assert.match(serviceSource, /reportResponse\.pagination\?\.totalRecords \?\? rows\.length/);
   assert.match(serviceSource, /masterReportListPdf: withReportOrganizations\(masterReportListPdf\)/);
+  assert.match(serviceSource, /const normalizeGuestPdfRecord/);
+  assert.match(serviceSource, /Departments: pdfSelectionNames\(data\.Departments\)/);
+  assert.match(serviceSource, /DepartmentHODComments: pdfHODComments/);
+  assert.match(serviceSource, /GetMetJson: pdfGuestMet/);
+  assert.match(serviceSource, /sections: pdfRecordSections\(rows\)/);
+  assert.doesNotMatch(serviceSource, /title: "Audit and Attachment"/);
+  const singlePdfSource = serviceSource.match(/const masterReportPdf = async[\s\S]*?const gmAction/)?.[0] || "";
+  assert.match(singlePdfSource, /title: "Guest Glitch", reportName: "Guest Glitch"/);
+  assert.match(singlePdfSource, /!\["ID", "Organization"\]\.includes\(key\)/);
+  assert.doesNotMatch(singlePdfSource, /\["Rate", "Rate"\]|\["Check In", "CheckInDate"\]|\["Check Out", "CheckOutDate"\]/);
 });
 
 test("list response contains stored fields required by the Guest Glitch Edit form", () => {
@@ -101,19 +111,37 @@ test("list response contains stored fields required by the Guest Glitch Edit for
     getmetjson: [{ GuestMetBy: 12 }], rate: "4500", checkindate: "2026-08-24", checkoutdate: "2026-08-26" }, {
     departments: [{ ID: 1029, Name: "Engineering" }],
     receivedByUsers: [{ ID: 12, Name: "User A" }], informedToUsers: [{ ID: 15, Name: "User B" }],
+    resolvedByUser: { ID: 18, Name: "Manager" },
   });
   for (const field of ["GuestStatus", "ReceivedByUsers", "InformedToUsers",
     "ResolvedBy", "ProcessLapseCategory", "ProcessLapse", "InternalActionTakenCategory", "InternalActionTaken",
     "DetailedInvestigation", "ServiceRecovery", "GMComment", "SRA_Room", "SRA_Food", "SRA_Other",
-    "DepartmentHODComments", "GetMetJson", "CompanyName", "Rate", "CheckInDate", "CheckOutDate"]) {
+    "DepartmentHODComments", "GetMetJson", "CompanyName", "Rate", "CheckInDate", "CheckOutDate",
+    "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
     assert.ok(Object.prototype.hasOwnProperty.call(response, field), `Missing edit field: ${field}`);
   }
   assert.equal(response.OrganizationName, "Ramada");
   assert.equal(response.EntryDate, "25 Aug 2026");
   assert.equal(response.DepartmentHODComments[0].departmentName, "Engineering");
+  assert.equal(response.ResolvedBy, 18);
+  assert.equal(response.ResolvedByName, "Manager");
   assert.equal(Object.prototype.hasOwnProperty.call(response, "DepartmentIDs"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(response, "ReceivedByIDs"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(response, "InformedToIDs"), false);
+});
+
+test("list response keeps nullable edit fields present instead of omitting them", () => {
+  const response = listResponseDTO({ id: 1, organizationid: 30 }, {});
+  for (const field of ["ServiceRecovery", "DetailedInvestigation", "InternalActionTaken",
+    "ProcessLapse", "GMComment", "CompanyName", "Rate", "CheckInDate", "CheckOutDate",
+    "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
+    assert.ok(Object.prototype.hasOwnProperty.call(response, field), `Missing nullable edit field: ${field}`);
+  }
+  assert.deepEqual(response.Departments, []);
+  assert.deepEqual(response.ReceivedByUsers, []);
+  assert.deepEqual(response.InformedToUsers, []);
+  assert.deepEqual(response.DepartmentHODComments, []);
+  assert.deepEqual(response.GetMetJson, []);
 });
 
 test("list repository applies optional organization and complaint-only search before pagination", () => {
@@ -127,6 +155,13 @@ test("list repository applies optional organization and complaint-only search be
   assert.match(listSource, /gg\.departmenthodcomments/);
   assert.match(listSource, /gg\.getmetjson/);
   assert.ok(listSource.indexOf("SELECT COUNT") < listSource.indexOf("LIMIT $"));
+});
+
+test("detail lookup selects stored entry fields with organization display data", () => {
+  const source = require("node:fs").readFileSync(require.resolve("../../repositories/GuestGlitchRepository/GuestGlitchRepository"), "utf8");
+  const detailSource = source.match(/const findByID = async[\s\S]*?const updateChangedFields/)?.[0] || "";
+  assert.match(detailSource, /SELECT gg\.\*, om\.shortname, om\.organizationname/);
+  assert.match(detailSource, /gg\.organizationid = ANY\(\$2::bigint\[\]\)/);
 });
 
 test("list query rejects duplicate and malformed department IDs", () => {
@@ -307,6 +342,31 @@ test("ID-based update derives the record organization for multi-organization use
   }
 });
 
+test("partial update preserves stored ResolvedBy snapshot when it is omitted", async () => {
+  const originals = {};
+  for (const name of ["resolveOrganizations", "getClient", "findByID", "validateDepartments", "validateUsers", "updateChangedFields"]) originals[name] = repository[name];
+  let changed;
+  try {
+    repository.resolveOrganizations = async () => [{ organizationid: "20" }];
+    repository.getClient = async () => ({ query: async () => ({}), release() {} });
+    repository.findByID = async () => ({
+      id: "1012", organizationid: "20", complaint: "Old complaint", resolvedby: "Manager Name",
+      departmentids: [], receivedbyids: [], informedtoids: [], departmenthodcomments: [],
+    });
+    repository.validateDepartments = async () => [];
+    repository.validateUsers = async () => [];
+    repository.updateChangedFields = async (_client, _id, _organizationID, fields) => { changed = fields; return { id: 1012 }; };
+
+    const response = await service.update({
+      ID: 1012, Complaint: "Updated complaint", UserID: 7, Username: "user", IP: "127.0.0.1",
+    });
+    assert.equal(response.success, true);
+    assert.equal(response.message, "Guest glitch updated successfully.");
+    assert.equal(Object.prototype.hasOwnProperty.call(changed, "ResolvedBy"), false);
+    assert.equal(changed.Complaint, "Updated complaint");
+  } finally { Object.assign(repository, originals); }
+});
+
 test("create uses the selected mapped organization without workflow configuration", async () => {
   const originals = {};
   for (const name of ["resolveOrganizations", "getClient", "validateDepartments", "validateUsers", "insert"]) originals[name] = repository[name];
@@ -354,9 +414,11 @@ test("create rejects an organization not mapped to the authenticated user", asyn
 });
 
 test("complete detail preserves review attribution and resolves department names", () => {
-  const result = completeReportDTO({ id: 1, departmenthodcomments: [{ departmentId: 10, comment: "Corrected", commentedBy: "hod" }] },
+  const result = completeReportDTO({ id: 1, hotel: "HJ Udaipur", organizationfullname: "Howard Johnson by Wyndham, Udaipur", departmenthodcomments: [{ departmentId: 10, comment: "Corrected", commentedBy: "hod" }] },
     { departments: [{ ID: 10, Name: "Engineering" }] });
   assert.deepEqual(result.DepartmentHODComments, [{ departmentName: "Engineering", HODComment: "Corrected" }]);
+  assert.equal(result.OrganizationName, "HJ Udaipur");
+  assert.equal(result.OrganizationFullName, "Howard Johnson by Wyndham, Udaipur");
 });
 
 test("report query accepts dedicated filters and safe sorting", () => {

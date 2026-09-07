@@ -244,10 +244,44 @@ test("Guest Glitch generic export rejects unsafe requests and unavailable report
     assert.match((await request({ format: "csv", filters: {}, columns: ["rawSql"] })).message, /Invalid report column/);
     assert.match((await request({ format: "csv", filters: { rawSql: "DROP" } })).message, /Invalid report filter/);
     assert.match((await request(null)).message, /body must be an object/);
-    assert.match((await request({ format: "csv" }, "guest-glitch-master")).message, /not available/);
+    assert.match((await request({ format: "csv" }, "guest-glitch-master")).message, /must be pdf/);
     const forbidden = await request({ format: "csv", filters: { organizationId: 40 } });
     assert.equal(forbidden.statusCode, 403);
   } finally { guestRepository.resolveOrganizations = originalResolve; }
+});
+
+test("Guest Glitch Master PDF export preserves selected filters and existing PDF data flow", async () => {
+  const originalResolve = guestRepository.resolveOrganizations;
+  const originalPdf = guestGlitchService.masterReportListPdf;
+  let received;
+  try {
+    guestRepository.resolveOrganizations = async () => [
+      { organizationid: "10", organizationname: "Howard Johnson by Wyndham, Udaipur" },
+    ];
+    guestGlitchService.masterReportListPdf = async (data) => {
+      received = data;
+      return { success: true, pdfBase64: Buffer.from("%PDF-master").toString("base64") };
+    };
+    const response = await service.exportReport({
+      UserID: 7,
+      module: "GuestGlitch",
+      reportType: "guest-glitch-master",
+      body: {
+        format: "pdf",
+        filters: { organizationId: 10, fromDate: "2026-09-01", toDate: "2026-09-30" },
+      },
+    });
+    assert.equal(response.success, true);
+    assert.equal(response.contentType, "application/pdf");
+    assert.equal(Buffer.from(response.fileBase64, "base64").toString(), "%PDF-master");
+    assert.equal(received.organizationId, 10);
+    assert.equal(received.fromDate, "2026-09-01");
+    assert.equal(received.toDate, "2026-09-30");
+    assert.equal(received.UserID, 7);
+  } finally {
+    guestRepository.resolveOrganizations = originalResolve;
+    guestGlitchService.masterReportListPdf = originalPdf;
+  }
 });
 
 test("Guest Glitch provider export limit stops before fetching rows", async () => {
