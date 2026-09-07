@@ -220,6 +220,16 @@ const validateSelections = async (client, data, organizationID) => {
     const invalidID = (data.InformedToIDs || []).find((id) => !valid.has(Number(id)));
     return { error: fail(`InformedTo user ID ${invalidID} is invalid, inactive, or unavailable for this organization`) };
   }
+  const guestMetUserIDs = [...new Set((Array.isArray(data.GetMetJson) ? data.GetMetJson : [])
+    .map((item) => item?.GuestMetBy ?? item?.guestMetBy)
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .map(Number))];
+  const guestMetUsers = await repository.validateUsers(client, organizationID, guestMetUserIDs);
+  if (guestMetUsers.length !== guestMetUserIDs.length) {
+    const valid = new Set(guestMetUsers.map((item) => Number(item.userid)));
+    const invalidID = guestMetUserIDs.find((id) => !valid.has(Number(id)));
+    return { error: fail(`GuestMetBy user ID ${invalidID} is invalid, inactive, or unavailable for this organization`) };
+  }
   const resolvedUsers = await repository.validateUsers(
     client,
     organizationID,
@@ -242,20 +252,32 @@ const validateSelections = async (client, data, organizationID) => {
   )) {
     return { error: fail("Department HOD comment can only be added for a selected department") };
   }
-  return { departments, receivedUsers, informedUsers, resolvedUsers, };
+  return { departments, receivedUsers, informedUsers, resolvedUsers, guestMetUsers };
 };
 
-const applySnapshots = (data, selections) => ({
-  ...data,
-  Department: selections.departments.map((item) => item.departmentname).join(", "),
-  ReceivedBy: selections.receivedUsers.map((item) => item.fullname).join(", "),
-  InformedTo: selections.informedUsers.map((item) => item.fullname).join(", "),
-  ResolvedBy: selections.resolvedUsers.map((item) => item.fullname).join(", "),
-  DepartmentHODComments: reconcileDepartmentComments(
-    selections.departments,
-    data.DepartmentHODComments || []
-  ),
-});
+const applySnapshots = (data, selections) => {
+  const prepared = {
+    ...data,
+    Department: selections.departments.map((item) => item.departmentname).join(", "),
+    ReceivedBy: selections.receivedUsers.map((item) => item.fullname).join(", "),
+    InformedTo: selections.informedUsers.map((item) => item.fullname).join(", "),
+    DepartmentHODComments: reconcileDepartmentComments(
+      selections.departments,
+      data.DepartmentHODComments || []
+    ),
+  };
+
+  // `resolvedby` stores the resolved display-name snapshot. Only replace it
+  // when the client actually submits a new ResolvedBy user ID; otherwise a
+  // partial edit must preserve the previously stored value.
+  if (Object.prototype.hasOwnProperty.call(data, "ResolvedBy")) {
+    // Store the selected user ID so edit dropdowns can bind the saved value.
+    // ResolvedByName is resolved server-side for display/report responses.
+    prepared.ResolvedBy = data.ResolvedBy == null || data.ResolvedBy === "" ? null : Number(data.ResolvedBy);
+  }
+
+  return prepared;
+};
 
 const create = async (data) => {
   const client = await repository.getClient();
@@ -312,6 +334,8 @@ const list = async (data) => {
         row,
         resolvedSelections[index] || {
           departments: [],
+          receivedByUsers: [],
+          informedToUsers: [],
         }
       )
     );
@@ -354,18 +378,21 @@ const get = async (data) => {
     if (found.error) return found.error;
     const row = found.record;
     const recordOrganizationID = Number(row.organizationid);
-    const [departments, receivedUsers, informedUsers] = await Promise.all([
-      repository.validateDepartments(client, recordOrganizationID, row.departmentids || []),
-      repository.validateUsers(client, recordOrganizationID, row.receivedbyids || []),
-      repository.validateUsers(client, recordOrganizationID, row.informedtoids || []),
-    ]);
+    const [resolved] = await repository.resolveSelections(client, recordOrganizationID, [row]);
+    const editData = listResponseDTO(row, resolved);
+
     return {
       success: true, message: "Guest glitch retrieved successfully.", data: {
-      ...formatGuestGlitchDates(mapRow(row)),
-        DepartmentHODComments: reconcileDepartmentComments(departments, row.departmenthodcomments || []),
-        departments: departments.map((item) => ({ id: Number(item.departmentid), name: item.departmentname })),
-        receivedByUsers: receivedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
-        informedToUsers: informedUsers.map((item) => ({ id: Number(item.userid), name: item.fullname })),
+        // Retain the existing detail fields/ID arrays while also returning the
+        // same complete, consistently named edit fields exposed by List.
+        ...formatGuestGlitchDates(mapRow(row)),
+        ...editData,
+        DepartmentIDs: row.departmentids || [],
+        ReceivedByIDs: row.receivedbyids || [],
+        InformedToIDs: row.informedtoids || [],
+        departments: resolved.departments.map(({ ID, Name }) => ({ id: ID, name: Name })),
+        receivedByUsers: resolved.receivedByUsers.map(({ ID, Name }) => ({ id: ID, name: Name })),
+        informedToUsers: resolved.informedToUsers.map(({ ID, Name }) => ({ id: ID, name: Name })),
       }
     };
   } catch (error) {
@@ -385,7 +412,11 @@ const update = async (data) => {
       data.DepartmentHODComments = mergeDepartmentComments(current.DepartmentHODComments, data.DepartmentHODComments, data);
     }
     const merged = { ...current, ...data };
-    const selections = await validateSelections(client, merged, data.OrganizationID);
+    const selectionData = { ...merged };
+    if (!Object.prototype.hasOwnProperty.call(data, "ResolvedBy")) {
+      selectionData.ResolvedBy = null;
+    }
+    const selections = await validateSelections(client, selectionData, data.OrganizationID);
     if (selections.error) { await client.query("ROLLBACK"); return selections.error; }
     const prepared = applySnapshots({
       ...data,
@@ -448,6 +479,7 @@ const mapCompactReportRows = (resolvedRows) => resolvedRows.map(({ row, resolved
   departments: selectionNames(resolved.departments),
   receivedByUsers: selectionNames(resolved.receivedByUsers),
   informedToUsers: selectionNames(resolved.informedToUsers),
+  resolvedby: resolved.resolvedByUser?.Name || row.resolvedby,
 }));
 
 // Shared report reader supports compact/master DTOs and optional export pagination.

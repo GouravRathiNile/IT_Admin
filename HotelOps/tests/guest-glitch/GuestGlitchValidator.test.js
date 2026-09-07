@@ -57,6 +57,19 @@ test("ResolvedBy accepts a user ID and rejects display-name text", () => {
   assert.equal(valid.data.ResolvedBy, 5);
 });
 
+test("Guest Met repeated rows are accepted as JSON arrays on update", () => {
+  const guestMetRows = [{ GuestMetBy: "5", Designation: "Manager", GuestMetDuring: "Dinner" }];
+  const validation = validator.validateUpdate({ ID: 1, GetMetJson: guestMetRows });
+  assert.deepEqual(validation.errors, []);
+  assert.equal(validation.data.GetMetJson[0].GuestMetBy, 5);
+
+  const multipartValidation = validator.validateUpdate({ ID: 1, GetMetJson: JSON.stringify(guestMetRows) });
+  assert.deepEqual(multipartValidation.errors, []);
+  assert.equal(multipartValidation.data.GetMetJson[0].GuestMetBy, 5);
+  assert.ok(validator.validateUpdate({ ID: 1, GetMetJson: [{ GuestMetBy: "Manager Name" }] })
+    .errors.some((item) => /positive user ID/.test(item.message)));
+});
+
 test("list pagination and safe sorting are validated", () => {
   const errors = validator.validateList({ page: 0, pageSize: 101, sortBy: "DROP TABLE", sortDirection: "SIDEWAYS", departmentIds: [], receivedByIds: [], informedToIds: [] });
   assert.equal(errors.length, 4);

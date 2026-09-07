@@ -125,8 +125,24 @@ const validateCommon = (data, isCreate) => {
 
   if (Object.prototype.hasOwnProperty.call(data, "GetMetJson")) {
     data.GetMetJson = parseJSONField(data.GetMetJson);
-    if (data.GetMetJson !== null && (Array.isArray(data.GetMetJson) || typeof data.GetMetJson !== "object")) {
-      errors.push(error("GetMetJson", "GetMetJson must be a JSON object."));
+    if (data.GetMetJson !== null && typeof data.GetMetJson !== "object") {
+      errors.push(error("GetMetJson", "GetMetJson must be a JSON object or array."));
+    } else if (Array.isArray(data.GetMetJson)) {
+      data.GetMetJson = data.GetMetJson.map((item, index) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          errors.push(error("GetMetJson", `Guest Met row ${index + 1} must be a valid object.`));
+          return item;
+        }
+        const guestMetBy = item.GuestMetBy ?? item.guestMetBy;
+        if (guestMetBy !== undefined && guestMetBy !== null && guestMetBy !== "") {
+          if (!isPositiveInteger(guestMetBy)) {
+            errors.push(error("GetMetJson", `GuestMetBy in row ${index + 1} must be a valid positive user ID.`));
+            return item;
+          }
+          return { ...item, GuestMetBy: Number(guestMetBy) };
+        }
+        return item;
+      });
     }
   }
 

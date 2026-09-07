@@ -65,6 +65,26 @@ const validateUsers = async (client, organizationID, ids) => {
   return result.rows;
 };
 
+// Resolve legacy ResolvedBy name snapshots as well as the current numeric-ID
+// representation without widening the authenticated organization boundary.
+const resolveUsersByValues = async (client, organizationID, values) => {
+  if (!values.length) return [];
+  const result = await client.query(
+    `SELECT DISTINCT um.userid, um.fullname, um.username
+     FROM user_master um
+     INNER JOIN user_org_mapping uom ON uom.userid = um.userid
+     WHERE uom.organizationid = $1
+       AND (um.userid::text = ANY($2::text[])
+         OR LOWER(um.fullname) = ANY($3::text[])
+         OR LOWER(um.username) = ANY($3::text[]))
+       AND uom.isactive = TRUE AND uom.isdeleted = FALSE
+       AND um.isactive = TRUE AND um.isdeleted = FALSE AND um.islocked = FALSE
+     ORDER BY um.fullname;`,
+    [organizationID, values.map(String), values.map((value) => String(value).trim().toLowerCase())]
+  );
+  return result.rows;
+};
+
 const insert = async (client, data) => {
   const fields = Object.keys(COLUMN_MAP).filter((field) => Object.prototype.hasOwnProperty.call(data, field));
   const columns = fields.map((field) => COLUMN_MAP[field]);
@@ -85,8 +105,10 @@ const insert = async (client, data) => {
 const findByID = async (client, id, organizationID, includeDeleted = false, lock = false) => {
   const organizationIDs = Array.isArray(organizationID) ? organizationID : [organizationID];
   const result = await client.query(
-    `SELECT * FROM guest_glitch_entry_master
-     WHERE id = $1 AND organizationid = ANY($2::bigint[]) ${includeDeleted ? "" : "AND isdeleted = FALSE"}
+    `SELECT gg.*, om.shortname, om.organizationname
+     FROM guest_glitch_entry_master gg
+     INNER JOIN organization_master om ON om.organizationid = gg.organizationid
+     WHERE gg.id = $1 AND gg.organizationid = ANY($2::bigint[]) ${includeDeleted ? "" : "AND gg.isdeleted = FALSE"}
      LIMIT 1 ${lock ? "FOR UPDATE" : ""};`,
     [id, organizationIDs]
   );
@@ -616,7 +638,8 @@ const resolveSelections = async (client, organizationID, rows = []) => {
       ),
     ];
 
-  const [departments, users] = await Promise.all([
+  const resolvedByValues = [...new Set(rows.map((row) => row.resolvedby).filter((value) => value !== null && value !== undefined && String(value).trim() !== ""))];
+  const [departments, users, resolvedUsers] = await Promise.all([
     validateDepartments(
       client,
       organizationID,
@@ -633,6 +656,7 @@ const resolveSelections = async (client, organizationID, rows = []) => {
         ]),
       ]
     ),
+    resolveUsersByValues(client, organizationID, resolvedByValues),
   ]);
 
   const departmentMap = new Map(
@@ -648,6 +672,14 @@ const resolveSelections = async (client, organizationID, rows = []) => {
       item.fullname || item.username,
     ])
   );
+
+  const resolvedUserMap = new Map();
+  resolvedUsers.forEach((item) => {
+    const user = { ID: Number(item.userid), Name: item.fullname || item.username };
+    resolvedUserMap.set(String(item.userid), user);
+    resolvedUserMap.set(String(item.fullname || "").trim().toLowerCase(), user);
+    resolvedUserMap.set(String(item.username || "").trim().toLowerCase(), user);
+  });
 
   return rows.map((row) => ({
     departments: (row.departmentids || [])
@@ -670,11 +702,13 @@ const resolveSelections = async (client, organizationID, rows = []) => {
         ID: id,
         Name: userMap.get(id) || null,
       })),
+
+    resolvedByUser: resolvedUserMap.get(String(row.resolvedby ?? "").trim().toLowerCase()) || null,
   }));
 };
 
 module.exports = {
-  COLUMN_MAP, getClient, resolveOrganizations, validateDepartments, validateUsers, insert,
+  COLUMN_MAP, getClient, resolveOrganizations, validateDepartments, validateUsers, resolveUsersByValues, insert,
   findByID, updateChangedFields, softDelete, list,
   reportList, countReport, findReportByID, resolveSelections,
 };
