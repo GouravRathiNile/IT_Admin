@@ -3,8 +3,18 @@ const {
   retryableDatabaseResponse,
 } = require("../../utils/retryableDatabaseError");
 const { formatDate } = require("../../utils/dateFormatter");
-const { generatePdf } = require("../../utils/pdfHelper");
-
+// ===============================================Pdf Helper
+const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
+const PdfPrinter = require("pdfmake");
+const path = require("path");
+const GUEST_DETAIL_PDF_FONTS = {
+  Roboto: {
+    normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
+    bold: path.join(process.cwd(), "fonts/Roboto-Medium.ttf"),
+    italics: path.join(process.cwd(), "fonts/Roboto-SemiBold.ttf"),
+    bolditalics: path.join(process.cwd(), "fonts/Roboto-Bold.ttf"),
+  },
+};
 // ============================================================ Shared Responses(Success,Fail Massege Helper)
 const fail = (message, statusCode = 400) => ({
   success: false,
@@ -1609,93 +1619,244 @@ const generateGuestDetailPdf = async (data) => {
     };
 
     // =========================================================
-    // Generate PDF
+    // Generate a dedicated Guest Detail PDF (without generatePdf)
     // =========================================================
+    const COLORS = {
+      navy: "#082B5C",
+      label: "#082B5C",
+      text: "#172033",
+      muted: "#64748B",
+      border: "#CFD7E3",
+      labelBackground: "#F4F6F9",
+    };
 
-    const pdfBuffer = await generatePdf({
-      title: "Guest Detail Report",
-      reportName: "Guest Detail Report",
-      organizationId: organizationID,
-      orientation: "portrait",
+    const displayValue = (value) =>
+      value === null || value === undefined || String(value).trim() === ""
+        ? "-"
+        : String(value);
 
-      metadata: [
-        {
-          label: "Organization",
-          value:
-            guestDetail.OrganizationShortName ||
-            guestDetail.OrganizationShortName,
-        },
-        {
-          label: "Entry Date",
-          value: guestDetail.EntryDate,
-        },
-        {
-          label: "Guest Name",
-          value: guestDetail.GuestName,
-        },
-        {
-          label: "Room No.",
-          value: guestDetail.RoomNo,
-        },
-        {
-          label: "Arrival",
-          value: guestDetail.Arrival,
-        },
-        {
-          label: "Departure",
-          value: guestDetail.Departure,
-        },
-        {
-          label: "Booking Source",
-          value: guestDetail.BookingSource,
-        },
-        {
-          label: "Guest Status",
-          value: guestDetail.GuestStatus,
-        },
-        {
-          label: "Feedback Type",
-          value: guestDetail.FeedbackType,
-        },
-        {
-          label: "Met By",
-          value:
-            guestDetail.MetByName ||
-            (guestDetail.MetBy ? `User ID: ${guestDetail.MetBy}` : null),
-        },
-        {
-          label: "Met On",
-          value: guestDetail.MetOn,
-        },
-        {
-          label: "Created Date",
-          value: guestDetail.CreatedDate,
-        },
+    const line = (x1, y1, x2, y2, lineWidth = 1.1) => ({
+      type: "line",
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth,
+      lineColor: COLORS.navy,
+    });
+    const rect = (x, y, w, h, r = 0) => ({
+      type: "rect",
+      x,
+      y,
+      w,
+      h,
+      r,
+      lineWidth: 1.1,
+      lineColor: COLORS.navy,
+    });
+    const ellipse = (x, y, r1, r2 = r1) => ({
+      type: "ellipse",
+      x,
+      y,
+      r1,
+      r2,
+      lineWidth: 1.1,
+      lineColor: COLORS.navy,
+    });
+
+    const fieldIcon = (type) => {
+      const icons = {
+        organization: [rect(4, 2, 10, 15, 1), line(1, 17, 17, 17), line(7, 6, 7, 8), line(11, 6, 11, 8), line(7, 11, 7, 13), line(11, 11, 11, 13)],
+        calendar: [rect(1, 4, 16, 13, 1), line(1, 8, 17, 8), line(5, 2, 5, 6), line(13, 2, 13, 6), line(5, 11, 7, 11), line(10, 11, 12, 11), line(5, 14, 7, 14)],
+        guest: [ellipse(9, 5, 3), { type: "polyline", points: [{ x: 2, y: 17 }, { x: 3, y: 13 }, { x: 6, y: 11 }, { x: 12, y: 11 }, { x: 15, y: 13 }, { x: 16, y: 17 }], lineWidth: 1.1, lineColor: COLORS.navy }],
+        room: [rect(4, 1, 10, 16, 1), line(1, 17, 17, 17), ellipse(11, 9, 0.7)],
+        arrival: [{ type: "polyline", points: [{ x: 1, y: 13 }, { x: 8, y: 10 }, { x: 13, y: 2 }, { x: 16, y: 3 }, { x: 12, y: 12 }, { x: 17, y: 15 }, { x: 16, y: 17 }, { x: 9, y: 14 }, { x: 5, y: 18 }, { x: 3, y: 17 }, { x: 5, y: 13 }], lineWidth: 1.1, lineColor: COLORS.navy }],
+        departure: [{ type: "polyline", points: [{ x: 1, y: 8 }, { x: 7, y: 8 }, { x: 5, y: 2 }, { x: 8, y: 1 }, { x: 11, y: 8 }, { x: 17, y: 9 }, { x: 17, y: 11 }, { x: 10, y: 12 }, { x: 7, y: 18 }, { x: 5, y: 17 }, { x: 6, y: 12 }, { x: 1, y: 11 }], lineWidth: 1.1, lineColor: COLORS.navy }],
+        booking: [rect(3, 1, 12, 16, 1), line(6, 5, 12, 5), line(6, 9, 12, 9), line(6, 13, 11, 13)],
+        feedback: [rect(1, 3, 16, 11, 2), { type: "polyline", points: [{ x: 5, y: 14 }, { x: 5, y: 18 }, { x: 9, y: 14 }], lineWidth: 1.1, lineColor: COLORS.navy }, ellipse(6, 8, 0.6), ellipse(9, 8, 0.6), ellipse(12, 8, 0.6)],
+        metOn: [ellipse(9, 9, 8), line(9, 9, 9, 4), line(9, 9, 13, 12)],
+        action: [rect(3, 3, 12, 14, 1), rect(6, 1, 6, 4, 1), line(6, 8, 12, 8), line(6, 11, 12, 11), line(6, 14, 11, 14)],
+      };
+
+      const iconScale = 0.82;
+
+      return (icons[type] || icons.guest).map((shape) => {
+        const scaledShape = {
+          ...shape,
+          lineWidth: (shape.lineWidth || 1) * iconScale,
+        };
+
+        for (const coordinate of [
+          "x",
+          "y",
+          "x1",
+          "y1",
+          "x2",
+          "y2",
+          "w",
+          "h",
+          "r",
+          "r1",
+          "r2",
+        ]) {
+          if (typeof scaledShape[coordinate] === "number") {
+            scaledShape[coordinate] *= iconScale;
+          }
+        }
+
+        if (Array.isArray(scaledShape.points)) {
+          scaledShape.points = scaledShape.points.map((point) => ({
+            x: point.x * iconScale,
+            y: point.y * iconScale,
+          }));
+        }
+
+        return scaledShape;
+      });
+    };
+
+    const labelCell = (label, icon) => ({
+      columns: [
+        { width: 22, canvas: fieldIcon(icon), margin: [0, 0, 0, 0] },
+        { width: "*", text: label, style: "fieldLabel", margin: [2, 3, 0, 0] },
       ],
+      fillColor: COLORS.labelBackground,
+      margin: [8, 6, 5, 6],
+    });
 
-      sections: [
-        {
-          title: "Guest Feedback & Action Taken",
-          items: [
-            {
-              label: "Guest Feedback",
-              value: guestDetail.Feedback,
-            },
-            {
-              label: "Action Taken",
-              value: guestDetail.ActionTaken,
-            },
-          ],
-        },
-      ],
+    const valueCell = (value) => ({
+      text: displayValue(value),
+      style: "fieldValue",
+      margin: [9, 8, 7, 7],
+    });
 
-      styles: {
-        pdfValue: {
-          fontSize: 9,
-          color: "#172033",
-          lineHeight: 1.25,
-        },
+    const tableLayout = {
+      hLineColor: () => COLORS.border,
+      vLineColor: () => COLORS.border,
+      hLineWidth: () => 0.7,
+      vLineWidth: () => 0.7,
+      paddingLeft: () => 0,
+      paddingRight: () => 0,
+      paddingTop: () => 0,
+      paddingBottom: () => 0,
+    };
+
+    const narrativeTable = (label, icon, value) => ({
+      table: {
+        widths: [125, "*"],
+        body: [[
+          labelCell(label, icon),
+          {
+            text: displayValue(value),
+            style: "narrativeValue",
+            margin: [12, 15, 12, 15],
+          },
+        ]],
       },
+      layout: tableLayout,
+      margin: [0, 0, 0, 14],
+    });
+
+    const logo = await loadLogo(organizationID, data.logoUrl);
+    const generatedOn = formatDate(new Date(), "DD MMM YYYY hh:mm A");
+    const metBy =
+      guestDetail.MetByName ||
+      (guestDetail.MetBy ? `User ID: ${guestDetail.MetBy}` : null);
+
+    const documentDefinition = {
+      pageSize: "A4",
+      pageOrientation: "portrait",
+      pageMargins: [22, 26, 22, 72],
+      defaultStyle: { font: "Roboto", fontSize: 9, color: COLORS.text },
+      content: [
+        {
+          table: {
+            widths: [130, "*", 80],
+            body: [[
+              logo
+                ? { image: logo, fit: [88, 50], border: [false, false, false, false] }
+                : { text: "", border: [false, false, false, false] },
+              {
+                text: "Guest Detail Report",
+                style: "title",
+                alignment: "center",
+                margin: [0, 18, 0, 0],
+                border: [false, false, false, false],
+              },
+              { text: "", border: [false, false, false, false] },
+            ]],
+          },
+          layout: "noBorders",
+        },
+        {
+          canvas: [{ type: "line", x1: 0, y1: 0, x2: 551, y2: 0, lineWidth: 0.8, lineColor: COLORS.navy }],
+          margin: [0, 7, 0, 18],
+        },
+        {
+          table: {
+            widths: [115, "*", 115, "*"],
+            body: [
+              [labelCell("Organization", "organization"), valueCell(guestDetail.OrganizationShortName || guestDetail.OrganizationName), labelCell("Entry Date", "calendar"), valueCell(guestDetail.EntryDate)],
+              [labelCell("Guest Name", "guest"), valueCell(guestDetail.GuestName), labelCell("Room No.", "room"), valueCell(guestDetail.RoomNo)],
+              [labelCell("Arrival", "arrival"), valueCell(guestDetail.Arrival), labelCell("Departure", "departure"), valueCell(guestDetail.Departure)],
+              [labelCell("Booking Source", "booking"), valueCell(guestDetail.BookingSource), labelCell("Guest Status", "guest"), valueCell(guestDetail.GuestStatus)],
+              [labelCell("Feedback Type", "feedback"), valueCell(guestDetail.FeedbackType), labelCell("Met By", "guest"), valueCell(metBy)],
+              [labelCell("Met On", "metOn"), valueCell(guestDetail.MetOn), labelCell("Created Date", "calendar"), valueCell(guestDetail.CreatedDate)],
+            ],
+          },
+          layout: tableLayout,
+          margin: [0, 0, 0, 18],
+        },
+        narrativeTable("Guest Feedback", "feedback", guestDetail.Feedback),
+        narrativeTable("Action Taken", "action", guestDetail.ActionTaken),
+      ],
+      footer: () => ({
+        margin: [22, 8, 22, 0],
+        stack: [
+          {
+            canvas: [{ type: "line", x1: 0, y1: 0, x2: 551, y2: 0, lineWidth: 0.7, lineColor: COLORS.navy }],
+            margin: [0, 0, 0, 8],
+          },
+          {
+            columns: [
+              {
+                stack: [
+                  { text: "Powered by HotelOps", bold: true, color: COLORS.navy, fontSize: 8 },
+                ],
+              },
+              {
+                width: 130,
+                stack: [
+                  { text: `Generated On   :  ${generatedOn}`, fontSize: 7, color: COLORS.label },
+                  
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+      styles: {
+        title: { fontSize: 18, bold: true, color: COLORS.navy },
+        fieldLabel: { fontSize: 8.5, bold: true, color: COLORS.label },
+        fieldValue: { fontSize: 9, color: COLORS.text },
+        narrativeValue: { fontSize: 9, lineHeight: 1.25, color: COLORS.text },
+      },
+    };
+
+    const pdfBuffer = await new Promise((resolve, reject) => {
+      try {
+        const pdfDocument = new PdfPrinter(
+          GUEST_DETAIL_PDF_FONTS,
+        ).createPdfKitDocument(documentDefinition);
+        const chunks = [];
+
+        pdfDocument.on("data", (chunk) => chunks.push(chunk));
+        pdfDocument.on("end", () => resolve(Buffer.concat(chunks)));
+        pdfDocument.on("error", reject);
+        pdfDocument.end();
+      } catch (error) {
+        reject(error);
+      }
     });
 
     const fileName = `Guest-Detail-${gmDetailID}.pdf`;

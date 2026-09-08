@@ -558,7 +558,7 @@ const Opex_SELECT = `
             THEN COALESCE(approval_state.CEOStatus, 'PENDING')
 
         END
-      ) NOT IN ('APPROVED', 'REJECTED')
+      ) <> 'APPROVED'
 
     ORDER BY
       cfg.ApprovalOrder ASC,
@@ -772,6 +772,15 @@ const appendOpexRoleStatusFilter = (
   approverStatusColumn,
   approvalStatus,
 ) => {
+  // FC must never see or act on an OPEX until the HOD stage is approved.
+  // This applies to Pending/default as well as FC's historical status tabs.
+  if (userType === "FC") {
+    query = `${query}
+      AND UPPER(BTRIM(COALESCE(approval_state.HODStatus, 'PENDING')))
+          = 'APPROVED'
+    `;
+  }
+
   if (approvalStatus === "PENDING") {
     params.push(userType);
     return `${query}
@@ -799,6 +808,88 @@ const appendOpexRoleStatusFilter = (
            IN ('APPROVED', 'REJECTED', 'HOLD', 'RETURNED')
     )
   `;
+};
+
+// Normal users see the overall workflow result instead of a single approval
+// role's column. A terminal action takes precedence over later pending stages.
+const appendOpexUserStatusFilter = (query, params, approvalStatus) => {
+  if (!approvalStatus) return query;
+
+  const workflowStatusColumns = [
+    "approval_state.HODStatus",
+    "approval_state.FCStatus",
+    "approval_state.GMStatus",
+    "approval_state.RDFCStatus",
+    "approval_state.CEOStatus",
+    "approval_state.FinalStatus",
+  ];
+  const normalizedStatus = (column) =>
+    `UPPER(BTRIM(COALESCE(${column}, '')))`;
+  const hasTerminalStatus = workflowStatusColumns
+    .map(
+      (column) =>
+        `${normalizedStatus(column)} IN ('REJECTED', 'HOLD', 'RETURNED')`,
+    )
+    .join(" OR ");
+
+  if (["REJECTED", "HOLD", "RETURNED"].includes(approvalStatus)) {
+    params.push(approvalStatus);
+    const statusParameter = `$${params.length}`;
+    const hasRequestedStatus = workflowStatusColumns
+      .map((column) => `${normalizedStatus(column)} = ${statusParameter}`)
+      .join(" OR ");
+
+    return `${query}
+      AND (${hasRequestedStatus})
+    `;
+  }
+
+  if (approvalStatus === "APPROVED") {
+    params.push(approvalStatus);
+    return `${query}
+      AND ${normalizedStatus("approval_state.FinalStatus")} = $${params.length}
+      AND NOT (${hasTerminalStatus})
+    `;
+  }
+
+  return `${query}
+    AND current_stage.ApprovalRole IS NOT NULL
+    AND ${normalizedStatus("current_stage.Status")} = 'PENDING'
+    AND ${normalizedStatus("approval_state.FinalStatus")} <> 'APPROVED'
+    AND NOT (${hasTerminalStatus})
+  `;
+};
+
+const normalizeOptionalOpexDate = (value) => {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
+};
+
+const isValidOpexDate = (value) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  );
+};
+
+const appendOpexDateFilter = (query, params, fromDate, toDate) => {
+  if (fromDate) {
+    params.push(fromDate);
+    query += `
+      AND cm.CreatedDate >= $${params.length}::date
+    `;
+  }
+
+  if (toDate) {
+    params.push(toDate);
+    query += `
+      AND cm.CreatedDate < ($${params.length}::date + INTERVAL '1 day')
+    `;
+  }
+
+  return query;
 };
 // ============================================================ Get All Opex
 const getAllOpex = async (data) => {
@@ -843,6 +934,20 @@ const getAllOpex = async (data) => {
       String(data.Department).trim() !== ""
         ? String(data.Department).trim()
         : null;
+    const fromDate = normalizeOptionalOpexDate(data.FromDate);
+    const toDate = normalizeOptionalOpexDate(data.ToDate);
+
+    if (fromDate && !isValidOpexDate(fromDate)) {
+      return fail("FromDate must be a valid date in YYYY-MM-DD format.", 400);
+    }
+
+    if (toDate && !isValidOpexDate(toDate)) {
+      return fail("ToDate must be a valid date in YYYY-MM-DD format.", 400);
+    }
+
+    if (fromDate && toDate && fromDate > toDate) {
+      return fail("FromDate cannot be greater than ToDate.", 400);
+    }
 
     // =====================================================
     // Status
@@ -913,6 +1018,8 @@ const getAllOpex = async (data) => {
       `;
     }
 
+    query = appendOpexDateFilter(query, params, fromDate, toDate);
+
     // =====================================================
     // STATUS FILTER
     // =====================================================
@@ -934,6 +1041,8 @@ const getAllOpex = async (data) => {
         approverStatusColumn,
         approvalStatus,
       );
+    } else if (userType === "USER") {
+      query = appendOpexUserStatusFilter(query, params, approvalStatus);
     }
 
     // =====================================================
@@ -998,6 +1107,13 @@ const getAllOpex = async (data) => {
       `;
     }
 
+    countQuery = appendOpexDateFilter(
+      countQuery,
+      countParams,
+      fromDate,
+      toDate,
+    );
+
     // =====================================================
     // COUNT STATUS FILTER
     // =====================================================
@@ -1008,6 +1124,12 @@ const getAllOpex = async (data) => {
         countParams,
         userType,
         approverStatusColumn,
+        approvalStatus,
+      );
+    } else if (userType === "USER") {
+      countQuery = appendOpexUserStatusFilter(
+        countQuery,
+        countParams,
         approvalStatus,
       );
     }
@@ -1142,331 +1264,6 @@ const OpexExists = async (client, OpexID) => {
   return result.rows.length > 0;
 };
 // ============================================================ Partial Update Opex
-// const updateOpex = async (data) => {
-//   let client;
-//   let transactionStarted = false;
-
-//   const documents = Array.isArray(data.Documents) ? data.Documents : [];
-
-//   const deleteDocumentIDs = Array.isArray(data.DeleteDocumentIDs)
-//     ? data.DeleteDocumentIDs
-//     : [];
-
-//   try {
-//     client = await pool.connect();
-
-//     await client.query("BEGIN");
-//     transactionStarted = true;
-
-//     // ============================================================
-//     // Changes
-//     // ============================================================
-
-//     const changes = data.Changes || {};
-
-//     const assignments = [];
-//     const values = [];
-
-//     const addValue = (column, value) => {
-//       values.push(value);
-//       assignments.push(`${column} = $${values.length}`);
-//     };
-
-//     // ============================================================
-//     // Opex Fields
-//     // OrganizationID and OpexNumber are NOT updated
-//     // ============================================================
-
-//     if (changes.Department !== undefined) {
-//       addValue("Department", changes.Department);
-//     }
-
-//     if (changes.Item !== undefined) {
-//       addValue("Item", changes.Item);
-//     }
-
-//     if (changes.Description !== undefined) {
-//       addValue("Description", changes.Description);
-//     }
-
-//     if (changes.Make !== undefined) {
-//       addValue("Make", changes.Make);
-//     }
-
-//     if (changes.Qty !== undefined) {
-//       addValue("Qty", changes.Qty);
-//     }
-
-//     if (changes.Rate !== undefined) {
-//       addValue("Rate", changes.Rate);
-//     }
-
-//     // ============================================================
-//     // Total comes directly from Frontend
-//     // ============================================================
-
-//     if (changes.Total !== undefined) {
-//       addValue("Total", changes.Total);
-//     }
-
-//     if (changes.IsVoid !== undefined) {
-//       addValue("IsVoid", changes.IsVoid);
-//     }
-
-//     if (changes.VoidRemarks !== undefined) {
-//       addValue("VoidRemarks", changes.VoidRemarks);
-//     }
-
-//     // ============================================================
-//     // Modified Information
-//     // ============================================================
-
-//     addValue("ModifiedBy", data.UserID);
-
-//     assignments.push("ModifiedDate = CURRENT_TIMESTAMP");
-
-//     // ============================================================
-//     // Update Opex
-//     // ============================================================
-
-//     values.push(data.OpexID);
-
-//     const OpexIDParameter = values.length;
-
-//     const updateResult = await client.query(
-//       `
-//       UPDATE Opex_Master
-//       SET ${assignments.join(", ")}
-//       WHERE OpexID = $${OpexIDParameter}
-//         AND IsDeleted = FALSE
-//       RETURNING
-//         OpexID,
-//         OrganizationID,
-//         OpexNumber,
-//         Department,
-//         Item,
-//         Description,
-//         Make,
-//         Qty,
-//         Rate,
-//         Total,
-//         IsVoid,
-//         VoidRemarks,
-//         ModifiedBy,
-//         ModifiedDate;
-//       `,
-//       values,
-//     );
-
-//     // ============================================================
-//     // Opex Not Found
-//     // ============================================================
-
-//     if (updateResult.rows.length === 0) {
-//       await client.query("ROLLBACK");
-//       transactionStarted = false;
-
-//       return fail("Opex record not found.", 404);
-//     }
-
-//     // ============================================================
-//     // DOCUMENTS
-//     //
-//     // If new documents are provided:
-//     //   1. Old documents are soft deleted
-//     //   2. New documents are inserted
-//     //
-//     // If no documents are provided:
-//     //   Old documents remain unchanged
-//     // ============================================================
-
-//     if (documents.length > 0) {
-//       // ----------------------------------------------------------
-//       // Get existing Opex number
-//       // ----------------------------------------------------------
-
-//       const OpexInfo = updateResult.rows[0];
-
-//       const OpexNumber = Number(OpexInfo.opexnumber);
-
-//       // ----------------------------------------------------------
-//       // Soft delete old documents
-//       // ----------------------------------------------------------
-
-//       await client.query(
-//         `
-//         UPDATE Opex_Documents
-//         SET
-//           IsDeleted = TRUE,
-//           DeletedBy = $1,
-//           DeletedDate = CURRENT_TIMESTAMP,
-//           ModifiedBy = $1,
-//           ModifiedDate = CURRENT_TIMESTAMP
-//         WHERE OpexID = $2
-//           AND IsDeleted = FALSE;
-//         `,
-//         [data.UserID, data.OpexID],
-//       );
-
-//       // ----------------------------------------------------------
-//       // Generate IDs for new documents
-//       // ----------------------------------------------------------
-
-//       const newDocumentIDs = await reserveNumericIDs(
-//         client,
-//         "Opex_Documents",
-//         "OpexDocumentID",
-//         documents.length,
-//       );
-
-//       // ----------------------------------------------------------
-//       // Insert new documents
-//       // ----------------------------------------------------------
-
-//       for (const [index, document] of documents.entries()) {
-//         await client.query(
-//           `
-//           INSERT INTO Opex_Documents
-//           (
-//             OpexDocumentID,
-//             OpexID,
-//             OpexNumber,
-//             FileName,
-//             FilePath,
-//             FileType,
-//             FileSize,
-//             IsDeleted,
-//             CreatedBy,
-//             CreatedDate
-//           )
-//           VALUES
-//           (
-//             $1,
-//             $2,
-//             $3,
-//             $4,
-//             $5,
-//             $6,
-//             $7,
-//             FALSE,
-//             $8,
-//             CURRENT_TIMESTAMP
-//           );
-//           `,
-//           [
-//             newDocumentIDs[index],
-//             data.OpexID,
-//             OpexNumber,
-//             document.FileName,
-//             document.FilePath,
-//             document.FileType,
-//             document.FileSize,
-//             data.UserID,
-//           ],
-//         );
-//       }
-//     }
-
-//     // ============================================================
-//     // Specific old documents delete
-//     //
-//     // Only execute when DeleteDocumentIDs are provided
-//     // ============================================================
-
-//     if (deleteDocumentIDs.length > 0) {
-//       const ownedDocuments = await client.query(
-//         `
-//         SELECT OpexDocumentID
-//         FROM Opex_Documents
-//         WHERE OpexID = $1
-//           AND OpexDocumentID = ANY($2::bigint[])
-//           AND IsDeleted = FALSE;
-//         `,
-//         [data.OpexID, deleteDocumentIDs],
-//       );
-
-//       if (ownedDocuments.rows.length !== deleteDocumentIDs.length) {
-//         await client.query("ROLLBACK");
-//         transactionStarted = false;
-
-//         return fail("One or more selected Opex documents are invalid.", 400);
-//       }
-
-//       await client.query(
-//         `
-//         UPDATE Opex_Documents
-//         SET
-//           IsDeleted = TRUE,
-//           DeletedBy = $1,
-//           DeletedDate = CURRENT_TIMESTAMP,
-//           ModifiedBy = $1,
-//           ModifiedDate = CURRENT_TIMESTAMP
-//         WHERE OpexID = $2
-//           AND OpexDocumentID = ANY($3::bigint[])
-//           AND IsDeleted = FALSE;
-//         `,
-//         [data.UserID, data.OpexID, deleteDocumentIDs],
-//       );
-//     }
-
-//     // ============================================================
-//     // COMMIT
-//     // ============================================================
-
-//     await client.query("COMMIT");
-//     transactionStarted = false;
-
-//     const updated = updateResult.rows[0];
-
-//     return {
-//       success: true,
-//       message: "Opex updated successfully.",
-
-//       // data: {
-//       //   OpexID: Number(updated.Opexid),
-//       //   OrganizationID: Number(updated.organizationid),
-//       //   OpexNumber: Number(updated.Opexnumber),
-//       //   Department: updated.department,
-//       //   Item: updated.item,
-//       //   Description: updated.description,
-//       //   Make: updated.make,
-//       //   Qty: Number(updated.qty),
-//       //   Rate: Number(updated.rate),
-//       //   Total: Number(updated.total),
-//       //   IsVoid: updated.isvoid,
-//       //   VoidRemarks: updated.voidremarks,
-//       //   DocumentsUpdated: documents.length,
-//       //   DocumentsDeleted: deleteDocumentIDs.length,
-//       // },
-//     };
-//   } catch (error) {
-//     if (client && transactionStarted) {
-//       await client.query("ROLLBACK");
-//     }
-
-//     console.error("Update Opex Error:", error.message);
-
-//     const retryResponse = retryableDatabaseResponse(error);
-
-//     if (retryResponse) {
-//       return retryResponse;
-//     }
-
-//     if (error.code === "23503") {
-//       return fail("Invalid Opex related data.", 400);
-//     }
-
-//     if (error.code === "23505") {
-//       return fail("Opex organization number already exists.", 409);
-//     }
-
-//     return fail("Unable to update Opex at this time.", 500);
-//   } finally {
-//     if (client) {
-//       client.release();
-//     }
-//   }
-// };
 const updateOpex = async (data) => {
   let client;
   let transactionStarted = false;
@@ -2931,6 +2728,7 @@ const REPORT_DATA_CTE = `
       cm.OpexID,
       cm.OrganizationID,
       cm.Department,
+      cm.CreatedDate,
       COALESCE(cm.Total, 0)::numeric AS Total,
 
       CASE
@@ -2954,7 +2752,19 @@ const REPORT_DATA_CTE = `
         THEN 'Rejected'
 
         -- ====================================================
-        -- 3. RETURNED
+        -- 3. HOLD
+        -- ====================================================
+        WHEN
+          UPPER(COALESCE(ca.HODStatus, '')) = 'HOLD'
+          OR UPPER(COALESCE(ca.FCStatus, '')) = 'HOLD'
+          OR UPPER(COALESCE(ca.GMStatus, '')) = 'HOLD'
+          OR UPPER(COALESCE(ca.RDFCStatus, '')) = 'HOLD'
+          OR UPPER(COALESCE(ca.CEOStatus, '')) = 'HOLD'
+          OR UPPER(COALESCE(ca.FinalStatus, '')) = 'HOLD'
+        THEN 'Hold'
+
+        -- ====================================================
+        -- 4. RETURNED
         -- ====================================================
         WHEN
           UPPER(COALESCE(ca.HODStatus, '')) = 'RETURNED'
@@ -2966,13 +2776,13 @@ const REPORT_DATA_CTE = `
         THEN 'Returned'
 
         -- ====================================================
-        -- 4. FINALLY APPROVED
+        -- 5. FINALLY APPROVED
         -- ====================================================
         WHEN UPPER(COALESCE(ca.FinalStatus, '')) = 'APPROVED'
         THEN 'Approved'
 
         -- ====================================================
-        -- 5. OTHERWISE PENDING
+        -- 6. OTHERWISE PENDING
         -- ====================================================
         ELSE 'Pending'
 
@@ -3016,7 +2826,37 @@ const departmentReportParameters = (data) => {
       ? String(filters.Department).trim()
       : null;
 
-  return [filters.OrganizationID ?? null, department];
+  return [
+    filters.OrganizationID ?? null,
+    department,
+    normalizeOptionalOpexDate(filters.FromDate),
+    normalizeOptionalOpexDate(filters.ToDate),
+  ];
+};
+const organizationReportParameters = (data) => {
+  const filters = data.Filters || data || {};
+  return [
+    filters.OrganizationID ?? null,
+    normalizeOptionalOpexDate(filters.FromDate),
+    normalizeOptionalOpexDate(filters.ToDate),
+  ];
+};
+const validateOpexReportDates = (data) => {
+  const filters = data.Filters || data || {};
+  const fromDate = normalizeOptionalOpexDate(filters.FromDate);
+  const toDate = normalizeOptionalOpexDate(filters.ToDate);
+
+  if (fromDate && !isValidOpexDate(fromDate)) {
+    return fail("FromDate must be a valid date in YYYY-MM-DD format.", 400);
+  }
+  if (toDate && !isValidOpexDate(toDate)) {
+    return fail("ToDate must be a valid date in YYYY-MM-DD format.", 400);
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    return fail("FromDate cannot be greater than ToDate.", 400);
+  }
+
+  return null;
 };
 // Read/report failures return synchronously; they are not background-retried.
 const reportFailure = (error, reportName) => {
@@ -3376,6 +3216,9 @@ const groupedReportRows = (rows, groupField) =>
 // ============================================================ Department Report
 const getOpexDepartmentReport = async (data) => {
   try {
+    const dateValidationError = validateOpexReportDates(data);
+    if (dateValidationError) return dateValidationError;
+
     const result = await pool.query(
       `${REPORT_DATA_CTE}
        SELECT
@@ -3393,6 +3236,11 @@ const getOpexDepartmentReport = async (data) => {
          OR LOWER(TRIM(COALESCE(Department, 'Unspecified')))
             = LOWER(TRIM($2::text))
        )
+         AND ($3::date IS NULL OR CreatedDate >= $3::date)
+         AND (
+           $4::date IS NULL
+           OR CreatedDate < ($4::date + INTERVAL '1 day')
+         )
        GROUP BY COALESCE(Department, 'Unspecified')
        ORDER BY COALESCE(Department, 'Unspecified') ASC;`,
       departmentReportParameters(data),
@@ -3410,6 +3258,9 @@ const getOpexDepartmentReport = async (data) => {
 // ============================================================ Organization Report
 const getOpexOrganizationReport = async (data) => {
   try {
+    const dateValidationError = validateOpexReportDates(data);
+    if (dateValidationError) return dateValidationError;
+
     const result = await pool.query(
       `${REPORT_DATA_CTE}
        SELECT
@@ -3446,13 +3297,19 @@ const getOpexOrganizationReport = async (data) => {
          ON om.OrganizationID = cm.OrganizationID
          AND om.IsDeleted = FALSE
 
+       WHERE ($2::date IS NULL OR cm.CreatedDate >= $2::date)
+         AND (
+           $3::date IS NULL
+           OR cm.CreatedDate < ($3::date + INTERVAL '1 day')
+         )
+
        GROUP BY
          cm.OrganizationID,
          om.ShortName
 
        ORDER BY
          cm.OrganizationID ASC;`,
-      reportParameters(data),
+      organizationReportParameters(data),
     );
 
     return {
@@ -4406,6 +4263,35 @@ const generateOpexListPdf = async (data) => {
     const access = await resolveOpexAccess(data);
     if (access.error) return access.error;
 
+    const organizationId = Number(data.OrganizationID);
+    let organizationName = data.OrganizationName || null;
+
+    if (
+      !organizationName &&
+      Number.isSafeInteger(organizationId) &&
+      organizationId > 0
+    ) {
+      const organizationResult = await pool.query(
+        `
+        SELECT OrganizationName
+        FROM Organization_Master
+        WHERE OrganizationID = $1
+          AND IsDeleted = FALSE
+        LIMIT 1;
+        `,
+        [organizationId],
+      );
+
+      organizationName = organizationResult.rows[0]?.organizationname || null;
+    }
+
+    const formatFilterDate = (value) =>
+      value !== null &&
+      value !== undefined &&
+      String(value).trim() !== ""
+        ? formatDate(value)
+        : "All";
+
     const pdfRows = rows.map((row, index) => ({
       ...row,
       ExportSerialNumber: index + 1,
@@ -4432,8 +4318,21 @@ const generateOpexListPdf = async (data) => {
       return details.join("\n");
     };
 
-    const approvalRoles = ["HOD", "GM", "RD-FC", "CEO"];
+    // Build approval columns from the configured flow returned with the OPEX
+    // records. Preserve workflow order and include each role only once.
+    const approvalRoles = [];
+    const approvalRoleSet = new Set();
 
+    for (const row of rows) {
+      for (const approval of row.Approvals || []) {
+        const role = String(approval.ApprovalRole || "").trim().toUpperCase();
+
+        if (role && !approvalRoleSet.has(role)) {
+          approvalRoleSet.add(role);
+          approvalRoles.push(role);
+        }
+      }
+    }
     const pdfBuffer = await generatePdf({
       title: "OPEX LIST REPORT",
       reportName: "OPEX List Report",
@@ -4442,19 +4341,23 @@ const generateOpexListPdf = async (data) => {
       metadata: [
         {
           label: "Organization",
-          value: data.OrganizationID || "All",
+          value: organizationName || "All",
         },
         {
           label: "Department",
           value: data.Department || access.departmentScope || "All",
         },
         {
-          label: "Status",
-          value: data.Status || "All",
+          label: "From Date",
+          value: formatFilterDate(data.FromDate),
         },
         {
-          label: "Approval Role",
-          value: access.effectiveRole || "All",
+          label: "To Date",
+          value: formatFilterDate(data.ToDate),
+        },
+        {
+          label: "Status",
+          value: data.Status || "All",
         },
         { label: "Total Records", value: rows.length },
       ],
@@ -4463,22 +4366,36 @@ const generateOpexListPdf = async (data) => {
           header: "#",
           value: (row) => row.ExportSerialNumber,
           width: 24,
-          align: "center",
+          align: "left",
         },
         {
           key: "OrganizationShortName",
           header: "HTL",
-          width: 48,
+          width: 38
         },
         {
           key: "Department",
           header: "DEPT",
-          width: 65,
+          width: 50,
         },
         {
-          key: "Item",
           header: "ITEM",
+          value: (row) =>
+            [row.Item, row.Description]
+              .filter(
+                (value) =>
+                  value !== null &&
+                  value !== undefined &&
+                  String(value).trim() !== "",
+              )
+              .join("\n") || "-",
           width: "*",
+        },
+        {
+          key: "Qty",
+          header: "QTY",
+          width: 32,
+          align: "left",
         },
         {
           header: "RATE",
@@ -4487,13 +4404,24 @@ const generateOpexListPdf = async (data) => {
               minimumFractionDigits: 0,
               maximumFractionDigits: 2,
             }),
-          width: 62,
-          align: "right",
+          width: 52,
+          align: "left",
+        },
+        {
+          header: "TOTAL",
+          value: (row) =>
+            Number(row.Total || 0).toLocaleString("en-IN", {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 2,
+            }),
+          width: 70,
+          align: "left",
         },
         ...approvalRoles.map((role) => ({
           header: role,
           value: (row) => approvalValue(row, role),
-          width: 78,
+          width: 75,
+          align: "left",
         })),
       ],
       rows: pdfRows,
@@ -4515,6 +4443,9 @@ const generateOpexListPdf = async (data) => {
 // ============================================================ Department Report Pdf
 const getOpexDepartmentReportPdf = async (data) => {
   try {
+    const dateValidationError = validateOpexReportDates(data);
+    if (dateValidationError) return dateValidationError;
+
     // Same query as OPEX Department Report GET API
     const result = await pool.query(
       `${REPORT_DATA_CTE}
@@ -4550,6 +4481,11 @@ const getOpexDepartmentReportPdf = async (data) => {
          OR LOWER(TRIM(COALESCE(Department, 'Unspecified')))
             = LOWER(TRIM($2::text))
        )
+         AND ($3::date IS NULL OR CreatedDate >= $3::date)
+         AND (
+           $4::date IS NULL
+           OR CreatedDate < ($4::date + INTERVAL '1 day')
+         )
 
        GROUP BY COALESCE(Department, 'Unspecified')
 
@@ -4605,53 +4541,46 @@ const getOpexDepartmentReportPdf = async (data) => {
         {
           header: "Department",
           key: "department",
-          width: "*",
+          width: 100,
+          align: "center",
         },
         {
           header: "Total Count",
           key: "count",
-          width: 75,
+          width: 100,
           align: "center",
         },
-        {
-          header: "Total Amount",
-          key: "totalamount",
-          width: 100,
-          align: "right",
-          format: (value) =>
-            Number(value || 0).toLocaleString("en-IN", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            }),
-        },
+       
+        
         {
           header: "Approved",
           key: "approvedcount",
-          width: 75,
+           width: 100,
           align: "center",
         },
         {
           header: "Pending",
           key: "pendingcount",
-          width: 75,
+           width: 100,
           align: "center",
         },
         {
           header: "Rejected",
           key: "rejectedcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
-        {
-          header: "Hold",
-          key: "holdcount",
-          width: 75,
-          align: "center",
-        },
+       
         {
           header: "Returned",
           key: "returnedcount",
-          width: 75,
+          width: 100,
+          align: "center",
+        },
+         {
+          header: "Hold",
+          key: "holdcount",
+          width: 100,
           align: "center",
         },
       ],
@@ -4682,6 +4611,9 @@ const getOpexDepartmentReportPdf = async (data) => {
 // ============================================================ Organization Report pdf
 const getOpexOrganizationReportPdf = async (data) => {
   try {
+    const dateValidationError = validateOpexReportDates(data);
+    if (dateValidationError) return dateValidationError;
+
     // Same query as OPEX Organization Report GET API
     const result = await pool.query(
       `${REPORT_DATA_CTE}
@@ -4719,13 +4651,19 @@ const getOpexOrganizationReportPdf = async (data) => {
          ON om.OrganizationID = cm.OrganizationID
          AND om.IsDeleted = FALSE
 
+       WHERE ($2::date IS NULL OR cm.CreatedDate >= $2::date)
+         AND (
+           $3::date IS NULL
+           OR cm.CreatedDate < ($3::date + INTERVAL '1 day')
+         )
+
        GROUP BY
          cm.OrganizationID,
          om.ShortName
 
        ORDER BY
          cm.OrganizationID ASC;`,
-      reportParameters(data),
+      organizationReportParameters(data),
     );
 
     const rows = result.rows.map((row) => ({
@@ -4755,70 +4693,59 @@ const getOpexOrganizationReportPdf = async (data) => {
       metadata: [
         {
           label: "From Date",
-          value: data.FromDate || "All",
+          value: data.FromDate ? formatDate(data.FromDate) : "All",
         },
         {
           label: "To Date",
-          value: data.ToDate || "All",
+          value: data.ToDate ? formatDate(data.ToDate) : "All",
         },
-        {
-          label: "Total Organizations",
-          value: rows.length,
-        },
+       
       ],
 
       columns: [
-        {
-          header: "Organization ID",
-          key: "organizationid",
-          width: 90,
-          align: "center",
-        },
+       
         {
           header: "Organization",
           key: "shortname",
-          width: "*",
+           width: 100,
+          align: "center",
         },
         {
           header: "Total Count",
           key: "count",
-          width: 75,
+         width: 100,
           align: "center",
         },
-        {
-          header: "Total Amount",
-          key: "totalamount",
-          width: 100,
-          align: "right",
-        },
+        
         {
           header: "Approved",
           key: "approvedcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
         {
           header: "Pending",
           key: "pendingcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
         {
           header: "Rejected",
           key: "rejectedcount",
-          width: 75,
+          width: 100,
           align: "center",
         },
-        {
-          header: "Hold",
-          key: "holdcount",
-          width: 75,
-          align: "center",
-        },
+       
         {
           header: "Returned",
           key: "returnedcount",
-          width: 75,
+          width: 100,
+          align: "center",
+        },
+         {
+          header: "Hold",
+          key: "holdcount",
+          width: 100,
           align: "center",
         },
       ],
