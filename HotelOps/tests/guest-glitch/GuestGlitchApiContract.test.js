@@ -83,7 +83,7 @@ test("Guest Glitch list PDFs reuse report filters and render trusted metadata", 
   const path = require("node:path");
   const serviceSource = fs.readFileSync(path.resolve(__dirname, "../../services/GuestGlitchService/GuestGlitchService.js"), "utf8");
   assert.match(serviceSource, /const buildReportListPdf = async \(params, complete = false\)/);
-  assert.match(serviceSource, /\.\.\.params,[\s\S]*page: 1,[\s\S]*pageSize: 100000/);
+  assert.match(serviceSource, /\.\.\.reportParams,[\s\S]*page: 1,[\s\S]*pageSize: 100000/);
   assert.match(serviceSource, /params\.roomNumber \|\| "All"/);
   assert.match(serviceSource, /params\.SelectedOrganizationName \|\| rows\[0\]\?\.OrganizationName/);
   assert.match(serviceSource, /reportResponse\.pagination\?\.totalRecords \?\? rows\.length/);
@@ -92,11 +92,33 @@ test("Guest Glitch list PDFs reuse report filters and render trusted metadata", 
   assert.match(serviceSource, /Departments: pdfSelectionNames\(data\.Departments\)/);
   assert.match(serviceSource, /DepartmentHODComments: pdfHODComments/);
   assert.match(serviceSource, /GetMetJson: pdfGuestMet/);
-  assert.match(serviceSource, /sections: pdfRecordSections\(rows\)/);
+  assert.match(serviceSource, /header: "SR#", key: "Serial"/);
+  assert.match(serviceSource, /rows\.map\(\(row, index\) => \(\{[\s\S]*Serial: index \+ 1/);
+  assert.match(serviceSource, /columns: complete \? masterReportPdfColumns : reportPdfColumns/);
+  assert.match(serviceSource, /sections: \[\]/);
+  assert.match(serviceSource, /header: "HOD Comments", key: "DepartmentHODComments"/);
+  assert.match(serviceSource, /header: "GM Comment", key: "GMComment"/);
+  assert.match(serviceSource, /roomNumber: null, RoomNumber: null/);
+  const masterColumns = serviceSource.match(/const masterReportPdfColumns = \[[\s\S]*?\n\];/)?.[0] || "";
+  assert.deepEqual(
+    [...masterColumns.matchAll(/header: "([^"]+)"/g)].map((match) => match[1]),
+    ["SR#", "Date", "Departments", "Complaint", "Process Lapse", "Action", "HOD Comments", "GM Comment", "Status"]
+  );
+  assert.doesNotMatch(masterColumns, /Room|Guest Name|Guest Status|key: "ID"/);
   assert.doesNotMatch(serviceSource, /title: "Audit and Attachment"/);
   const singlePdfSource = serviceSource.match(/const masterReportPdf = async[\s\S]*?const gmAction/)?.[0] || "";
   assert.match(singlePdfSource, /title: "Guest Glitch", reportName: "Guest Glitch"/);
-  assert.match(singlePdfSource, /!\["ID", "Organization"\]\.includes\(key\)/);
+  assert.match(singlePdfSource, /title: "Basic Details", lightHeader: true/);
+  assert.match(singlePdfSource, /title: "Complaint", lightHeader: true, value: record\.Complaint/);
+  assert.match(singlePdfSource, /title: "Detailed Investigation", lightHeader: true, value: record\.DetailedInvestigation/);
+  assert.match(singlePdfSource, /title: "Service Recovery", lightHeader: true, value: record\.ServiceRecovery/);
+  assert.match(singlePdfSource, /title: "Process Lapse"[\s\S]*stackedItems:/);
+  assert.match(singlePdfSource, /title: "Internal Action Taken"[\s\S]*stackedItems:/);
+  assert.match(singlePdfSource, /title: "GM Action", lightHeader: true, value: record\.GMComment/);
+  assert.match(singlePdfSource, /reportDetail\(data, true\)/);
+  assert.match(singlePdfSource, /label: "Updated By", value: record\._UpdatedByFullName/);
+  assert.match(singlePdfSource, /title: "HOD Comments"[\s\S]*title: "Guest Met Details"[\s\S]*title: "Service Recovery Amount"/);
+  assert.doesNotMatch(singlePdfSource, /metadata:|Record ID|Complaint Source|Raise Source/);
   assert.doesNotMatch(singlePdfSource, /\["Rate", "Rate"\]|\["Check In", "CheckInDate"\]|\["Check Out", "CheckOutDate"\]/);
 });
 
@@ -108,16 +130,18 @@ test("list response contains stored fields required by the Guest Glitch Edit for
     processlapsecategory: "Service", processlapse: "Delay", internalactiontakencategory: "Training",
     internalactiontaken: "Team briefed", detailedinvestigation: "Reviewed", gmcomment: "Closed",
     sra_room: "100", sra_food: "50", sra_other: "25", departmenthodcomments: [{ departmentId: 1029, comment: "Checked" }],
-    getmetjson: [{ GuestMetBy: 12 }], rate: "4500", checkindate: "2026-08-24", checkoutdate: "2026-08-26" }, {
+    getmetjson: [{ GuestMetBy: 12, Designation: "Manager", GuestMetOn: "2026-08-25", GuestMetDuring: "Dinner" }],
+    rate: "4500", checkindate: "2026-08-24", checkoutdate: "2026-08-26",
+    complaintsource: "Call", raisesource: "Guest", attachmenttitle: "proof.pdf" }, {
     departments: [{ ID: 1029, Name: "Engineering" }],
     receivedByUsers: [{ ID: 12, Name: "User A" }], informedToUsers: [{ ID: 15, Name: "User B" }],
     resolvedByUser: { ID: 18, Name: "Manager" },
+    guestMetUsers: [{ ID: 12, Name: "User A" }],
   });
   for (const field of ["GuestStatus", "ReceivedByUsers", "InformedToUsers",
     "ResolvedBy", "ProcessLapseCategory", "ProcessLapse", "InternalActionTakenCategory", "InternalActionTaken",
     "DetailedInvestigation", "ServiceRecovery", "GMComment", "SRA_Room", "SRA_Food", "SRA_Other",
-    "DepartmentHODComments", "GetMetJson", "CompanyName", "Rate", "CheckInDate", "CheckOutDate",
-    "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
+    "DepartmentHODComments", "GetMetJson", "CompanyName"]) {
     assert.ok(Object.prototype.hasOwnProperty.call(response, field), `Missing edit field: ${field}`);
   }
   assert.equal(response.OrganizationName, "Ramada");
@@ -125,6 +149,11 @@ test("list response contains stored fields required by the Guest Glitch Edit for
   assert.equal(response.DepartmentHODComments[0].departmentName, "Engineering");
   assert.equal(response.ResolvedBy, 18);
   assert.equal(response.ResolvedByName, "Manager");
+  assert.equal(response.GetMetJson[0].GuestMetBy, 12);
+  assert.equal(response.GetMetJson[0].GuestMetByName, "User A");
+  for (const field of ["Rate", "CheckInDate", "CheckOutDate", "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(response, field), false, `Unexpected edit field: ${field}`);
+  }
   assert.equal(Object.prototype.hasOwnProperty.call(response, "DepartmentIDs"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(response, "ReceivedByIDs"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(response, "InformedToIDs"), false);
@@ -133,8 +162,7 @@ test("list response contains stored fields required by the Guest Glitch Edit for
 test("list response keeps nullable edit fields present instead of omitting them", () => {
   const response = listResponseDTO({ id: 1, organizationid: 30 }, {});
   for (const field of ["ServiceRecovery", "DetailedInvestigation", "InternalActionTaken",
-    "ProcessLapse", "GMComment", "CompanyName", "Rate", "CheckInDate", "CheckOutDate",
-    "ComplaintSource", "RaiseSource", "AttachmentTitle"]) {
+    "ProcessLapse", "GMComment", "CompanyName"]) {
     assert.ok(Object.prototype.hasOwnProperty.call(response, field), `Missing nullable edit field: ${field}`);
   }
   assert.deepEqual(response.Departments, []);
@@ -397,8 +425,7 @@ test("static dropdown values are stored without Guest Glitch option-master valid
   assert.doesNotMatch(serviceSource, /validateOptions|listOptions|upsertOption/);
   assert.doesNotMatch(repositorySource, /const findOption|const listOptions|const upsertOption/);
   const validation = validator.validateUpdate({
-    ID: 1, GuestStatus: "Frontend Static Status", ComplaintSource: "Frontend Static Source",
-    RaiseSource: "Frontend Raise Source", ProcessLapseCategory: "Frontend Category",
+    ID: 1, GuestStatus: "Frontend Static Status", ProcessLapseCategory: "Frontend Category",
     InternalActionTakenCategory: "Frontend Action Category",
   });
   assert.deepEqual(validation.errors, []);

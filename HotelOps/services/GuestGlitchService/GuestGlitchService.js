@@ -81,13 +81,6 @@ const normalizeGuestPdfRecord = (data = {}) => ({
   GetMetJson: pdfGuestMet(data.GetMetJson),
 });
 
-const guestPdfItems = (data, fields) => fields.map(([label, key]) => ({ label, value: pdfValue(data[key]) }));
-const GUEST_GLITCH_PDF_SECTIONS = Object.freeze([
-  { title: "Hotel and Guest", fields: [["Record ID", "ID"], ["Organization", "Organization"], ["Entry Date", "EntryDate"], ["Time", "Time"], ["Room", "RoomNumber"], ["Guest Name", "GuestName"], ["Guest Status", "GuestStatus"], ["Company", "CompanyName"]] },
-  { title: "Complaint and Follow-up", fields: [["Complaint", "Complaint"], ["Complaint Source", "ComplaintSource"], ["Raise Source", "RaiseSource"], ["Departments", "Departments"], ["Received By", "ReceivedByUsers"], ["Informed To", "InformedToUsers"], ["Process Lapse Category", "ProcessLapseCategory"], ["Process Lapse", "ProcessLapse"], ["Service Recovery", "ServiceRecovery"], ["Detailed Investigation", "DetailedInvestigation"], ["Internal Action Category", "InternalActionTakenCategory"], ["Internal Action", "InternalActionTaken"], ["Service Recovery - Room", "SRA_Room"], ["Service Recovery - Food", "SRA_Food"], ["Service Recovery - Other", "SRA_Other"]] },
-  { title: "Status and Follow-up", fields: [["Status", "Status"], ["Resolved By", "ResolvedBy"], ["GM Comment", "GMComment"], ["HOD Comments", "DepartmentHODComments"], ["Guest Met Details", "GetMetJson"]] },
-]);
-
 const fail = (message, statusCode = 400, errors) => ({ success: false, statusCode, message, ...(errors ? { errors } : {}) });
 const cleanText = (value) => value == null ? null : String(value).trim();
 const canonical = (value) => {
@@ -384,6 +377,7 @@ const list = async (data) => {
           departments: [],
           receivedByUsers: [],
           informedToUsers: [],
+          guestMetUsers: [],
         }
       )
     );
@@ -428,12 +422,22 @@ const get = async (data) => {
     const recordOrganizationID = Number(row.organizationid);
     const [resolved] = await repository.resolveSelections(client, recordOrganizationID, [row]);
     const editData = listResponseDTO(row, resolved);
+    const mappedRecord = formatGuestGlitchDates(mapRow(row));
+    const {
+      Rate: _rate,
+      CheckInDate: _checkInDate,
+      CheckOutDate: _checkOutDate,
+      ComplaintSource: _complaintSource,
+      RaiseSource: _raiseSource,
+      AttachmentTitle: _attachmentTitle,
+      ...editRecord
+    } = mappedRecord;
 
     return {
       success: true, message: "Guest glitch retrieved successfully.", data: {
         // Retain the existing detail fields/ID arrays while also returning the
         // same complete, consistently named edit fields exposed by List.
-        ...formatGuestGlitchDates(mapRow(row)),
+        ...editRecord,
         ...editData,
         DepartmentIDs: row.departmentids || [],
         ReceivedByIDs: row.receivedbyids || [],
@@ -463,6 +467,9 @@ const update = async (data) => {
     const selectionData = { ...merged };
     if (!Object.prototype.hasOwnProperty.call(data, "ResolvedBy")) {
       selectionData.ResolvedBy = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(data, "GetMetJson")) {
+      selectionData.GetMetJson = [];
     }
     const selections = await validateSelections(client, selectionData, data.OrganizationID);
     if (selections.error) { await client.query("ROLLBACK"); return selections.error; }
@@ -596,17 +603,36 @@ const compactPdfColumns = [
   { header: "Status", key: "Status", width: 52 },
 ];
 
-const pdfRecordSections = (rows) => rows.flatMap((record) => GUEST_GLITCH_PDF_SECTIONS.map((section, index) => ({
-  title: index === 0
-    ? `Guest Glitch #${record.ID}${record.GuestName ? ` - ${record.GuestName}` : ""}`
-    : section.title,
-  items: guestPdfItems(record, section.fields),
-})));
+// The standard report PDF uses display-only serial numbers; record IDs remain
+// available to the JSON report, exports and master-report PDF unchanged.
+const reportPdfColumns = [
+  { header: "SR#", key: "Serial", width: 28, align: "center" },
+  ...compactPdfColumns.slice(1),
+];
+
+// The master list PDF is intentionally a concise operational summary. Keep
+// this projection local to the PDF so the master-report API DTO stays intact.
+const masterReportPdfColumns = [
+  { header: "SR#", key: "Serial", width: 28, align: "center" },
+  { header: "Date", key: "EntryDate", width: 48, align: "center" },
+  { header: "Departments", key: "Departments", width: 72 },
+  { header: "Complaint", key: "Complaint", width: 135 },
+  { header: "Process Lapse", key: "ProcessLapse", width: 105 },
+  { header: "Action", key: "InternalActionTaken", width: 105 },
+  { header: "HOD Comments", key: "DepartmentHODComments", width: 120 },
+  { header: "GM Comment", key: "GMComment", width: 88 },
+  { header: "Status", key: "Status", width: 48, align: "center" },
+];
 
 // Both list PDFs reuse the exact JSON report filtering/query/DTO pipeline.
 const buildReportListPdf = async (params, complete = false) => {
+  // Room filtering belongs only to the standard report PDF. The master report
+  // is scoped by organization and date range regardless of a supplied room.
+  const reportParams = complete
+    ? { ...params, roomNumber: null, RoomNumber: null }
+    : params;
   const reportResponse = await report({
-    ...params,
+    ...reportParams,
     page: 1,
     pageSize: 100000,
   }, true);
@@ -616,6 +642,11 @@ const buildReportListPdf = async (params, complete = false) => {
   }
 
   const rows = (reportResponse.data || []).map(normalizeGuestPdfRecord);
+  const displayedRows = rows.map((row, index) => ({
+    ...row,
+    Serial: index + 1,
+    GMComment: pdfValue(row.GMComment),
+  }));
 
   const title = complete ? "Guest Glitch Master Report" : "Guest Glitch Report";
   const pdf = await generatePdf({
@@ -636,18 +667,18 @@ const buildReportListPdf = async (params, complete = false) => {
         label: "To Date",
         value: formatDate(params.toDate) || "All",
       },
-      {
+      ...(!complete ? [{
         label: "Room Number",
         value: params.roomNumber || "All",
-      },
+      }] : []),
       {
         label: "Total Records",
         value: reportResponse.pagination?.totalRecords ?? rows.length,
       },
     ],
-    columns: compactPdfColumns,
-    rows,
-    sections: pdfRecordSections(rows),
+    columns: complete ? masterReportPdfColumns : reportPdfColumns,
+    rows: displayedRows,
+    sections: [],
     styles: {
       pdfTableHeader: { fontSize: 6.5, bold: true, color: "#FFFFFF" },
       pdfTableCell: { fontSize: 6.2 },
@@ -675,13 +706,17 @@ const reportPdf = async (params) => buildReportListPdf(params, false);
 const masterReportListPdf = async (params) => buildReportListPdf(params, true);
 
 // Fetch the complete report DTO for detail, GM view and PDF reuse.
-const reportDetail = async (data) => {
+const reportDetail = async (data, includePdfContext = false) => {
   const client = await repository.getClient();
   try {
     const row = await repository.findReportByID(client, data.ID, data.OrganizationIDs || data.OrganizationID);
     if (!row) return fail("Guest Glitch not found", 404);
     const [resolved] = await repository.resolveSelections(client, Number(row.organizationid), [row]);
-    return { success: true, message: "Guest Glitch report detail fetched successfully", data: completeReportDTO(row, resolved) };
+    const responseData = completeReportDTO(row, resolved);
+    if (includePdfContext) {
+      responseData._UpdatedByFullName = resolved.updatedByUser?.Name || responseData.UpdatedBy;
+    }
+    return { success: true, message: "Guest Glitch report detail fetched successfully", data: responseData };
   } catch (error) {
     console.error("Guest Glitch Report Detail Error:", error.message);
     return fail("Unable to retrieve Guest Glitch report detail at this time.", 503);
@@ -689,31 +724,97 @@ const reportDetail = async (data) => {
 };
 
 const masterReportPdf = async (data) => {
-  const detail = await reportDetail(data);
+  const detail = await reportDetail(data, true);
   if (!detail.success) return detail;
   try {
-    const record = normalizeGuestPdfRecord(detail.data);
-    const singleRecordSections = GUEST_GLITCH_PDF_SECTIONS.map((section, index) => ({
-      title: section.title,
-      items: guestPdfItems(
-        record,
-        index === 0
-          ? section.fields.filter(([, key]) => !["ID", "Organization"].includes(key))
-          : section.fields
-      ),
+    const record = detail.data;
+    const lightTableOptions = {
+      headerStyle: "pdfLightTableHeader",
+      layout: {
+        fillColor: (row) => row === 0 ? "#F4F6F9" : "#FFFFFF",
+        paddingLeft: () => 6, paddingRight: () => 6,
+        paddingTop: () => 5, paddingBottom: () => 5,
+      },
+    };
+    const hodRows = (record.DepartmentHODComments || []).map((item) => ({
+      Department: item.departmentName || "-",
+      HODComment: item.HODComment || "-",
     }));
+    const guestMetRows = (Array.isArray(record.GetMetJson) ? record.GetMetJson : []).map((item) => ({
+      GuestMetBy: item?.GuestMetByName || item?.GuestMetBy || "-",
+      Designation: item?.Designation ?? item?.designation ?? "-",
+      GuestMetOn: formatDate(item?.GuestMetOn ?? item?.guestMetOn) || "-",
+      GuestMetDuring: item?.GuestMetDuring ?? item?.guestMetDuring ?? "-",
+    }));
+    const singleRecordSections = [
+      {
+        title: "Basic Details", lightHeader: true,
+        items: [
+          { label: "Organization", value: record.OrganizationFullName || record.OrganizationName },
+          { label: "Entry Date", value: record.EntryDate },
+          { label: "Room No.", value: record.RoomNumber },
+          { label: "Time", value: record.Time },
+          { label: "Guest Name", value: record.GuestName },
+          { label: "Guest Status", value: record.GuestStatus },
+          { label: "Company", value: record.CompanyName },
+          { label: "Status", value: record.Status },
+          { label: "Received By", value: pdfSelectionNames(record.ReceivedByUsers) },
+          { label: "Informed To", value: pdfSelectionNames(record.InformedToUsers) },
+          { label: "Resolved By", value: record.ResolvedBy },
+          { label: "Updated By", value: record._UpdatedByFullName },
+        ],
+      },
+      { title: "Complaint", lightHeader: true, value: record.Complaint },
+      {
+        title: "Process Lapse", lightHeader: true,
+        stackedItems: [{ label: "Category", value: record.ProcessLapseCategory }, { label: "Details", value: record.ProcessLapse }],
+      },
+      {
+        title: "Internal Action Taken", lightHeader: true,
+        stackedItems: [{ label: "Category", value: record.InternalActionTakenCategory }, { label: "Details", value: record.InternalActionTaken }],
+      },
+      { title: "Detailed Investigation", lightHeader: true, value: record.DetailedInvestigation },
+      { title: "Service Recovery", lightHeader: true, value: record.ServiceRecovery },
+      {
+        title: "HOD Comments", lightHeader: true,
+        columns: [{ key: "Department", header: "Department", width: 140 }, { key: "HODComment", header: "HOD Comment", width: "*" }],
+        rows: hodRows.length ? hodRows : [{ Department: "-", HODComment: "-" }], tableOptions: lightTableOptions,
+      },
+      { title: "GM Action", lightHeader: true, value: record.GMComment },
+      {
+        title: "Guest Met Details", lightHeader: true,
+        columns: [
+          { key: "GuestMetBy", header: "Guest Met By", width: "*" },
+          { key: "Designation", header: "Designation", width: "*" },
+          { key: "GuestMetOn", header: "Guest Met On", width: "*" },
+          { key: "GuestMetDuring", header: "Guest Met During", width: "*" },
+        ],
+        rows: guestMetRows.length ? guestMetRows : [{ GuestMetBy: "-", Designation: "-", GuestMetOn: "-", GuestMetDuring: "-" }],
+        tableOptions: lightTableOptions,
+      },
+      {
+        title: "Service Recovery Amount", lightHeader: true,
+        columns: [
+          { key: "Rooms", header: "Rooms", width: "*" },
+          { key: "Food", header: "Food", width: "*" },
+          { key: "Other", header: "Other", width: "*" },
+        ],
+        rows: [{ Rooms: record.SRA_Room, Food: record.SRA_Food, Other: record.SRA_Other }], tableOptions: lightTableOptions,
+      },
+    ];
     const buffer = await generatePdf({
       title: "Guest Glitch", reportName: "Guest Glitch",
       organizationId: record.OrganizationID,
-      orientation: "landscape",
-      metadata: [{ label: "Record ID", value: record.ID }, { label: "Organization", value: record.Organization }],
+      orientation: "portrait",
       sections: singleRecordSections,
-      pageMargins: [20, 18, 20, 28],
+      pageMargins: [22, 18, 22, 30],
       styles: {
         pdfTitle: { fontSize: 16, bold: true, color: "#082B5C" },
-        pdfSection: { fontSize: 10.5, bold: true, color: "#082B5C" },
-        pdfLabel: { fontSize: 7, bold: true, color: "#082B5C" },
-        pdfValue: { fontSize: 7.2, color: "#172033" },
+        pdfLightSection: { fontSize: 10.5, bold: true, color: "#183B65" },
+        pdfLightTableHeader: { fontSize: 8, bold: true, color: "#183B65" },
+        pdfLabel: { fontSize: 8, bold: true, color: "#183B65" },
+        pdfValue: { fontSize: 8.3, color: "#172033", lineHeight: 1.15 },
+        pdfTableCell: { fontSize: 8.2, color: "#172033" },
       },
     });
     return { success: true, message: "Guest Glitch PDF generated successfully", pdfBase64: buffer.toString("base64"), filename: `guest-glitch-${data.ID}.pdf` };

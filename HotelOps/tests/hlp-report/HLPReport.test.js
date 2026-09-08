@@ -24,7 +24,26 @@ test("HLP routes expose the approved authenticated API contract", () => {
   assert.match(source, /router\.put\("\/Update"/);
   assert.match(source, /router\.get\("\/MonthlyReport"/);
   assert.match(source, /router\.get\("\/LastYearReport"/);
+  assert.match(source, /router\.get\("\/DateWiseReport", controller\.dateWiseReport\)/);
+  assert.match(source, /router\.get\("\/DateWiseReport\/PDF", controller\.dateWiseReportPdf\)/);
   assert.match(source, /router\.get\("\/:id\/PDF", controller\.reportPdf\)/);
+});
+
+test("date-wise report reuses exact-date data and shared ID-PDF rendering", async () => {
+  const routes = read("routes/HLPReportRoutes/HLPReportRoutes.js");
+  const controller = read("controllers/HLPReportController/HLPReportController.js");
+  const serviceSource = read("services/HLPReportService/HLPReportService.js");
+  assert.ok(routes.indexOf('router.get("/DateWiseReport/PDF"') < routes.indexOf('router.get("/:id/PDF"'));
+  assert.match(controller, /HLPReportService\.getDateWiseReport/);
+  assert.match(controller, /HLPReportService\.generateDateWiseReportPdf/);
+  assert.match(controller, /req\.query\?\.date \?\? req\.query\?\.Date/);
+  assert.match(serviceSource, /const getDateWiseReport[\s\S]*getLastYearReport\(\{ UserID, OrganizationID, EntryDate: Date \}\)/);
+  assert.match(serviceSource, /Serial: index \+ 1[\s\S]*Title: row\.Title[\s\S]*YOD: row\.YOD \?\? "00"[\s\S]*LYOD: row\.LYOD \?\? "00"/);
+  assert.match(serviceSource, /const renderDateWisePdf[\s\S]*columns: hlpColumns\(true\)/);
+  assert.match(serviceSource, /const generateReportPdf[\s\S]*return renderDateWisePdf/);
+  assert.match(serviceSource, /const generateDateWiseReportPdf[\s\S]*return renderDateWisePdf/);
+  assert.match((await service.getDateWiseReport({ UserID: 1, OrganizationID: 10, Date: "invalid" })).message, /valid date/);
+  assert.match((await service.getDateWiseReport({ UserID: 1, Date: "2026-09-07" })).message, /positive integer/);
 });
 
 test("HLP queue and server registrations are present", () => {
@@ -59,7 +78,7 @@ test("handler keeps only HLP mutation actions", () => {
 // Persistence mapping and validation coverage for master/report operations.
 test("report update changes the existing parent and preserves inactive historical details", () => {
   const source = read("services/HLPReportService/HLPReportService.js");
-  assert.match(source, /SELECT id, organizationid FROM hlpreport_entry_master WHERE id = \$1 FOR UPDATE/);
+  assert.match(source, /SELECT id, organizationid, entrydate FROM hlpreport_entry_master WHERE id = \$1 FOR UPDATE/);
   assert.match(source, /id = ANY\(\$1::bigint\[\]\) AND organizationid = \$2 AND isactive = TRUE/);
   assert.match(source, /UPDATE hlpreport_entry_details[\s\S]*WHERE entryid = \$4 AND masterid = \$5/);
   assert.match(source, /INSERT INTO hlpreport_entry_details \(id, entryid, masterid, title/);
@@ -134,8 +153,9 @@ test("HLP entry list reopens saved values and prefills new dates from comparison
   assert.match(hlpList, /EXTRACT\(YEAR FROM last_year_entry\.entrydate\) = EXTRACT\(YEAR FROM \$2::date\) - 1/);
   assert.match(hlpList, /EXTRACT\(MONTH FROM last_year_entry\.entrydate\) = EXTRACT\(MONTH FROM \$2::date\)/);
   assert.match(hlpList, /EXTRACT\(DAY FROM last_year_entry\.entrydate\) = EXTRACT\(DAY FROM \$2::date\)/);
-  assert.match(hlpList, /COALESCE\(current_detail\.yod, yesterday_detail\.yod, '00'\)/);
+  assert.match(hlpList, /COALESCE\(current_detail\.yod, next_year_detail\.lyod, yesterday_detail\.yod, '00'\)/);
   assert.match(hlpList, /COALESCE\(current_detail\.lyod, last_year_detail\.yod, '00'\)/);
+  assert.match(hlpList, /EXTRACT\(YEAR FROM next_year_entry\.entrydate\) = EXTRACT\(YEAR FROM \$2::date\) \+ 1/);
   assert.match(hlpList, /YOD: row\.YOD \?\? "00"/);
   assert.match(hlpList, /LYOD: row\.LYOD \?\? "00"/);
 });
@@ -224,8 +244,8 @@ test("create report updates an existing organization-date report without creatin
   const queries = [];
   try {
     pool.connect = async () => ({
-      query: async (sql) => {
-        queries.push(sql);
+      query: async (sql, params) => {
+        queries.push({ sql, params });
         if (/FROM user_org_mapping/.test(sql)) return { rowCount: 1, rows: [{ "?column?": 1 }] };
         if (/SELECT id FROM hlpreport_entry_master WHERE organizationid/.test(sql)) return { rowCount: 1, rows: [{ id: 42 }] };
         if (/SELECT id, title FROM hlpreport_master_list/.test(sql)) return { rowCount: 1, rows: [{ id: 1, title: "Rooms Occupied" }] };
@@ -243,9 +263,14 @@ test("create report updates an existing organization-date report without creatin
     assert.equal(response.data.ID, 42);
     assert.equal(response._httpStatus, 200);
     assert.equal(response.message, "HLP report updated successfully");
-    assert.equal(queries.some((sql) => /INSERT INTO hlpreport_entry_master/.test(sql)), false);
-    assert.equal(queries.some((sql) => /UPDATE hlpreport_entry_master/.test(sql)), true);
-    assert.equal(queries.some((sql) => /DELETE FROM hlpreport_entry_details/.test(sql)), false);
+    assert.equal(queries.some(({ sql }) => /INSERT INTO hlpreport_entry_master/.test(sql)), false);
+    assert.equal(queries.some(({ sql }) => /UPDATE hlpreport_entry_master/.test(sql)), true);
+    assert.equal(queries.some(({ sql }) => /DELETE FROM hlpreport_entry_details/.test(sql)), false);
+    const detailUpdate = queries.find(({ sql }) => /UPDATE hlpreport_entry_details[\s\S]*WHERE entryid = \$4/.test(sql));
+    assert.equal(detailUpdate.params[0], "125");
+    assert.equal(detailUpdate.params[1], "110");
+    assert.equal(queries.some(({ sql }) => /SET lyod = \$1[\s\S]*EXTRACT\(YEAR FROM entry\.entrydate\).+\+ 1/.test(sql)), true);
+    assert.equal(queries.some(({ sql }) => /SET yod = \$1[\s\S]*EXTRACT\(YEAR FROM entry\.entrydate\).+- 1/.test(sql)), true);
   } finally { pool.connect = originalConnect; }
 });
 

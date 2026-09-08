@@ -114,7 +114,7 @@ const getHLPList = async ({ UserID, OrganizationID, EntryDate } = {}) => {
     if (denied) return denied;
     const result = await client.query(
       `SELECT ml.id AS "ID", ml.title AS "Title", ml.orderby AS "OrderBy",
-              COALESCE(current_detail.yod, yesterday_detail.yod, '00') AS "YOD",
+              COALESCE(current_detail.yod, next_year_detail.lyod, yesterday_detail.yod, '00') AS "YOD",
               COALESCE(current_detail.lyod, last_year_detail.yod, '00') AS "LYOD"
          FROM hlpreport_master_list ml
          LEFT JOIN hlpreport_entry_master current_entry
@@ -149,6 +149,18 @@ const getHLPList = async ({ UserID, OrganizationID, EntryDate } = {}) => {
               AND (d.masterid = ml.id OR LOWER(d.title) = LOWER(ml.title))
             ORDER BY (d.masterid = ml.id) DESC, d.id DESC LIMIT 1
          ) last_year_detail ON TRUE
+         LEFT JOIN hlpreport_entry_master next_year_entry
+           ON next_year_entry.organizationid = $1
+          AND EXTRACT(YEAR FROM next_year_entry.entrydate) = EXTRACT(YEAR FROM $2::date) + 1
+          AND EXTRACT(MONTH FROM next_year_entry.entrydate) = EXTRACT(MONTH FROM $2::date)
+          AND EXTRACT(DAY FROM next_year_entry.entrydate) = EXTRACT(DAY FROM $2::date)
+         LEFT JOIN LATERAL (
+           SELECT d.lyod
+             FROM hlpreport_entry_details d
+            WHERE d.entryid = next_year_entry.id
+              AND (d.masterid = ml.id OR LOWER(d.title) = LOWER(ml.title))
+            ORDER BY (d.masterid = ml.id) DESC, d.id DESC LIMIT 1
+         ) next_year_detail ON TRUE
         WHERE ml.organizationid = $1 AND ml.isactive = TRUE
         ORDER BY ml.orderby NULLS LAST, ml.id`,
       [Number(OrganizationID), EntryDate]
@@ -166,6 +178,36 @@ const getHLPList = async ({ UserID, OrganizationID, EntryDate } = {}) => {
 
 const masterAuditFields = ["CreatedBy", "CreatedDateTime", "ModifyBy", "ModifyDateTime"];
 const hasUnexpectedFields = (data, allowed) => Object.keys(data).some((field) => !allowed.includes(field));
+
+// Keep both sides of the yearly relationship synchronized when counterpart
+// entries already exist. Missing counterpart rows are resolved dynamically by
+// getHLPList, so saving never creates duplicate/backdated parent reports.
+const syncYearlyValues = async (client, { organizationID, entryDate, masterID, title, YOD, LYOD, userID }) => {
+  await client.query(
+    `UPDATE hlpreport_entry_details detail
+        SET lyod = $1, modifyby = $2, modifydatetime = CURRENT_TIMESTAMP
+       FROM hlpreport_entry_master entry
+      WHERE detail.entryid = entry.id
+        AND entry.organizationid = $3
+        AND EXTRACT(YEAR FROM entry.entrydate) = EXTRACT(YEAR FROM $4::date) + 1
+        AND EXTRACT(MONTH FROM entry.entrydate) = EXTRACT(MONTH FROM $4::date)
+        AND EXTRACT(DAY FROM entry.entrydate) = EXTRACT(DAY FROM $4::date)
+        AND (detail.masterid = $5 OR LOWER(detail.title) = LOWER($6))`,
+    [YOD, userID, Number(organizationID), entryDate, masterID, title]
+  );
+  await client.query(
+    `UPDATE hlpreport_entry_details detail
+        SET yod = $1, modifyby = $2, modifydatetime = CURRENT_TIMESTAMP
+       FROM hlpreport_entry_master entry
+      WHERE detail.entryid = entry.id
+        AND entry.organizationid = $3
+        AND EXTRACT(YEAR FROM entry.entrydate) = EXTRACT(YEAR FROM $4::date) - 1
+        AND EXTRACT(MONTH FROM entry.entrydate) = EXTRACT(MONTH FROM $4::date)
+        AND EXTRACT(DAY FROM entry.entrydate) = EXTRACT(DAY FROM $4::date)
+        AND (detail.masterid = $5 OR LOWER(detail.title) = LOWER($6))`,
+    [LYOD, userID, Number(organizationID), entryDate, masterID, title]
+  );
+};
 
 // Add a new field at the end of the active master-list ordering.
 const normalizeMasterFields = (data) => {
@@ -365,7 +407,6 @@ const createReport = async (data) => {
     const titleByID = new Map(masterResult.rows.map((row) => [Number(row.id), row.title]));
     const invalidID = [...ids].find((id) => !titleByID.has(id));
     if (invalidID) { await client.query("ROLLBACK"); return fail(`Invalid HLP report MasterID: ${invalidID}`); }
-
     if (existing.rowCount) {
       const entryID = Number(existing.rows[0].id);
       await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_entry_details_id'))");
@@ -386,6 +427,10 @@ const createReport = async (data) => {
             [nextDetailID++, entryID, detail.MasterID, title, detail.YOD, detail.LYOD, UserID]
           );
         }
+        await syncYearlyValues(client, {
+          organizationID: OrganizationID, entryDate: EntryDate,
+          masterID: detail.MasterID, title, YOD: detail.YOD, LYOD: detail.LYOD, userID: UserID,
+        });
       }
       await client.query(
         `UPDATE hlpreport_entry_master
@@ -412,11 +457,16 @@ const createReport = async (data) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_entry_details_id'))");
     let detailID = Number((await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM hlpreport_entry_details")).rows[0].id);
     for (const detail of prepared) {
+      const title = titleByID.get(detail.MasterID);
       await client.query(
         `INSERT INTO hlpreport_entry_details (id, entryid, masterid, title, yod, lyod, createdby, createddatetime)
          VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
-        [detailID++, entryID, detail.MasterID, titleByID.get(detail.MasterID), detail.YOD, detail.LYOD, UserID]
+        [detailID++, entryID, detail.MasterID, title, detail.YOD, detail.LYOD, UserID]
       );
+      await syncYearlyValues(client, {
+        organizationID: OrganizationID, entryDate: EntryDate,
+        masterID: detail.MasterID, title, YOD: detail.YOD, LYOD: detail.LYOD, userID: UserID,
+      });
     }
     await client.query("COMMIT");
     return { success: true, message: "HLP report created successfully", data: { ID: entryID, EntryDate: formatDate(EntryDate) } };
@@ -455,7 +505,7 @@ const updateReport = async (data) => {
   try {
     await client.query("BEGIN");
     const entry = await client.query(
-      "SELECT id, organizationid FROM hlpreport_entry_master WHERE id = $1 FOR UPDATE",
+      "SELECT id, organizationid, entrydate FROM hlpreport_entry_master WHERE id = $1 FOR UPDATE",
       [Number(ID)]
     );
     if (!entry.rowCount) { await client.query("ROLLBACK"); return fail("HLP report not found", 404); }
@@ -469,7 +519,6 @@ const updateReport = async (data) => {
     const titleByID = new Map(masterResult.rows.map((row) => [Number(row.id), row.title]));
     const invalidID = [...ids].find((masterID) => !titleByID.has(masterID));
     if (invalidID) { await client.query("ROLLBACK"); return fail(`Invalid HLP report MasterID: ${invalidID}`); }
-
     await client.query("SELECT pg_advisory_xact_lock(hashtext('hlpreport_entry_details_id'))");
     let nextDetailID = Number((await client.query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM hlpreport_entry_details")).rows[0].id);
     for (const detail of prepared) {
@@ -488,6 +537,10 @@ const updateReport = async (data) => {
           [nextDetailID++, Number(ID), detail.MasterID, title, detail.YOD, detail.LYOD, UserID]
         );
       }
+      await syncYearlyValues(client, {
+        organizationID: entry.rows[0].organizationid, entryDate: entry.rows[0].entrydate,
+        masterID: detail.MasterID, title, YOD: detail.YOD, LYOD: detail.LYOD, userID: UserID,
+      });
     }
     await client.query(
       `UPDATE hlpreport_entry_master
@@ -626,6 +679,44 @@ const getLastYearReport = async ({ UserID, OrganizationID, OrganizationIDs, Entr
   } finally { client.release(); }
 };
 
+// Date-wise reporting reuses the exact-date entry reader and exposes the
+// display-ready table rows without changing the Report Builder contract above.
+const getDateWiseReport = async ({ UserID, OrganizationID, Date }) => {
+  if (!positiveInteger(OrganizationID)) return fail("Organization ID must be a positive integer");
+  if (!isRealDate(Date)) return fail("Date must be a valid date in YYYY-MM-DD format");
+  const response = await getLastYearReport({ UserID, OrganizationID, EntryDate: Date });
+  if (!response.success) return response;
+  return {
+    success: true,
+    message: "HLP date-wise report fetched successfully",
+    data: (response.data.Details || []).map((row, index) => ({
+      Serial: index + 1,
+      Title: row.Title,
+      YOD: row.YOD ?? "00",
+      LYOD: row.LYOD ?? "00",
+    })),
+  };
+};
+
+// Shared exact-date PDF renderer used by both ID and date-filtered endpoints.
+const renderDateWisePdf = async ({ organizationID, logoUrl, metadata, rows, filename, title, reportName }) => {
+  const buffer = await generatePdf({
+    title,
+    reportName,
+    organizationId: organizationID,
+    logoUrl,
+    metadata,
+    columns: hlpColumns(true),
+    rows,
+  });
+  return {
+    success: true,
+    message: "HLP report PDF generated successfully",
+    pdfBase64: buffer.toString("base64"),
+    filename,
+  };
+};
+
 // Generate one report PDF after validating access to its organization.
 const generateReportPdf = async ({ UserID, ID }) => {
   if (!positiveInteger(ID)) return fail("HLP report ID must be a positive integer");
@@ -657,21 +748,18 @@ const generateReportPdf = async ({ UserID, ID }) => {
         ORDER BY id`,
       [Number(ID)]
     );
-    const buffer = await generatePdf({
-      title: "HLP REPORT", reportName: "HLP Report", organizationId: record.organizationid,
+    return renderDateWisePdf({
+      organizationID: record.organizationid,
       logoUrl: safeOrganizationLogoUrl(record.logoname),
       metadata: [
         { label: "Report ID", value: Number(record.id) }, { label: "Organization", value: record.organizationname },
         { label: "Entry Date", value: formatDate(record.entrydate) }, { label: "Created By", value: record.createdbyname },
       ],
-      columns: hlpColumns(true), rows: details.rows.map((row, index) => ({ ...row, Serial: index + 1 })),
-    });
-    return {
-      success: true,
-      message: "HLP report PDF generated successfully",
-      pdfBase64: buffer.toString("base64"),
+      rows: details.rows.map((row, index) => ({ ...row, Serial: index + 1 })),
       filename: `HLP-Report-${Number(ID)}.pdf`,
-    };
+      title: "HLP REPORT",
+      reportName: "HLP Report",
+    });
   } catch (error) {
     console.error("Generate HLP Report PDF Error:", error.message);
     return fail("Unable to generate HLP report PDF at this time.", 503);
@@ -739,6 +827,30 @@ const reorderMasterFields = async (data) => {
     console.error("Reorder HLP Master Fields Error:", error.message);
     return retryableDatabaseResponse(error) || fail("Unable to reorder HLP master fields at this time.", 503);
   } finally { client.release(); }
+};
+
+const generateDateWiseReportPdf = async ({ UserID, OrganizationID, Date }) => {
+  try {
+    const report = await getDateWiseReport({ UserID, OrganizationID, Date });
+    if (!report.success) return report;
+    const organization = await reportOrganizationMetadata(OrganizationID);
+    return renderDateWisePdf({
+      organizationID: Number(OrganizationID),
+      logoUrl: organization.LogoUrl,
+      metadata: [
+        { label: "Organization", value: organization.Name },
+        { label: "Date", value: formatDate(Date) },
+        { label: "Total Records", value: report.data.length },
+      ],
+      rows: report.data,
+      filename: `HLP-Date-Wise-Report-${Date}.pdf`,
+      title: "HLP DATE WISE REPORT",
+      reportName: "HLP Date Wise Report",
+    });
+  } catch (error) {
+    console.error("Generate HLP Date Wise Report PDF Error:", error.message);
+    return fail("Unable to generate HLP date-wise report PDF at this time.", 503);
+  }
 };
 
 // Build the Last Year page with the same month/day pivot contract as MonthlyReport,
@@ -887,4 +999,4 @@ const generateMonthlyPivotPdf = async (data, lastYear = false) => {
 const generateMonthlyReportPdf = async (data) => generateMonthlyPivotPdf(data, false);
 const generateLastYearReportPdf = async (data) => generateMonthlyPivotPdf(data, true);
 
-module.exports = { getMasterList, getHLPList, createMasterField, updateMasterField, reorderMasterFields, deleteMasterField, exportMasterFields, importMasterFields, createReport, updateReport, getMonthlyReport, getLastYearMonthlyReport, getLastYearReport, generateReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };
+module.exports = { getMasterList, getHLPList, createMasterField, updateMasterField, reorderMasterFields, deleteMasterField, exportMasterFields, importMasterFields, createReport, updateReport, getMonthlyReport, getLastYearMonthlyReport, getLastYearReport, getDateWiseReport, generateReportPdf, generateDateWiseReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };
