@@ -23,9 +23,13 @@ router.put("/Update", controller.update);
 router.get("/MonthlyReport", controller.monthlyReport);
 router.get("/LastYearReport", controller.lastYearReport);
 router.get("/DateWiseReport", controller.dateWiseReport);
+router.get("/DayWiseVarianceReport", controller.dayWiseVarianceReport);
+router.get("/MonthWiseVarianceReport", controller.monthWiseVarianceReport);
 router.get("/MonthlyReport/PDF", controller.monthlyReportPdf);
 router.get("/LastYearReport/PDF", controller.lastYearReportPdf);
 router.get("/DateWiseReport/PDF", controller.dateWiseReportPdf);
+router.get("/DayWiseVarianceReport/PDF", controller.dayWiseVarianceReportPdf);
+router.get("/MonthWiseVarianceReport/PDF", controller.monthWiseVarianceReportPdf);
 // Keep the parameterized route last so named report routes are matched first.
 router.get("/:id/PDF", controller.reportPdf);
 
