@@ -152,6 +152,15 @@ exports.dateWiseReport = (req, res) => sendDirect(req, res, HLPReportService.get
   OrganizationID: queryOrganizationID(req),
   Date: req.query?.date ?? req.query?.Date ?? req.query?.entryDate ?? req.query?.EntryDate,
 });
+exports.dayWiseVarianceReport = (req, res) => sendDirect(req, res, HLPReportService.getDayWiseVarianceReport, {
+  OrganizationID: queryOrganizationID(req),
+  Date: req.query?.date ?? req.query?.Date ?? req.query?.entryDate ?? req.query?.EntryDate,
+});
+exports.monthWiseVarianceReport = (req, res) => sendDirect(req, res, HLPReportService.getMonthWiseVarianceReport, {
+  OrganizationID: queryOrganizationID(req),
+  Year: req.query?.year ?? req.query?.Year,
+  Month: req.query?.month ?? req.query?.Month,
+});
 
 // PDF bytes travel through RabbitMQ as base64 and are restored before HTTP output.
 const sendPdf = async (req, res, operation, data) => {
@@ -188,6 +197,15 @@ exports.lastYearReportPdf = (req, res) => sendPdf(req, res, HLPReportService.gen
 exports.dateWiseReportPdf = (req, res) => sendPdf(req, res, HLPReportService.generateDateWiseReportPdf, {
   OrganizationID: queryOrganizationID(req),
   Date: req.query?.date ?? req.query?.Date ?? req.query?.entryDate ?? req.query?.EntryDate,
+});
+exports.dayWiseVarianceReportPdf = (req, res) => sendPdf(req, res, HLPReportService.generateDayWiseVarianceReportPdf, {
+  OrganizationID: queryOrganizationID(req),
+  Date: req.query?.date ?? req.query?.Date ?? req.query?.entryDate ?? req.query?.EntryDate,
+});
+exports.monthWiseVarianceReportPdf = (req, res) => sendPdf(req, res, HLPReportService.generateMonthWiseVarianceReportPdf, {
+  OrganizationID: queryOrganizationID(req),
+  Year: req.query?.year ?? req.query?.Year,
+  Month: req.query?.month ?? req.query?.Month,
 });
 
 // Validate the public route ID before dispatching individual PDF generation.

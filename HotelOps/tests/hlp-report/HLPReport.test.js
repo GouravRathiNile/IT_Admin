@@ -26,7 +26,27 @@ test("HLP routes expose the approved authenticated API contract", () => {
   assert.match(source, /router\.get\("\/LastYearReport"/);
   assert.match(source, /router\.get\("\/DateWiseReport", controller\.dateWiseReport\)/);
   assert.match(source, /router\.get\("\/DateWiseReport\/PDF", controller\.dateWiseReportPdf\)/);
+  assert.match(source, /router\.get\("\/DayWiseVarianceReport", controller\.dayWiseVarianceReport\)/);
+  assert.match(source, /router\.get\("\/MonthWiseVarianceReport", controller\.monthWiseVarianceReport\)/);
+  assert.match(source, /router\.get\("\/DayWiseVarianceReport\/PDF", controller\.dayWiseVarianceReportPdf\)/);
+  assert.match(source, /router\.get\("\/MonthWiseVarianceReport\/PDF", controller\.monthWiseVarianceReportPdf\)/);
   assert.match(source, /router\.get\("\/:id\/PDF", controller\.reportPdf\)/);
+});
+
+test("day/month variance reports reuse existing readers and calculate subtraction only", async () => {
+  const controller = read("controllers/HLPReportController/HLPReportController.js");
+  const serviceSource = read("services/HLPReportService/HLPReportService.js");
+  assert.match(controller, /HLPReportService\.getDayWiseVarianceReport/);
+  assert.match(controller, /HLPReportService\.getMonthWiseVarianceReport/);
+  assert.match(controller, /HLPReportService\.generateDayWiseVarianceReportPdf/);
+  assert.match(controller, /HLPReportService\.generateMonthWiseVarianceReportPdf/);
+  assert.match(serviceSource, /const varianceValue = \(current, previous\)[\s\S]*Number\(\(Number\(current\) - Number\(previous\)\)\.toFixed\(3\)\)/);
+  assert.match(serviceSource, /const getDayWiseVarianceReport[\s\S]*getDateWiseReport/);
+  assert.match(serviceSource, /const getMonthWiseVarianceReport[\s\S]*getMonthlyReport\(\{ UserID, OrganizationID, Year: year, Month \}\)[\s\S]*Year: year - 1/);
+  assert.doesNotMatch(serviceSource, /Variance\s*%|VariancePercentage/);
+  assert.match(serviceSource, /const generateVarianceReportPdf[\s\S]*generatePdf/);
+  assert.match((await service.getDayWiseVarianceReport({ UserID: 1, OrganizationID: 10, Date: "bad" })).message, /valid date/);
+  assert.match((await service.getMonthWiseVarianceReport({ UserID: 1, OrganizationID: 10, Year: 1, Month: 9 })).message, /between 2 and 9999/);
 });
 
 test("date-wise report reuses exact-date data and shared ID-PDF rendering", async () => {
@@ -42,6 +62,10 @@ test("date-wise report reuses exact-date data and shared ID-PDF rendering", asyn
   assert.match(serviceSource, /const renderDateWisePdf[\s\S]*columns: hlpColumns\(true\)/);
   assert.match(serviceSource, /const generateReportPdf[\s\S]*return renderDateWisePdf/);
   assert.match(serviceSource, /const generateDateWiseReportPdf[\s\S]*return renderDateWisePdf/);
+  const dateWisePdf = serviceSource.match(/const generateDateWiseReportPdf[\s\S]*?\n\};/)?.[0] || "";
+  assert.match(dateWisePdf, /label: "Organization"/);
+  assert.match(dateWisePdf, /label: "Date"/);
+  assert.doesNotMatch(dateWisePdf, /Total Records/);
   assert.match((await service.getDateWiseReport({ UserID: 1, OrganizationID: 10, Date: "invalid" })).message, /valid date/);
   assert.match((await service.getDateWiseReport({ UserID: 1, Date: "2026-09-07" })).message, /positive integer/);
 });
@@ -413,4 +437,7 @@ test("LastYearReport uses MonthlyReport filters and the shared LYOD pivot", () =
   assert.doesNotMatch(lastYearController, /EntryDate/);
   assert.match(serviceSource, /const getLastYearMonthlyReport = async \(data\) => getMonthlyReport\(data, "LYOD"\)/);
   assert.match(serviceSource, /d\.\$\{reportValueField\} AS "Value"/);
+  assert.match(serviceSource, /d\.masterid AS "MasterID"/);
+  assert.match(serviceSource, /const byMasterID = new Map/);
+  assert.match(serviceSource, /byMasterID\.has\(idKey\)[\s\S]*byTitle\.has\(titleKey\)/);
 });

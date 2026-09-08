@@ -603,7 +603,8 @@ const getMonthlyReport = async ({ UserID, OrganizationID, OrganizationIDs, Year,
       : { rows: [] };
     const masters = mastersResult.rows;
     const values = await client.query(
-      `SELECT EXTRACT(DAY FROM em.entrydate)::int AS day, d.title AS "Title", d.${reportValueField} AS "Value"
+      `SELECT EXTRACT(DAY FROM em.entrydate)::int AS day,
+              d.masterid AS "MasterID", d.title AS "Title", d.${reportValueField} AS "Value"
          FROM hlpreport_entry_master em
          JOIN hlpreport_entry_details d ON d.entryid = em.id
         WHERE em.entrydate >= make_date($1, $2, 1)
@@ -612,12 +613,20 @@ const getMonthlyReport = async ({ UserID, OrganizationID, OrganizationIDs, Year,
       queryValues
     );
     const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
-    const byTitle = new Map(values.rows.map((row) => [`${row.Title}|${row.day}`, row.Value]));
-    const historicalTitles = new Set(values.rows.map((row) => row.Title));
-    const rows = masters.filter((master) => master.IsActive || historicalTitles.has(master.Title)).map((master) => {
+    const normalizedTitle = (value) => String(value || "").trim().toLowerCase();
+    const byMasterID = new Map(values.rows.map((row) => [`${Number(row.MasterID)}|${row.day}`, row.Value]));
+    const byTitle = new Map(values.rows.map((row) => [`${normalizedTitle(row.Title)}|${row.day}`, row.Value]));
+    const historicalMasterIDs = new Set(values.rows.map((row) => Number(row.MasterID)));
+    const historicalTitles = new Set(values.rows.map((row) => normalizedTitle(row.Title)));
+    const rows = masters.filter((master) =>
+      master.IsActive || historicalMasterIDs.has(Number(master.ID)) || historicalTitles.has(normalizedTitle(master.Title))
+    ).map((master) => {
       const row = { ID: master.ID, Title: master.Title }; const populated = [];
       for (let day = 1; day <= days; day += 1) {
-        const value = byTitle.has(`${master.Title}|${day}`) ? byTitle.get(`${master.Title}|${day}`) : null;
+        const idKey = `${Number(master.ID)}|${day}`;
+        const titleKey = `${normalizedTitle(master.Title)}|${day}`;
+        const value = byMasterID.has(idKey) ? byMasterID.get(idKey)
+          : (byTitle.has(titleKey) ? byTitle.get(titleKey) : null);
         row[String(day)] = value;
         if (value !== null && value !== undefined && String(value).trim() !== "") populated.push(value);
       }
@@ -695,6 +704,55 @@ const getDateWiseReport = async ({ UserID, OrganizationID, Date }) => {
       YOD: row.YOD ?? "00",
       LYOD: row.LYOD ?? "00",
     })),
+  };
+};
+
+const varianceValue = (current, previous) => {
+  if (!numericValue(current) || !numericValue(previous)) return null;
+  return Number((Number(current) - Number(previous)).toFixed(3));
+};
+
+const getDayWiseVarianceReport = async ({ UserID, OrganizationID, Date }) => {
+  const report = await getDateWiseReport({ UserID, OrganizationID, Date });
+  if (!report.success) return report;
+  return {
+    success: true,
+    message: "HLP day-wise variance report fetched successfully",
+    data: report.data.map((row) => ({
+      Serial: row.Serial,
+      Title: row.Title,
+      YOD: row.YOD,
+      LYOD: row.LYOD,
+      Variance: varianceValue(row.YOD, row.LYOD),
+    })),
+  };
+};
+
+const getMonthWiseVarianceReport = async ({ UserID, OrganizationID, Year, Month }) => {
+  const year = Number(Year);
+  if (!Number.isInteger(year) || year < 2 || year > 9999) return fail("Year must be between 2 and 9999");
+  const current = await getMonthlyReport({ UserID, OrganizationID, Year: year, Month });
+  if (!current.success) return current;
+  const previous = await getMonthlyReport({ UserID, OrganizationID, Year: year - 1, Month });
+  if (!previous.success) return previous;
+  const previousByID = new Map(previous.data.map((row) => [Number(row.ID), row]));
+  const previousByTitle = new Map(previous.data.map((row) => [String(row.Title || "").trim().toLowerCase(), row]));
+  return {
+    success: true,
+    message: "HLP month-wise variance report fetched successfully",
+    data: current.data.map((row, index) => {
+      const lastYear = previousByID.get(Number(row.ID))
+        || previousByTitle.get(String(row.Title || "").trim().toLowerCase());
+      const currentMonth = row.Total ?? 0;
+      const lastYearSameMonth = lastYear?.Total ?? 0;
+      return {
+        Serial: index + 1,
+        Title: row.Title,
+        CurrentMonth: currentMonth,
+        LastYearSameMonth: lastYearSameMonth,
+        Variance: varianceValue(currentMonth, lastYearSameMonth),
+      };
+    }),
   };
 };
 
@@ -829,6 +887,58 @@ const reorderMasterFields = async (data) => {
   } finally { client.release(); }
 };
 
+const generateVarianceReportPdf = async (data, monthWise = false) => {
+  try {
+    const report = monthWise
+      ? await getMonthWiseVarianceReport(data)
+      : await getDayWiseVarianceReport(data);
+    if (!report.success) return report;
+    const organization = await reportOrganizationMetadata(data.OrganizationID);
+    const columns = monthWise
+      ? [
+        { key: "Serial", header: "SR#", width: 42, align: "center" },
+        { key: "Title", header: "Title", width: "*" },
+        { key: "CurrentMonth", header: "Current Month", width: 105, align: "center" },
+        { key: "LastYearSameMonth", header: "Last Year Same Month", width: 125, align: "center" },
+        { key: "Variance", header: "Variance", width: 90, align: "center" },
+      ]
+      : [
+        ...hlpColumns(true),
+        { key: "Variance", header: "Variance", width: 90, align: "center" },
+      ];
+    const period = monthWise
+      ? formatDate(`${data.Year}-${String(data.Month).padStart(2, "0")}-01`, "MMMM YYYY")
+      : formatDate(data.Date);
+    const title = monthWise ? "HLP MONTH WISE VARIANCE REPORT" : "HLP DAY WISE VARIANCE REPORT";
+    const buffer = await generatePdf({
+      title,
+      reportName: monthWise ? "HLP Month Wise Variance Report" : "HLP Day Wise Variance Report",
+      organizationId: Number(data.OrganizationID),
+      logoUrl: organization.LogoUrl,
+      metadata: [
+        { label: "Organization", value: organization.Name },
+        { label: monthWise ? "Month" : "Date", value: period },
+      ],
+      columns,
+      rows: report.data,
+    });
+    return {
+      success: true,
+      message: `${monthWise ? "HLP month-wise" : "HLP day-wise"} variance report PDF generated successfully`,
+      pdfBase64: buffer.toString("base64"),
+      filename: monthWise
+        ? `HLP-Month-Wise-Variance-${data.Year}-${String(data.Month).padStart(2, "0")}.pdf`
+        : `HLP-Day-Wise-Variance-${data.Date}.pdf`,
+    };
+  } catch (error) {
+    console.error("Generate HLP Variance Report PDF Error:", error.message);
+    return fail("Unable to generate HLP variance report PDF at this time.", 503);
+  }
+};
+
+const generateDayWiseVarianceReportPdf = async (data) => generateVarianceReportPdf(data, false);
+const generateMonthWiseVarianceReportPdf = async (data) => generateVarianceReportPdf(data, true);
+
 const generateDateWiseReportPdf = async ({ UserID, OrganizationID, Date }) => {
   try {
     const report = await getDateWiseReport({ UserID, OrganizationID, Date });
@@ -840,7 +950,6 @@ const generateDateWiseReportPdf = async ({ UserID, OrganizationID, Date }) => {
       metadata: [
         { label: "Organization", value: organization.Name },
         { label: "Date", value: formatDate(Date) },
-        { label: "Total Records", value: report.data.length },
       ],
       rows: report.data,
       filename: `HLP-Date-Wise-Report-${Date}.pdf`,
@@ -999,4 +1108,4 @@ const generateMonthlyPivotPdf = async (data, lastYear = false) => {
 const generateMonthlyReportPdf = async (data) => generateMonthlyPivotPdf(data, false);
 const generateLastYearReportPdf = async (data) => generateMonthlyPivotPdf(data, true);
 
-module.exports = { getMasterList, getHLPList, createMasterField, updateMasterField, reorderMasterFields, deleteMasterField, exportMasterFields, importMasterFields, createReport, updateReport, getMonthlyReport, getLastYearMonthlyReport, getLastYearReport, getDateWiseReport, generateReportPdf, generateDateWiseReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };
+module.exports = { getMasterList, getHLPList, createMasterField, updateMasterField, reorderMasterFields, deleteMasterField, exportMasterFields, importMasterFields, createReport, updateReport, getMonthlyReport, getLastYearMonthlyReport, getLastYearReport, getDateWiseReport, getDayWiseVarianceReport, getMonthWiseVarianceReport, generateReportPdf, generateDateWiseReportPdf, generateDayWiseVarianceReportPdf, generateMonthWiseVarianceReportPdf, generateMonthlyReportPdf, generateLastYearReportPdf, isRealDate, numericValue, hasMonthlyReportData };
