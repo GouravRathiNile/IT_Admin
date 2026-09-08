@@ -148,6 +148,10 @@ exports.lastYearReport = (req, res) => sendDirect(req, res, HLPReportService.get
   Year: req.query?.year ?? req.query?.Year,
   Month: req.query?.month ?? req.query?.Month,
 });
+exports.dateWiseReport = (req, res) => sendDirect(req, res, HLPReportService.getDateWiseReport, {
+  OrganizationID: queryOrganizationID(req),
+  Date: req.query?.date ?? req.query?.Date ?? req.query?.entryDate ?? req.query?.EntryDate,
+});
 
 // PDF bytes travel through RabbitMQ as base64 and are restored before HTTP output.
 const sendPdf = async (req, res, operation, data) => {
@@ -179,6 +183,11 @@ exports.lastYearReportPdf = (req, res) => sendPdf(req, res, HLPReportService.gen
   OrganizationID: queryOrganizationID(req),
   Year: req.query?.year ?? req.query?.Year,
   Month: req.query?.month ?? req.query?.Month,
+});
+
+exports.dateWiseReportPdf = (req, res) => sendPdf(req, res, HLPReportService.generateDateWiseReportPdf, {
+  OrganizationID: queryOrganizationID(req),
+  Date: req.query?.date ?? req.query?.Date ?? req.query?.entryDate ?? req.query?.EntryDate,
 });
 
 // Validate the public route ID before dispatching individual PDF generation.
