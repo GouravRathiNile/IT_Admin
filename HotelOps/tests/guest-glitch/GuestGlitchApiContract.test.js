@@ -83,7 +83,7 @@ test("Guest Glitch list PDFs reuse report filters and render trusted metadata", 
   const path = require("node:path");
   const serviceSource = fs.readFileSync(path.resolve(__dirname, "../../services/GuestGlitchService/GuestGlitchService.js"), "utf8");
   assert.match(serviceSource, /const buildReportListPdf = async \(params, complete = false\)/);
-  assert.match(serviceSource, /\.\.\.params,[\s\S]*page: 1,[\s\S]*pageSize: 100000/);
+  assert.match(serviceSource, /\.\.\.reportParams,[\s\S]*page: 1,[\s\S]*pageSize: 100000/);
   assert.match(serviceSource, /params\.roomNumber \|\| "All"/);
   assert.match(serviceSource, /params\.SelectedOrganizationName \|\| rows\[0\]\?\.OrganizationName/);
   assert.match(serviceSource, /reportResponse\.pagination\?\.totalRecords \?\? rows\.length/);
@@ -92,11 +92,33 @@ test("Guest Glitch list PDFs reuse report filters and render trusted metadata", 
   assert.match(serviceSource, /Departments: pdfSelectionNames\(data\.Departments\)/);
   assert.match(serviceSource, /DepartmentHODComments: pdfHODComments/);
   assert.match(serviceSource, /GetMetJson: pdfGuestMet/);
-  assert.match(serviceSource, /sections: pdfRecordSections\(rows\)/);
+  assert.match(serviceSource, /header: "SR#", key: "Serial"/);
+  assert.match(serviceSource, /rows\.map\(\(row, index\) => \(\{[\s\S]*Serial: index \+ 1/);
+  assert.match(serviceSource, /columns: complete \? masterReportPdfColumns : reportPdfColumns/);
+  assert.match(serviceSource, /sections: \[\]/);
+  assert.match(serviceSource, /header: "HOD Comments", key: "DepartmentHODComments"/);
+  assert.match(serviceSource, /header: "GM Comment", key: "GMComment"/);
+  assert.match(serviceSource, /roomNumber: null, RoomNumber: null/);
+  const masterColumns = serviceSource.match(/const masterReportPdfColumns = \[[\s\S]*?\n\];/)?.[0] || "";
+  assert.deepEqual(
+    [...masterColumns.matchAll(/header: "([^"]+)"/g)].map((match) => match[1]),
+    ["SR#", "Date", "Departments", "Complaint", "Process Lapse", "Action", "HOD Comments", "GM Comment", "Status"]
+  );
+  assert.doesNotMatch(masterColumns, /Room|Guest Name|Guest Status|key: "ID"/);
   assert.doesNotMatch(serviceSource, /title: "Audit and Attachment"/);
   const singlePdfSource = serviceSource.match(/const masterReportPdf = async[\s\S]*?const gmAction/)?.[0] || "";
   assert.match(singlePdfSource, /title: "Guest Glitch", reportName: "Guest Glitch"/);
-  assert.match(singlePdfSource, /!\["ID", "Organization"\]\.includes\(key\)/);
+  assert.match(singlePdfSource, /title: "Basic Details", lightHeader: true/);
+  assert.match(singlePdfSource, /title: "Complaint", lightHeader: true, value: record\.Complaint/);
+  assert.match(singlePdfSource, /title: "Detailed Investigation", lightHeader: true, value: record\.DetailedInvestigation/);
+  assert.match(singlePdfSource, /title: "Service Recovery", lightHeader: true, value: record\.ServiceRecovery/);
+  assert.match(singlePdfSource, /title: "Process Lapse"[\s\S]*stackedItems:/);
+  assert.match(singlePdfSource, /title: "Internal Action Taken"[\s\S]*stackedItems:/);
+  assert.match(singlePdfSource, /title: "GM Action", lightHeader: true, value: record\.GMComment/);
+  assert.match(singlePdfSource, /reportDetail\(data, true\)/);
+  assert.match(singlePdfSource, /label: "Updated By", value: record\._UpdatedByFullName/);
+  assert.match(singlePdfSource, /title: "HOD Comments"[\s\S]*title: "Guest Met Details"[\s\S]*title: "Service Recovery Amount"/);
+  assert.doesNotMatch(singlePdfSource, /metadata:|Record ID|Complaint Source|Raise Source/);
   assert.doesNotMatch(singlePdfSource, /\["Rate", "Rate"\]|\["Check In", "CheckInDate"\]|\["Check Out", "CheckOutDate"\]/);
 });
 

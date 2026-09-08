@@ -31,6 +31,32 @@ test("PDF service returns a valid PDF buffer", async () => {
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
 });
 
+test("single-record PDF helper supports light headers and wrapping full-width narrative rows", async () => {
+  const longText = "Long Guest Glitch narrative content. ".repeat(180);
+  const pdf = await generatePdf({
+    title: "Guest Glitch", reportName: "Guest Glitch",
+    sections: [
+      { title: "Complaint", lightHeader: true, value: longText },
+      { title: "Detailed Investigation", lightHeader: true, value: longText },
+      { title: "Service Recovery", lightHeader: true, value: longText },
+    ],
+  });
+  assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
+  assert.ok(pdf.length > 1000);
+});
+
+test("report-only PDF table renders zero, one and many sequential rows", async () => {
+  const columns = [
+    { header: "SR#", key: "Serial", width: 30, align: "center" },
+    { header: "Guest Name", key: "GuestName", width: "*" },
+  ];
+  for (const count of [0, 1, 25]) {
+    const rows = Array.from({ length: count }, (_, index) => ({ Serial: index + 1, GuestName: `Guest ${index + 1}` }));
+    const pdf = await generatePdf({ title: "Guest Glitch Report", reportName: "Guest Glitch Report", orientation: "landscape", columns, rows });
+    assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
+  }
+});
+
 test("attachment disposition is allowlisted", () => {
   assert.deepEqual(validator.validateDisposition("inline"), []);
   assert.deepEqual(validator.validateDisposition("attachment"), []);

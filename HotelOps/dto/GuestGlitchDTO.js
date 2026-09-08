@@ -319,7 +319,10 @@ const completeReportDTO = (row = {}, resolved = {}) => ({
     null,
 
   GetMetJson:
-    row.getmetjson ?? row.GetMetJson ?? null,
+    mapGuestMetRows(
+      row.getmetjson ?? row.GetMetJson,
+      resolved.guestMetUsers || []
+    ),
 
   DepartmentIDs:
     row.departmentids ?? row.DepartmentIDs ?? [],

@@ -92,6 +92,52 @@ const metadataTable = (items = []) => ({
   margin: [0, 0, 0, 12],
 });
 
+// Optional light section treatment used by compact detail PDFs. Existing
+// reports retain their normal text section headings unless explicitly enabled.
+const lightSectionHeader = (title) => ({
+  table: {
+    widths: ["*"],
+    body: [[{ text: title, style: "pdfLightSection", fillColor: "#E7F1FA" }]],
+  },
+  layout: {
+    hLineColor: () => COLORS.border, vLineColor: () => COLORS.border,
+    hLineWidth: () => 0.4, vLineWidth: () => 0.4,
+    paddingLeft: () => 7, paddingRight: () => 7,
+    paddingTop: () => 5, paddingBottom: () => 5,
+  },
+  margin: [0, 8, 0, 0],
+});
+
+const fullWidthValue = (value) => ({
+  table: { widths: ["*"], body: [[{ text: display(value), style: "pdfValue", noWrap: false }]] },
+  layout: {
+    hLineColor: () => COLORS.border, vLineColor: () => COLORS.border,
+    hLineWidth: () => 0.4, vLineWidth: () => 0.4,
+    paddingLeft: () => 7, paddingRight: () => 7,
+    paddingTop: () => 6, paddingBottom: () => 6,
+  },
+  margin: [0, 0, 0, 12],
+});
+
+// Keep each label/value pair on its own row so a long Details value does not
+// create an oversized blank Category cell beside it.
+const stackedDetailRows = (items = []) => ({
+  table: {
+    widths: [90, "*"],
+    body: items.map((item) => [
+      { text: item?.label || "", style: "pdfLabel", fillColor: COLORS.light },
+      { text: display(item?.value), style: "pdfValue", noWrap: false },
+    ]),
+  },
+  layout: {
+    hLineColor: () => COLORS.border, vLineColor: () => COLORS.border,
+    hLineWidth: () => 0.4, vLineWidth: () => 0.4,
+    paddingLeft: () => 7, paddingRight: () => 7,
+    paddingTop: () => 5, paddingBottom: () => 5,
+  },
+  margin: [0, 0, 0, 12],
+});
+
 const baseTableLayout = {
   fillColor: (row) => row === 0 ? COLORS.navy : row % 2 === 0 ? "#FAFBFD" : "#FFFFFF",
   hLineColor: () => COLORS.border, vLineColor: () => COLORS.border,
@@ -121,9 +167,15 @@ const generatePdf = async ({ title, reportName, organizationId, logoUrl, orienta
   if (metadata.length) content.push(metadataTable(metadata));
   if (columns) content.push(dataTable({ columns, rows, ...tableOptions }));
   for (const section of sections) {
-    content.push({ text: section.title, style: "pdfSection", margin: [0, 8, 0, 4] });
+    content.push(section.lightHeader
+      ? lightSectionHeader(section.title)
+      : { text: section.title, style: "pdfSection", margin: [0, 8, 0, 4] });
     content.push(
-      section.columns
+      Object.prototype.hasOwnProperty.call(section, "value")
+        ? fullWidthValue(section.value)
+        : section.stackedItems
+        ? stackedDetailRows(section.stackedItems)
+        : section.columns
         ? dataTable({
             columns: section.columns,
             rows: section.rows || [],
@@ -138,7 +190,8 @@ const generatePdf = async ({ title, reportName, organizationId, logoUrl, orienta
     styles: {
       pdfTitle: { fontSize: 18, bold: true, color: COLORS.navy }, pdfLabel: { fontSize: 8, bold: true, color: COLORS.navy },
       pdfValue: { fontSize: 8.5, color: COLORS.text }, pdfTableHeader: { fontSize: 8, bold: true, color: "#FFFFFF" },
-      pdfTableCell: { fontSize: 8, color: COLORS.text }, pdfSection: { fontSize: 12, bold: true, color: COLORS.navy }, ...styles,
+      pdfTableCell: { fontSize: 8, color: COLORS.text }, pdfSection: { fontSize: 12, bold: true, color: COLORS.navy },
+      pdfLightSection: { fontSize: 10.5, bold: true, color: COLORS.navy }, ...styles,
     },
     footer: footer(reportName, formatDate(new Date(), "DD MMM YYYY hh:mm A")),
   };
