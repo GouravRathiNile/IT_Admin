@@ -4386,9 +4386,8 @@ const capexPdfValue = (value) => {
 const generateCapexByIdPdf = async (data) => {
   try {
     // ==========================================================
-    // Validate CAPEX ID
+    // VALIDATE CAPEX ID
     // ==========================================================
-
     const capexID = Number(data.CapexID);
 
     if (!Number.isInteger(capexID) || capexID <= 0) {
@@ -4396,9 +4395,8 @@ const generateCapexByIdPdf = async (data) => {
     }
 
     // ==========================================================
-    // Fetch CAPEX
+    // FETCH CAPEX
     // ==========================================================
-
     const result = await pool.query(
       `
       ${CAPEX_SELECT}
@@ -4413,10 +4411,8 @@ const generateCapexByIdPdf = async (data) => {
     }
 
     // ==========================================================
-    // Attach Related Data
-    // Approvals API data will be received from this function
+    // ATTACH RELATED DATA
     // ==========================================================
-
     const [capex] = await attachRelatedData(result.rows);
 
     const approvals = Array.isArray(capex.Approvals)
@@ -4424,54 +4420,421 @@ const generateCapexByIdPdf = async (data) => {
       : [];
 
     // ==========================================================
-    // Dynamic Approval Items
-    //
-    // No static roles are defined.
-    // Only roles available inside capex.Approvals will be shown.
+    // COLORS
     // ==========================================================
+    const COLORS = {
+      mainHeader: "#082B5C",
+      label: "#082B5C",
+      value: "#172033",
+      icon: "#0D3B7A",
 
-    const approvalRows = [];
+      labelBackground: "#F4F6F9",
+      tableHeaderBackground: "#F4F6F9",
 
-    approvals.forEach((approval) => {
-      if (
-        approval.ApprovalRole === undefined ||
-        approval.ApprovalRole === null ||
-        String(approval.ApprovalRole).trim() === ""
-      ) {
-        return;
-      }
+      border: "#CFD7E3",
+      white: "#FFFFFF",
 
-      const approvalRole = String(
-        approval.ApprovalRole,
-      ).trim();
+      approved: "#15803D",
+      approvedBackground: "#DCFCE7",
 
-      const approvedQuantity =
-        approval.ApprovedQuantity !== null &&
-        approval.ApprovedQuantity !== undefined &&
-        String(approval.ApprovedQuantity).trim() !== ""
-          ? formatCapexAmount(
-              approval.ApprovedQuantity,
-            )
-          : "-";
+      pending: "#D97706",
+      pendingBackground: "#FEF3C7",
 
-      const status = capexPdfValue(approval.Status);
+      rejected: "#B91C1C",
+      rejectedBackground: "#FEE2E2",
 
-      approvalRows.push([
-        { text: approvalRole, style: "approvalRole" },
-        { text: status, alignment: "center" },
-        { text: approvedQuantity, alignment: "center" },
-        { text: capexPdfValue(approval.Remarks) },
-      ]);
+      returned: "#7C3AED",
+      returnedBackground: "#EDE9FE",
+
+      hold: "#B45309",
+      holdBackground: "#FEF3C7",
+
+      muted: "#64748B",
+    };
+
+    // ==========================================================
+    // LOGO / GENERATED DATE
+    // ==========================================================
+    const logo = await loadLogo(capex.OrganizationID);
+
+    const generatedOn = formatDate(
+      new Date(),
+      "DD MMM YYYY hh:mm A",
+    );
+
+    // ==========================================================
+    // SVG STYLE ICONS
+    // ==========================================================
+    const fieldIcon = (type) => {
+      const stroke = COLORS.icon;
+
+      const line = (
+        x1,
+        y1,
+        x2,
+        y2,
+        lineWidth = 1.25,
+      ) => ({
+        type: "line",
+        x1,
+        y1,
+        x2,
+        y2,
+        lineWidth,
+        lineColor: stroke,
+      });
+
+      const rect = (
+        x,
+        y,
+        w,
+        h,
+        r = 0,
+      ) => ({
+        type: "rect",
+        x,
+        y,
+        w,
+        h,
+        r,
+        lineWidth: 1.25,
+        lineColor: stroke,
+      });
+
+      const ellipse = (
+        x,
+        y,
+        r1,
+        r2 = r1,
+      ) => ({
+        type: "ellipse",
+        x,
+        y,
+        r1,
+        r2,
+        lineWidth: 1.25,
+        lineColor: stroke,
+      });
+
+      const icons = {
+        organization: [
+          rect(5, 3, 10, 15, 1),
+          line(2, 18, 18, 18),
+          line(8, 7, 8, 8),
+          line(12, 7, 12, 8),
+          line(8, 11, 8, 12),
+          line(12, 11, 12, 12),
+          line(10, 15, 10, 18),
+        ],
+
+        capex: [
+          rect(4, 2, 11, 16, 1),
+          line(7, 6, 12, 6),
+          line(7, 9, 12, 9),
+          line(7, 12, 12, 12),
+          line(7, 15, 11, 15),
+        ],
+
+        calendar: [
+          rect(2, 4, 16, 14, 1),
+          line(2, 8, 18, 8),
+          line(6, 2, 6, 6),
+          line(14, 2, 14, 6),
+
+          line(6, 11, 8, 11),
+          line(11, 11, 13, 11),
+          line(6, 14, 8, 14),
+          line(11, 14, 13, 14),
+        ],
+
+        department: [
+          ellipse(10, 5, 2.5),
+          ellipse(4, 7, 2),
+          ellipse(16, 7, 2),
+
+          line(6, 18, 6, 13),
+          line(14, 18, 14, 13),
+          line(6, 13, 14, 13),
+          line(2, 18, 18, 18),
+        ],
+
+        item: [
+          {
+            type: "polyline",
+            points: [
+              { x: 2, y: 8 },
+              { x: 9, y: 1 },
+              { x: 18, y: 10 },
+              { x: 10, y: 18 },
+              { x: 2, y: 10 },
+            ],
+            closePath: true,
+            lineWidth: 1.25,
+            lineColor: stroke,
+          },
+          ellipse(8, 6, 1.2),
+        ],
+
+        make: [
+          ellipse(10, 10, 5),
+          ellipse(10, 10, 2),
+
+          line(10, 1, 10, 5),
+          line(10, 15, 10, 19),
+
+          line(1, 10, 5, 10),
+          line(15, 10, 19, 10),
+
+          line(4, 4, 7, 7),
+          line(13, 13, 16, 16),
+
+          line(16, 4, 13, 7),
+          line(4, 16, 7, 13),
+        ],
+
+        quantity: [
+          {
+            type: "polyline",
+            points: [
+              { x: 10, y: 1 },
+              { x: 18, y: 5 },
+              { x: 10, y: 9 },
+              { x: 2, y: 5 },
+            ],
+            closePath: true,
+            lineWidth: 1.25,
+            lineColor: stroke,
+          },
+
+          line(2, 5, 2, 14),
+          line(18, 5, 18, 14),
+
+          line(2, 14, 10, 19),
+          line(18, 14, 10, 19),
+
+          line(10, 9, 10, 19),
+        ],
+
+        rate: [
+          line(5, 3, 15, 3),
+          line(5, 7, 15, 7),
+          line(8, 3, 8, 17),
+          line(8, 7, 16, 18),
+          line(8, 7, 11, 7),
+        ],
+
+        total: [
+          ellipse(10, 5, 7, 3),
+          ellipse(10, 10, 7, 3),
+          ellipse(10, 15, 7, 3),
+
+          line(3, 5, 3, 15),
+          line(17, 5, 17, 15),
+        ],
+
+        description: [
+          rect(4, 2, 12, 16, 1),
+
+          line(7, 7, 13, 7),
+          line(7, 10, 13, 10),
+          line(7, 13, 12, 13),
+        ],
+      };
+
+      const iconScale = 0.8;
+      return (icons[type] || icons.capex).map((shape) => {
+        const scaledShape = {
+          ...shape,
+          lineWidth: (shape.lineWidth || 1) * iconScale,
+        };
+
+        for (const coordinate of [
+          "x",
+          "y",
+          "x1",
+          "y1",
+          "x2",
+          "y2",
+          "w",
+          "h",
+          "r",
+          "r1",
+          "r2",
+        ]) {
+          if (typeof scaledShape[coordinate] === "number") {
+            scaledShape[coordinate] *= iconScale;
+          }
+        }
+
+        if (Array.isArray(scaledShape.points)) {
+          scaledShape.points = scaledShape.points.map((point) => ({
+            x: point.x * iconScale,
+            y: point.y * iconScale,
+          }));
+        }
+
+        return scaledShape;
+      });
+    };
+
+    // ==========================================================
+    // LABEL CELL
+    // ==========================================================
+    const labelCell = (text, icon) => ({
+      columns: [
+        {
+          width: 25,
+          canvas: fieldIcon(icon),
+          margin: [0, 0, 0, 0],
+        },
+        {
+          width: "*",
+          text,
+          style: "fieldLabel",
+          margin: [3, 3, 0, 0],
+        },
+      ],
+
+      fillColor: COLORS.labelBackground,
+
+      margin: [9, 5, 6, 5],
     });
 
-    if (approvalRows.length === 0) {
+    // ==========================================================
+    // VALUE CELL
+    // ==========================================================
+    const valueCell = (value) => ({
+      text: capexPdfValue(value),
+      style: "fieldValue",
+      margin: [9, 6, 7, 6],
+    });
+
+    // ==========================================================
+    // COMMON TABLE BORDER
+    // ==========================================================
+    const borderedLayout = {
+      hLineColor: () => COLORS.border,
+      vLineColor: () => COLORS.border,
+
+      hLineWidth: () => 0.7,
+      vLineWidth: () => 0.7,
+
+      paddingLeft: () => 0,
+      paddingRight: () => 0,
+      paddingTop: () => 0,
+      paddingBottom: () => 0,
+    };
+
+    // ==========================================================
+    // STATUS CELL
+    // ==========================================================
+    const statusCell = (statusValue) => ({
+      text: capexPdfValue(statusValue),
+      style: "approvalValue",
+      margin: [4, 5, 4, 5],
+    });
+
+    // ==========================================================
+    // APPROVAL ROWS
+    // ==========================================================
+    const approvalRows = [];
+
+    approvals.forEach(
+      (approval) => {
+        if (
+          approval.ApprovalRole ===
+            undefined ||
+          approval.ApprovalRole ===
+            null ||
+          String(
+            approval.ApprovalRole,
+          ).trim() === ""
+        ) {
+          return;
+        }
+
+        const approvalRole = String(
+          approval.ApprovalRole,
+        ).trim();
+
+        const approvedQuantity =
+          approval.ApprovedQuantity !==
+            null &&
+          approval.ApprovedQuantity !==
+            undefined &&
+          String(
+            approval.ApprovedQuantity,
+          ).trim() !== ""
+            ? formatCapexAmount(
+                approval.ApprovedQuantity,
+              )
+            : "-";
+
+        approvalRows.push([
+          {
+            text: approvalRole,
+            style: "approvalRole",
+            margin: [
+              4,
+              5,
+              4,
+              5,
+            ],
+          },
+
+          statusCell(
+            approval.Status,
+          ),
+
+          {
+            text: approvedQuantity,
+            style: "approvalValue",
+            margin: [
+              4,
+              5,
+              4,
+              5,
+            ],
+          },
+
+          {
+            text: capexPdfValue(
+              approval.Remarks,
+            ),
+            style: "approvalValue",
+            margin: [
+              4,
+              5,
+              4,
+              5,
+            ],
+          },
+        ]);
+      },
+    );
+
+    if (
+      approvalRows.length === 0
+    ) {
       approvalRows.push([
         {
-          text: "No approval details available",
+          text:
+            "No approval details available",
+
           colSpan: 4,
+
           alignment: "center",
-          color: "#64748B",
+
+          color: COLORS.muted,
+
+          margin: [
+            0,
+            7,
+            0,
+            7,
+          ],
         },
+
         {},
         {},
         {},
@@ -4479,212 +4842,681 @@ const generateCapexByIdPdf = async (data) => {
     }
 
     // ==========================================================
-    // Generate the dedicated CAPEX detail layout directly with pdfmake.
+    // DOCUMENT DEFINITION
     // ==========================================================
-
-    const navy = "#073B84";
-    const border = "#B9CEE8";
-    const labelFill = "#EDF6FF";
-    const logo = await loadLogo(capex.OrganizationID);
-    const generatedOn = formatDate(new Date(), "DD MMM YYYY hh:mm A");
-    const fieldIcon = (type) => {
-      const stroke = navy;
-      const line = (x1, y1, x2, y2, lineWidth = 1.2) => ({
-        type: "line", x1, y1, x2, y2, lineWidth, lineColor: stroke,
-      });
-      const rect = (x, y, w, h, r = 0) => ({
-        type: "rect", x, y, w, h, r, lineWidth: 1.2, lineColor: stroke,
-      });
-      const ellipse = (x, y, r1, r2 = r1) => ({
-        type: "ellipse", x, y, r1, r2, lineWidth: 1.2, lineColor: stroke,
-      });
-
-      const icons = {
-        organization: [rect(4, 3, 11, 15), line(2, 18, 17, 18), ...[7, 11, 15].flatMap((y) => [line(7, y, 8, y), line(11, y, 12, y)])],
-        capex: [rect(4, 2, 11, 16), line(7, 7, 12, 7), line(7, 10, 12, 10), line(7, 13, 12, 13)],
-        calendar: [rect(2, 4, 16, 14, 1), line(2, 8, 18, 8), line(6, 2, 6, 6), line(14, 2, 14, 6), line(6, 11, 8, 11), line(11, 11, 13, 11), line(6, 14, 8, 14)],
-        department: [ellipse(10, 5, 2.5), ellipse(4, 7, 2), ellipse(16, 7, 2), line(6, 18, 6, 13), line(14, 18, 14, 13), line(6, 13, 14, 13), line(2, 18, 18, 18)],
-        item: [{ type: "polyline", points: [{ x: 2, y: 8 }, { x: 9, y: 1 }, { x: 18, y: 10 }, { x: 10, y: 18 }, { x: 2, y: 10 }], closePath: true, lineWidth: 1.2, lineColor: stroke }, ellipse(8, 6, 1.2)],
-        make: [ellipse(10, 10, 5), ellipse(10, 10, 2), line(10, 1, 10, 5), line(10, 15, 10, 19), line(1, 10, 5, 10), line(15, 10, 19, 10), line(4, 4, 7, 7), line(13, 13, 16, 16)],
-        quantity: [{ type: "polyline", points: [{ x: 10, y: 1 }, { x: 18, y: 5 }, { x: 10, y: 9 }, { x: 2, y: 5 }], closePath: true, lineWidth: 1.2, lineColor: stroke }, line(2, 5, 2, 14), line(18, 5, 18, 14), line(2, 14, 10, 19), line(18, 14, 10, 19), line(10, 9, 10, 19)],
-        rate: [line(5, 3, 15, 3), line(5, 7, 15, 7), line(8, 3, 8, 17), line(8, 7, 16, 18), line(8, 7, 11, 7)],
-        total: [ellipse(10, 5, 7, 3), ellipse(10, 10, 7, 3), ellipse(10, 15, 7, 3), line(3, 5, 3, 15), line(17, 5, 17, 15)],
-        description: [rect(4, 2, 12, 16), line(7, 7, 13, 7), line(7, 10, 13, 10), line(7, 13, 12, 13)],
-      };
-      return icons[type] || icons.capex;
-    };
-    const labelCell = (text, icon) => ({
-      columns: [
-        { width: 25, canvas: fieldIcon(icon) },
-        { width: "*", text, style: "fieldLabel", margin: [3, 3, 0, 0] },
-      ],
-      fillColor: labelFill,
-      margin: [8, 6, 5, 6],
-    });
-    const valueCell = (value) => ({
-      text: capexPdfValue(value),
-      style: "fieldValue",
-      margin: [8, 7, 6, 7],
-    });
-    const borderedLayout = {
-      hLineColor: () => border,
-      vLineColor: () => border,
-      hLineWidth: () => 0.7,
-      vLineWidth: () => 0.7,
-      paddingLeft: () => 0,
-      paddingRight: () => 0,
-      paddingTop: () => 0,
-      paddingBottom: () => 0,
-    };
-
     const documentDefinition = {
       pageSize: "A4",
-      pageOrientation: "portrait",
-      pageMargins: [22, 28, 22, 72],
-      defaultStyle: { font: "Roboto", fontSize: 9, color: "#10234A" },
+
+      pageOrientation:
+        "portrait",
+
+      pageMargins: [
+        22,
+        26,
+        22,
+        72,
+      ],
+
+      defaultStyle: {
+        font: "Roboto",
+        fontSize: 9,
+        color: COLORS.value,
+      },
+
       content: [
+        // ======================================================
+        // HEADER
+        // ======================================================
         {
           table: {
-            widths: [130, "*"],
-            body: [[
-              logo
-                ? { image: logo, fit: [112, 58], border: [false, false, false, false] }
-                : { text: "", border: [false, false, false, false] },
-              {
-                text: "CAPEX Detail Report",
-                style: "title",
-                alignment: "center",
-                margin: [0, 18, 80, 0],
-                border: [false, false, false, false],
-              },
-            ]],
-          },
-          layout: "noBorders",
-        },
-        { canvas: [{ type: "line", x1: 0, y1: 0, x2: 551, y2: 0, lineWidth: 0.8, lineColor: navy }], margin: [0, 8, 0, 18] },
-        {
-          table: {
-            widths: [105, "*", 105, "*"],
+            widths: [
+              130,
+              "*",
+            ],
+
             body: [
-              [labelCell("Organization", "organization"), valueCell(capex.OrganizationShortName || capex.OrganizationID), labelCell("CAPEX No.", "capex"), valueCell(capex.CapexNumber)],
-              [labelCell("Created Date", "calendar"), valueCell(capex.CreatedDate), labelCell("Department", "department"), valueCell(capex.Department)],
+              [
+                logo
+                  ? {
+                      image: logo,
+
+                      fit: [
+                        102,
+                        58,
+                      ],
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    }
+                  : {
+                      text: "",
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    },
+
+                {
+                  text:
+                    "CAPEX Detail Report",
+
+                  style: "title",
+
+                  alignment:
+                    "center",
+
+                  margin: [
+                    0,
+                    18,
+                    80,
+                    0,
+                  ],
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+              ],
             ],
           },
-          layout: borderedLayout,
-          margin: [0, 0, 0, 18],
+
+          layout: "noBorders",
         },
+
+        // HEADER LINE
+        {
+          canvas: [
+            {
+              type: "line",
+
+              x1: 0,
+              y1: 0,
+
+              x2: 551,
+              y2: 0,
+
+              lineWidth: 0.8,
+
+              lineColor:
+                COLORS.mainHeader,
+            },
+          ],
+
+          margin: [
+            0,
+            7,
+            0,
+            18,
+          ],
+        },
+
+        // ======================================================
+        // ORGANIZATION DETAILS
+        // ======================================================
         {
           table: {
-            widths: [95, "*", 85, "*"],
-            body: [[labelCell("Item", "item"), valueCell(capex.Item), labelCell("Make", "make"), valueCell(capex.Make)]],
+            widths: [
+              105,
+              "*",
+              105,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Organization",
+                  "organization",
+                ),
+
+                valueCell(
+                  capex.OrganizationShortName ||
+                    capex.OrganizationID,
+                ),
+
+                labelCell(
+                  "CAPEX No.",
+                  "capex",
+                ),
+
+                valueCell(
+                  capex.CapexNumber,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Created Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  capex.CreatedDate,
+                ),
+
+                labelCell(
+                  "Department",
+                  "department",
+                ),
+
+                valueCell(
+                  capex.Department,
+                ),
+              ],
+            ],
           },
-          layout: borderedLayout,
-          margin: [0, 0, 0, 12],
+
+          layout:
+            borderedLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            18,
+          ],
         },
+
+        // ======================================================
+        // ITEM + MAKE
+        // ======================================================
         {
           table: {
-            widths: [80, "*", 70, "*", 70, "*"],
-            body: [[
-              labelCell("Quantity", "quantity"), valueCell(formatCapexAmount(capex.Qty)),
-              labelCell("Rate", "rate"), valueCell(`INR ${formatCapexAmount(capex.Rate)}`),
-              labelCell("Total", "total"), valueCell(`INR ${formatCapexAmount(capex.Total)}`),
-            ]],
+            widths: [
+              95,
+              "*",
+              85,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Item",
+                  "item",
+                ),
+
+                valueCell(
+                  capex.Item,
+                ),
+
+                labelCell(
+                  "Make",
+                  "make",
+                ),
+
+                valueCell(
+                  capex.Make,
+                ),
+              ],
+            ],
           },
-          layout: borderedLayout,
-          margin: [0, 0, 0, 18],
+
+          layout:
+            borderedLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            12,
+          ],
         },
+
+        // ======================================================
+        // QTY + RATE + TOTAL
+        // SAME ROW
+        // ======================================================
         {
           table: {
-            widths: [105, "*"],
-            body: [[labelCell("Description", "description"), valueCell(capex.Description)]],
+            widths: [
+              74,
+              "*",
+              62,
+              "*",
+              62,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Quantity",
+                  "quantity",
+                ),
+
+                valueCell(
+                  formatCapexAmount(
+                    capex.Qty,
+                  ),
+                ),
+
+                labelCell(
+                  "Rate",
+                  "rate",
+                ),
+
+                valueCell(
+                  `INR ${formatCapexAmount(
+                    capex.Rate,
+                  )}`,
+                ),
+
+                labelCell(
+                  "Total",
+                  "total",
+                ),
+
+                {
+                  text: `INR ${formatCapexAmount(
+                    capex.Total,
+                  )}`,
+
+                  style:
+                    "totalValue",
+
+                  margin: [
+                    8,
+                    8,
+                    5,
+                    8,
+                  ],
+                },
+              ],
+            ],
           },
-          layout: borderedLayout,
-          margin: [0, 0, 0, 18],
+
+          layout:
+            borderedLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            18,
+          ],
         },
+
+        // ======================================================
+        // DESCRIPTION
+        // ======================================================
+        {
+          table: {
+            widths: [
+              105,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Description",
+                  "description",
+                ),
+
+                {
+                  text:
+                    capexPdfValue(
+                      capex.Description,
+                    ),
+
+                  style:
+                    "descriptionValue",
+
+                  margin: [
+                    10,
+                    9,
+                    10,
+                    9,
+                  ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            borderedLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            18,
+          ],
+        },
+
+        // ======================================================
+        // APPROVAL TABLE
+        // ======================================================
         {
           table: {
             headerRows: 1,
-            widths: [95, 120, 100, "*"],
+
+            widths: [
+              100,
+              120,
+              80,
+              "*",
+            ],
+
             body: [
               [
-                { text: "Approval", style: "tableHeader" },
-                { text: "Status", style: "tableHeader" },
-                { text: "Qty", style: "tableHeader" },
-                { text: "Remarks", style: "tableHeader" },
+                {
+                  text:
+                    "Approval",
+
+                  style:
+                    "tableHeader",
+                },
+
+                {
+                  text:
+                    "Status",
+
+                  style:
+                    "tableHeader",
+                },
+
+                {
+                  text: "Qty",
+
+                  style:
+                    "tableHeader",
+                },
+
+                {
+                  text:
+                    "Remarks",
+
+                  style:
+                    "tableHeader",
+                },
               ],
+
               ...approvalRows,
             ],
           },
+
           layout: {
-            ...borderedLayout,
-            fillColor: (rowIndex) => (rowIndex === 0 ? labelFill : null),
-            paddingLeft: () => 8,
-            paddingRight: () => 8,
-            paddingTop: () => 7,
-            paddingBottom: () => 7,
+            hLineColor: () =>
+              COLORS.border,
+
+            vLineColor: () =>
+              COLORS.border,
+
+            hLineWidth: () =>
+              0.7,
+
+            vLineWidth: () =>
+              0.7,
+
+            fillColor:
+              (rowIndex) =>
+                rowIndex === 0
+                  ? COLORS.tableHeaderBackground
+                  : COLORS.white,
+
+            paddingLeft: () =>
+              8,
+
+            paddingRight: () =>
+              8,
+
+            paddingTop: () =>
+              6,
+
+            paddingBottom:
+              () => 6,
           },
+
+          margin: [
+            0,
+            0,
+            0,
+            5,
+          ],
         },
       ],
+
+      // ========================================================
+      // FOOTER
+      // ========================================================
       footer: () => ({
-        margin: [22, 8, 22, 0],
+        margin: [
+          22,
+          8,
+          22,
+          0,
+        ],
+
         stack: [
-          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 551, y2: 0, lineWidth: 0.7, lineColor: navy }], margin: [0, 0, 0, 8] },
+          {
+            canvas: [
+              {
+                type: "line",
+
+                x1: 0,
+                y1: 0,
+
+                x2: 551,
+                y2: 0,
+
+                lineWidth:
+                  0.7,
+
+                lineColor:
+                  COLORS.mainHeader,
+              },
+            ],
+
+            margin: [
+              0,
+              0,
+              0,
+              8,
+            ],
+          },
+
           {
             columns: [
               {
                 stack: [
-                  { text: "Howard Johnson by Wyndham", bold: true, color: navy, fontSize: 8 },
-                  { text: "Hospitality with a Heart", color: "#64748B", fontSize: 7 },
+                  {
+                    text:
+                      "Powered by HotelOps",
+
+                    bold: true,
+
+                    color:
+                      COLORS.mainHeader,
+
+                    fontSize: 8,
+                  },
+
+                
                 ],
               },
+
               {
-                width: 190,
+                width: 130,
+
                 stack: [
-                  { text: `Generated On   :  ${generatedOn}`, fontSize: 7, color: navy },
-                  { text: "Generated By   :  System", fontSize: 7, color: navy },
+                  {
+                    text: `Generated On   :  ${generatedOn}`,
+
+                    fontSize: 7,
+
+                    color:
+                      COLORS.label,
+                  },
+
+                 
                 ],
               },
             ],
           },
         ],
       }),
+
+      // ========================================================
+      // STYLES
+      // ========================================================
       styles: {
-        title: { fontSize: 22, bold: true, color: navy },
-        fieldLabel: { fontSize: 9, bold: true, color: navy },
-        fieldValue: { fontSize: 9, color: "#10234A" },
-        tableHeader: { fontSize: 9, bold: true, color: navy, fillColor: labelFill, margin: [0, 1, 0, 1] },
-        approvalRole: { fontSize: 9, bold: true, color: "#10234A" },
+        title: {
+          fontSize: 18,
+
+          bold: true,
+
+          color:
+            COLORS.mainHeader,
+        },
+
+        fieldLabel: {
+          fontSize: 9,
+
+          bold: true,
+
+          color:
+            COLORS.label,
+        },
+
+        fieldValue: {
+          fontSize: 9,
+
+          color:
+            COLORS.value,
+        },
+
+        descriptionValue: {
+          fontSize: 9,
+
+          lineHeight: 1.25,
+
+          color:
+            COLORS.value,
+        },
+
+        totalValue: {
+          fontSize: 9,
+
+          bold: true,
+
+          color:
+            COLORS.value,
+        },
+
+        tableHeader: {
+          fontSize: 9,
+
+          bold: true,
+
+          color:
+            COLORS.label,
+
+          fillColor:
+            COLORS.tableHeaderBackground,
+
+          margin: [
+            3,
+            2,
+            3,
+            2,
+          ],
+        },
+
+        approvalRole: {
+          fontSize: 9,
+
+          bold: true,
+
+          color:
+            COLORS.value,
+        },
+
+        approvalValue: {
+          fontSize: 9,
+
+          color:
+            COLORS.value,
+        },
       },
     };
 
-    const pdfBuffer = await new Promise((resolve, reject) => {
-      try {
-        const pdfDocument = new PdfPrinter(
-          CAPEX_DETAIL_PDF_FONTS,
-        ).createPdfKitDocument(documentDefinition);
-        const chunks = [];
-        pdfDocument.on("data", (chunk) => chunks.push(chunk));
-        pdfDocument.on("end", () => resolve(Buffer.concat(chunks)));
-        pdfDocument.on("error", reject);
-        pdfDocument.end();
-      } catch (error) {
-        reject(error);
-      }
-    });
+    // ==========================================================
+    // CREATE PDF
+    // ==========================================================
+    const pdfBuffer =
+      await new Promise(
+        (
+          resolve,
+          reject,
+        ) => {
+          try {
+            const pdfDocument =
+              new PdfPrinter(
+                CAPEX_DETAIL_PDF_FONTS,
+              ).createPdfKitDocument(
+                documentDefinition,
+              );
+
+            const chunks = [];
+
+            pdfDocument.on(
+              "data",
+              (chunk) =>
+                chunks.push(
+                  chunk,
+                ),
+            );
+
+            pdfDocument.on(
+              "end",
+              () =>
+                resolve(
+                  Buffer.concat(
+                    chunks,
+                  ),
+                ),
+            );
+
+            pdfDocument.on(
+              "error",
+              reject,
+            );
+
+            pdfDocument.end();
+          } catch (error) {
+            reject(error);
+          }
+        },
+      );
 
     // ==========================================================
-    // Success Response
+    // SUCCESS
     // ==========================================================
-
     return {
       success: true,
-      message: "CAPEX PDF generated successfully.",
+
+      message:
+        "CAPEX PDF generated successfully.",
 
       FileName: `CAPEX-${capex.CapexNumber}.pdf`,
 
-      ContentType: "application/pdf",
+      ContentType:
+        "application/pdf",
 
-      PdfBuffer: pdfBuffer,
+      PdfBuffer:
+        pdfBuffer,
     };
   } catch (error) {
     console.error(
@@ -4693,7 +5525,9 @@ const generateCapexByIdPdf = async (data) => {
     );
 
     const retryResponse =
-      retryableDatabaseResponse(error);
+      retryableDatabaseResponse(
+        error,
+      );
 
     if (retryResponse) {
       return retryResponse;

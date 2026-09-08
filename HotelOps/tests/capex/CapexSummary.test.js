@@ -70,12 +70,13 @@ test("CAPEX detail PDF uses its dedicated pdfmake layout and configured approval
     )[0];
     assert.match(handler, /new PdfPrinter/);
     assert.match(handler, /CAPEX Detail Report/);
-    assert.match(handler, /text: "Approval"/);
-    assert.match(handler, /text: "Status"/);
-    assert.match(handler, /text: "Qty"/);
-    assert.match(handler, /text: "Remarks"/);
+    assert.match(handler, /text:\s*"Approval"/);
+    assert.match(handler, /text:\s*"Status"/);
+    assert.match(handler, /text:\s*"Qty"/);
+    assert.match(handler, /text:\s*"Remarks"/);
     assert.match(handler, /const fieldIcon =/);
     assert.match(handler, /await loadLogo\(capex\.OrganizationID\)/);
+    assert.doesNotMatch(handler, /const getStatusStyle =/);
     assert.doesNotMatch(handler, /statusTheme/);
     assert.doesNotMatch(handler, /await generatePdf\(/);
   } finally {
