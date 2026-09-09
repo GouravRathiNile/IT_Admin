@@ -31,30 +31,20 @@ const databaseFailure = (error, operation) => {
 // ============================Document Mapper Helper
 const mapDocument = (row) => ({
   EquipmentDocumentID: Number(row.equipmentdocumentid),
-
-  EquipmentID: Number(row.equipmentid),
-
-  OrganizationID: Number(row.organizationid),
-
   FileName: row.filename,
-
-  FilePath: row.filepath,
-
-  FileType: row.filetype,
-
-  FileSize: row.filesize == null ? null : Number(row.filesize),
-
   FileUrl: row.filepath ? generateUrl(row.filepath) : null,
-
-  CreatedDate: formatDate(row.createddate),
 });
 // =============================Equipment Mapper Helper
 const mapEquipment = (row) => ({
   EquipmentID: Number(row.equipmentid),
 
   OrganizationID: Number(row.organizationid),
+OrganizationShortName: row.organizationshortname || null,
 
-  Department: row.department,
+  DepartmentID: row.departmentid
+    ? Number(row.departmentid)
+    : null,
+DepartmentName: row.departmentname,
 
   Description: row.description,
 
@@ -158,143 +148,110 @@ const createEquipment = async (data) => {
 
   try {
     const organizationID = Number(data.OrganizationID);
-
-    if (!data.Description || !String(data.Description).trim()) {
-      return fail("Description is required.", 400);
-    }
+    const departmentID = Number(data.DepartmentID);
 
     await client.query("BEGIN");
 
     // ========================================================
-    // Validate Responsible Person
+    // Is Mandatory AMC - Default FALSE
     // ========================================================
 
-    const responsiblePerson = data.ResponsiblePerson ?? null;
-
-    if (responsiblePerson) {
-      const userResult = await client.query(
-        `
-            SELECT 1
-            FROM user_master
-            WHERE UserID = $1
-              AND IsDeleted = FALSE
-              AND IsActive = TRUE
-            LIMIT 1;
-            `,
-        [responsiblePerson],
-      );
-
-      if (!userResult.rows.length) {
-        await client.query("ROLLBACK");
-
-        return fail("Responsible person not found.", 400);
-      }
-    }
+    const isMandatoryAMC =
+      data.IsMandatoryAMC === true ||
+      data.IsMandatoryAMC === "true" ||
+      data.IsMandatoryAMC === 1 ||
+      data.IsMandatoryAMC === "1";
 
     // ========================================================
-    // Insert Master
+    // Insert Equipment Master
     // ========================================================
 
     const result = await client.query(
       `
-          INSERT INTO Engineering_Equipment_Entry_Master
-          (
-            OrganizationID,
-            Department,
-            Description,
-            SerialNumber,
-            TypeOfMachine,
-            Capacity,
-            ModelNumber,
-            Make,
-            Area,
-            CommissioningDate,
+      INSERT INTO Engineering_Equipment_Entry_Master
+      (
+        OrganizationID,
+        DepartmentID,
+        Description,
+        SerialNumber,
+        TypeOfMachine,
+        Capacity,
+        ModelNumber,
+        Make,
+        Area,
+        CommissioningDate,
 
-            WarrantyStartDate,
-            WarrantyEndDate,
-            WarrantyStatus,
+        WarrantyStartDate,
+        WarrantyEndDate,
+        WarrantyStatus,
 
-            AMCType,
-            AMCStartDate,
-            AMCEndDate,
-            AMCStatus,
-            AMCYearlyExpense,
-            IsMandatoryAMC,
+        AMCType,
+        AMCStartDate,
+        AMCEndDate,
+        AMCStatus,
+        AMCYearlyExpense,
+        IsMandatoryAMC,
 
-            ScheduleOfServicing,
-            ScheduleDay,
-            ResponsiblePerson,
+        ScheduleOfServicing,
+        ScheduleDay,
+        ResponsiblePerson,
 
-            Status,
-            Remarks,
+        Remarks,
+        IsDeleted,
 
-            IsDeleted,
-
-            CreatedBy,
-            CreatedDate
-          )
-
-          VALUES
-          (
-            $1,$2,$3,$4,$5,
-            $6,$7,$8,$9,$10,
-            $11,$12,$13,
-            $14,$15,$16,$17,$18,$19,
-            $20,$21,$22,
-            $23,$24,
-            FALSE,
-            $25,
-            CURRENT_TIMESTAMP
-          )
-
-          RETURNING *;
-          `,
+        CreatedBy,
+        CreatedDate
+      )
+      VALUES
+      (
+        $1,$2,$3,$4,$5,
+        $6,$7,$8,$9,$10,
+        $11,$12,$13,
+        $14,$15,$16,$17,$18,$19,
+        $20,$21,$22,
+        $23,
+        FALSE,
+        $24,
+        CURRENT_TIMESTAMP
+      )
+      RETURNING EquipmentID;
+      `,
       [
         organizationID,
-
-        data.Department || null,
+        departmentID,
 
         String(data.Description).trim(),
-
-        data.SerialNumber || null,
+        String(data.SerialNumber).trim(),
 
         data.TypeOfMachine || null,
-
         data.Capacity || null,
-
         data.ModelNumber || null,
-
         data.Make || null,
 
-        data.Area || null,
+        String(data.Area).trim(),
 
         data.CommissioningDate || null,
 
         data.WarrantyStartDate || null,
-
         data.WarrantyEndDate || null,
-
         data.WarrantyStatus || null,
 
         data.AMCType || null,
-
         data.AMCStartDate || null,
-
         data.AMCEndDate || null,
-
         data.AMCStatus || null,
+        String(data.AMCYearlyExpense ?? "").trim() === ""
+          ? null
+          : data.AMCYearlyExpense,
 
-        data.AMCYearlyExpense ?? null,
-
-        data.IsMandatoryAMC ?? false,
+        isMandatoryAMC,
 
         data.ScheduleOfServicing || null,
-
         data.ScheduleDay || null,
 
-        responsiblePerson,
-
-        data.Status || null,
+        String(data.ResponsiblePerson ?? "").trim() === ""
+          ? null
+          : data.ResponsiblePerson,
 
         data.Remarks || null,
 
@@ -305,50 +262,43 @@ const createEquipment = async (data) => {
     const equipmentID = Number(result.rows[0].equipmentid);
 
     // ========================================================
-    // Documents
+    // Insert Documents
     // ========================================================
 
-    const documents = Array.isArray(data.Documents) ? data.Documents : [];
+    const documents = Array.isArray(data.Documents)
+      ? data.Documents
+      : [];
 
     for (const document of documents) {
       await client.query(
         `
-          INSERT INTO Engineering_Equipment_Documents
-          (
-            EquipmentID,
-            OrganizationID,
-
-            FileName,
-            FilePath,
-            FileType,
-            FileSize,
-
-            IsDeleted,
-
-            CreatedBy,
-            CreatedDate
-          )
-
-          VALUES
-          (
-            $1,$2,$3,$4,$5,$6,
-            FALSE,
-            $7,
-            CURRENT_TIMESTAMP
-          );
-          `,
+        INSERT INTO Engineering_Equipment_Documents
+        (
+          EquipmentID,
+          OrganizationID,
+          FileName,
+          FilePath,
+          FileType,
+          FileSize,
+          IsDeleted,
+          CreatedBy,
+          CreatedDate
+        )
+        VALUES
+        (
+          $1,$2,$3,$4,$5,$6,
+          FALSE,
+          $7,
+          CURRENT_TIMESTAMP
+        );
+        `,
         [
           equipmentID,
           organizationID,
-
           document.FileName || null,
-
           document.FilePath || null,
-
           document.FileType || null,
-
           document.FileSize || null,
-
           data.UserID,
         ],
       );
@@ -356,11 +306,14 @@ const createEquipment = async (data) => {
 
     await client.query("COMMIT");
 
-    return ok("Engineering equipment created successfully.",);
+    return ok("Engineering equipment created successfully.");
   } catch (error) {
     await client.query("ROLLBACK");
 
-    return databaseFailure(error, "Create Engineering equipment");
+    return databaseFailure(
+      error,
+      "Create Engineering equipment",
+    );
   } finally {
     client.release();
   }
@@ -372,25 +325,35 @@ const getAllEquipment = async (data) => {
 
     const page = Math.max(Number(data.page) || 1, 1);
 
-    const pageSize = Math.min(Math.max(Number(data.PageSize) || 10, 1), 100);
+    const pageSize = Math.min(
+      Math.max(Number(data.PageSize) || 10, 1),
+      100,
+    );
 
     const offset = (page - 1) * pageSize;
 
     const values = [organizationID];
 
-    const conditions = ["e.OrganizationID = $1", "e.IsDeleted = FALSE"];
+    const conditions = [
+      "e.OrganizationID = $1",
+      "e.IsDeleted = FALSE",
+    ];
 
-    if (data.Department) {
-      values.push(data.Department);
+    // ========================================================
+    // DepartmentID Filter
+    // ========================================================
 
-      conditions.push(`e.Department = $${values.length}`);
+    if (data.DepartmentID) {
+      values.push(Number(data.DepartmentID));
+
+      conditions.push(
+        `e.DepartmentID = $${values.length}`,
+      );
     }
 
-    if (data.Status) {
-      values.push(data.Status);
-
-      conditions.push(`e.Status = $${values.length}`);
-    }
+    // ========================================================
+    // Other Filters
+    // ========================================================
 
     for (const [parameter, column, operator] of [
       ["WarrantyStatus", "WarrantyStatus", "="],
@@ -403,88 +366,126 @@ const getAllEquipment = async (data) => {
 
       if (!value) continue;
 
-      values.push(operator === "ILIKE" ? `%${value}%` : value);
-      conditions.push(`e.${column} ${operator} $${values.length}`);
+      values.push(
+        operator === "ILIKE"
+          ? `%${value}%`
+          : value,
+      );
+
+      conditions.push(
+        `e.${column} ${operator} $${values.length}`,
+      );
     }
 
+    // ========================================================
+    // Search
+    // ========================================================
+
     if (data.Search) {
-      values.push(`%${String(data.Search).trim()}%`);
+      values.push(
+        `%${String(data.Search).trim()}%`,
+      );
 
       conditions.push(
         `
-          (
-            e.Description ILIKE $${values.length}
-            OR e.SerialNumber ILIKE $${values.length}
-            OR e.ModelNumber ILIKE $${values.length}
-            OR e.Make ILIKE $${values.length}
-            OR e.Area ILIKE $${values.length}
-          )
-          `,
+        (
+          e.Description ILIKE $${values.length}
+          OR e.SerialNumber ILIKE $${values.length}
+          OR e.ModelNumber ILIKE $${values.length}
+          OR e.Make ILIKE $${values.length}
+          OR e.Area ILIKE $${values.length}
+        )
+        `,
       );
     }
 
     const where = conditions.join(" AND ");
 
+    // ========================================================
+    // Total Count
+    // ========================================================
+
     const countResult = await pool.query(
       `
-          SELECT
-            COUNT(*)::bigint
-              AS TotalCount
-
-          FROM Engineering_Equipment_Entry_Master e
-
-          WHERE ${where};
-          `,
+      SELECT
+        COUNT(*)::bigint AS TotalCount
+      FROM Engineering_Equipment_Entry_Master e
+      WHERE ${where};
+      `,
       values,
     );
 
-    const totalCount = Number(countResult.rows[0].totalcount);
-
-    const listValues = [...values, pageSize, offset];
-
-    const result = await pool.query(
-      `
-          SELECT
-            e.*,
-
-            u.FullName
-              AS ResponsiblePersonName
-
-          FROM Engineering_Equipment_Entry_Master e
-
-          LEFT JOIN user_master u
-            ON u.UserID =
-               e.ResponsiblePerson
-           AND u.IsDeleted = FALSE
-
-          WHERE ${where}
-
-          ORDER BY
-            e.EquipmentID DESC
-
-          LIMIT $${listValues.length - 1}
-          OFFSET $${listValues.length};
-          `,
-      listValues,
+    const totalCount = Number(
+      countResult.rows[0].totalcount,
     );
+
+    // ========================================================
+    // Equipment List
+    // ========================================================
+
+    const listValues = [
+      ...values,
+      pageSize,
+      offset,
+    ];
+
+   const result = await pool.query(
+  `
+  SELECT
+    e.*,
+
+    om.ShortName AS OrganizationShortName,
+
+    d.DepartmentName AS DepartmentName,
+
+    u.FullName AS ResponsiblePersonName
+
+  FROM Engineering_Equipment_Entry_Master e
+
+  LEFT JOIN Organization_Master om
+    ON om.OrganizationID = e.OrganizationID
+   AND om.IsDeleted = FALSE
+
+  LEFT JOIN department_master d
+    ON d.DepartmentID = e.DepartmentID
+   AND d.OrganizationID = e.OrganizationID
+   AND d.IsDeleted = FALSE
+
+  LEFT JOIN user_master u
+    ON u.UserID = e.ResponsiblePerson
+   AND u.IsDeleted = FALSE
+
+  WHERE ${where}
+
+  ORDER BY e.EquipmentID DESC
+
+  LIMIT $${listValues.length - 1}
+  OFFSET $${listValues.length};
+  `,
+  listValues,
+);
 
     let records = result.rows.map(mapEquipment);
 
-    records = await attachDocuments(records);
 
-    return ok("Engineering equipment fetched successfully.", records, {
-      TotalCount: totalCount,
-
-      PageCount: records.length,
-
-      CurrentPage: page,
-
-      PageSize: pageSize,
-
-      TotalPages: Math.ceil(totalCount / pageSize),
-    });
+    return ok(
+      "Engineering equipment fetched successfully.",
+      records,
+      {
+        TotalCount: totalCount,
+        PageCount: records.length,
+        CurrentPage: page,
+        PageSize: pageSize,
+        TotalPages: Math.ceil(
+          totalCount / pageSize,
+        ),
+      },
+    );
   } catch (error) {
-    return databaseFailure(error, "Fetch Engineering equipment");
+    return databaseFailure(
+      error,
+      "Fetch Engineering equipment",
+    );
   }
 };
 // ============================================================GET Equipment BY ID
@@ -498,25 +499,36 @@ const getEquipmentById = async (data) => {
 
     const result = await pool.query(
       `
-          SELECT
-            e.*,
+      SELECT
+        e.*,
 
-            u.FullName
-              AS ResponsiblePersonName
+        om.ShortName AS OrganizationShortName,
 
-          FROM Engineering_Equipment_Entry_Master e
+        d.DepartmentName AS DepartmentName,
 
-          LEFT JOIN user_master u
-            ON u.UserID =
-               e.ResponsiblePerson
-           AND u.IsDeleted = FALSE
+        u.FullName AS ResponsiblePersonName
 
-          WHERE
-            e.EquipmentID = $1
-            AND e.IsDeleted = FALSE
+      FROM Engineering_Equipment_Entry_Master e
 
-          LIMIT 1;
-          `,
+      LEFT JOIN Organization_Master om
+        ON om.OrganizationID = e.OrganizationID
+       AND om.IsDeleted = FALSE
+
+      LEFT JOIN department_master d
+        ON d.DepartmentID = e.DepartmentID
+       AND d.OrganizationID = e.OrganizationID
+       AND d.IsDeleted = FALSE
+
+      LEFT JOIN user_master u
+        ON u.UserID = e.ResponsiblePerson
+       AND u.IsDeleted = FALSE
+
+      WHERE
+        e.EquipmentID = $1
+        AND e.IsDeleted = FALSE
+
+      LIMIT 1;
+      `,
       [equipmentID],
     );
 
@@ -526,16 +538,23 @@ const getEquipmentById = async (data) => {
 
     let records = [mapEquipment(result.rows[0])];
 
+    // Detail API me documents bhi aayenge
     records = await attachDocuments(records);
 
-    return ok("Engineering equipment fetched successfully.", records[0]);
+    return ok(
+      "Engineering equipment fetched successfully.",
+      records[0],
+    );
   } catch (error) {
-    return databaseFailure(error, "Fetch Engineering equipment");
+    return databaseFailure(
+      error,
+      "Fetch Engineering equipment",
+    );
   }
 };
 // ============================================================UPDATE Equipment
 const updateFields = {
-  Department: "Department",
+  DepartmentID: "DepartmentID",
 
   Description: "Description",
 
@@ -577,8 +596,6 @@ const updateFields = {
 
   ResponsiblePerson: "ResponsiblePerson",
 
-  Status: "Status",
-
   Remarks: "Remarks",
 };
 const updateEquipment = async (data) => {
@@ -586,7 +603,6 @@ const updateEquipment = async (data) => {
 
   try {
     const equipmentID = Number(data.EquipmentID);
-
     const organizationID = Number(data.OrganizationID);
 
     if (!Number.isInteger(equipmentID) || equipmentID <= 0) {
@@ -595,18 +611,19 @@ const updateEquipment = async (data) => {
 
     await client.query("BEGIN");
 
+    // ========================================================
+    // Check Equipment
+    // ========================================================
+
     const existing = await client.query(
       `
-          SELECT EquipmentID
-
-          FROM Engineering_Equipment_Entry_Master
-
-          WHERE EquipmentID = $1
-            AND OrganizationID = $2
-            AND IsDeleted = FALSE
-
-          FOR UPDATE;
-          `,
+      SELECT EquipmentID
+      FROM Engineering_Equipment_Entry_Master
+      WHERE EquipmentID = $1
+        AND OrganizationID = $2
+        AND IsDeleted = FALSE
+      FOR UPDATE;
+      `,
       [equipmentID, organizationID],
     );
 
@@ -616,11 +633,16 @@ const updateEquipment = async (data) => {
       return fail("Engineering equipment not found.", 404);
     }
 
+    // ========================================================
+    // Update Fields
+    // ========================================================
+
     const changes =
-      data.Changes && typeof data.Changes === "object" ? data.Changes : {};
+      data.Changes && typeof data.Changes === "object"
+        ? data.Changes
+        : {};
 
     const assignments = [];
-
     const values = [];
 
     for (const [field, column] of Object.entries(updateFields)) {
@@ -628,48 +650,75 @@ const updateEquipment = async (data) => {
         continue;
       }
 
-      const value = changes[field];
+      let value = changes[field];
 
-      values.push(value === "" ? null : value);
+      // ======================================================
+      // Boolean
+      // ======================================================
 
-      assignments.push(`${column} = $${values.length}`);
+      if (field === "IsMandatoryAMC") {
+        value =
+          value === true ||
+          value === "true" ||
+          value === 1 ||
+          value === "1";
+      }
+
+      // ======================================================
+      // Numeric Blank -> NULL
+      // ======================================================
+
+      const isBlankNumeric =
+        (
+          field === "AMCYearlyExpense" ||
+          field === "ResponsiblePerson" ||
+          field === "DepartmentID"
+        ) &&
+        String(value ?? "").trim() === "";
+
+      if (isBlankNumeric) {
+        value = null;
+      }
+
+      // ======================================================
+      // Other Blank Values -> NULL
+      // ======================================================
+
+      if (value === "") {
+        value = null;
+      }
+
+      values.push(value);
+
+      assignments.push(
+        `${column} = $${values.length}`,
+      );
     }
 
     if (assignments.length) {
       values.push(data.UserID);
-
       const modifiedByIndex = values.length;
 
       values.push(equipmentID);
-
       const equipmentIndex = values.length;
 
       values.push(organizationID);
-
       const organizationIndex = values.length;
 
       await client.query(
         `
-          UPDATE Engineering_Equipment_Entry_Master
+        UPDATE Engineering_Equipment_Entry_Master
 
-          SET
-            ${assignments.join(", ")},
+        SET
+          ${assignments.join(", ")},
 
-            ModifiedBy =
-              $${modifiedByIndex},
+          ModifiedBy = $${modifiedByIndex},
+          ModifiedDate = CURRENT_TIMESTAMP
 
-            ModifiedDate =
-              CURRENT_TIMESTAMP
-
-          WHERE EquipmentID =
-                $${equipmentIndex}
-
-            AND OrganizationID =
-                $${organizationIndex}
-
-            AND IsDeleted =
-                FALSE;
-          `,
+        WHERE EquipmentID = $${equipmentIndex}
+          AND OrganizationID = $${organizationIndex}
+          AND IsDeleted = FALSE;
+        `,
         values,
       );
     }
@@ -679,36 +728,38 @@ const updateEquipment = async (data) => {
     // ========================================================
 
     const deleteIDs = Array.isArray(data.DeleteDocumentIDs)
-      ? data.DeleteDocumentIDs.map(Number).filter(
-          (id) => Number.isInteger(id) && id > 0,
-        )
+      ? data.DeleteDocumentIDs
+          .map(Number)
+          .filter(
+            (id) =>
+              Number.isInteger(id) &&
+              id > 0,
+          )
       : [];
 
     if (deleteIDs.length) {
       await client.query(
         `
-          UPDATE Engineering_Equipment_Documents
+        UPDATE Engineering_Equipment_Documents
 
-          SET
-            IsDeleted = TRUE,
+        SET
+          IsDeleted = TRUE,
+          DeletedBy = $1,
+          DeletedDate = CURRENT_TIMESTAMP,
+          ModifiedBy = $1,
+          ModifiedDate = CURRENT_TIMESTAMP
 
-            DeletedBy = $1,
-
-            DeletedDate =
-              CURRENT_TIMESTAMP,
-
-            ModifiedBy = $1,
-
-            ModifiedDate =
-              CURRENT_TIMESTAMP
-
-          WHERE EquipmentID = $2
-            AND OrganizationID = $3
-            AND EquipmentDocumentID =
-                ANY($4::bigint[])
-            AND IsDeleted = FALSE;
-          `,
-        [data.UserID, equipmentID, organizationID, deleteIDs],
+        WHERE EquipmentID = $2
+          AND OrganizationID = $3
+          AND EquipmentDocumentID = ANY($4::bigint[])
+          AND IsDeleted = FALSE;
+        `,
+        [
+          data.UserID,
+          equipmentID,
+          organizationID,
+          deleteIDs,
+        ],
       );
     }
 
@@ -716,45 +767,40 @@ const updateEquipment = async (data) => {
     // Add New Documents
     // ========================================================
 
-    const documents = Array.isArray(data.Documents) ? data.Documents : [];
+    const documents = Array.isArray(data.Documents)
+      ? data.Documents
+      : [];
 
     for (const document of documents) {
       await client.query(
         `
-          INSERT INTO Engineering_Equipment_Documents
-          (
-            EquipmentID,
-            OrganizationID,
-
-            FileName,
-            FilePath,
-            FileType,
-            FileSize,
-
-            IsDeleted,
-
-            CreatedBy,
-            CreatedDate
-          )
-
-          VALUES
-          (
-            $1,$2,$3,$4,$5,$6,
-            FALSE,
-            $7,
-            CURRENT_TIMESTAMP
-          );
-          `,
+        INSERT INTO Engineering_Equipment_Documents
+        (
+          EquipmentID,
+          OrganizationID,
+          FileName,
+          FilePath,
+          FileType,
+          FileSize,
+          IsDeleted,
+          CreatedBy,
+          CreatedDate
+        )
+        VALUES
+        (
+          $1,$2,$3,$4,$5,$6,
+          FALSE,
+          $7,
+          CURRENT_TIMESTAMP
+        );
+        `,
         [
           equipmentID,
           organizationID,
 
           document.FileName || null,
-
           document.FilePath || null,
-
           document.FileType || null,
-
           document.FileSize || null,
 
           data.UserID,
@@ -764,13 +810,16 @@ const updateEquipment = async (data) => {
 
     await client.query("COMMIT");
 
-    return ok("Engineering equipment updated successfully.", {
-      EquipmentID: equipmentID,
-    });
+    return ok(
+      "Engineering equipment updated successfully."
+    );
   } catch (error) {
     await client.query("ROLLBACK");
 
-    return databaseFailure(error, "Update Engineering equipment");
+    return databaseFailure(
+      error,
+      "Update Engineering equipment",
+    );
   } finally {
     client.release();
   }
@@ -782,38 +831,31 @@ const deleteEquipment = async (data) => {
   try {
     const equipmentID = Number(data.EquipmentID);
 
-    const organizationID = Number(data.OrganizationID);
-
     if (!Number.isInteger(equipmentID) || equipmentID <= 0) {
       return fail("Valid EquipmentID is required.", 400);
     }
 
     await client.query("BEGIN");
 
+    // ========================================================
+    // Soft Delete Equipment
+    // ========================================================
+
     const result = await client.query(
       `
-          UPDATE Engineering_Equipment_Entry_Master
+      UPDATE Engineering_Equipment_Entry_Master
 
-          SET
-            IsDeleted = TRUE,
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
 
-            DeletedBy = $1,
+      WHERE EquipmentID = $2
+        AND IsDeleted = FALSE
 
-            DeletedDate =
-              CURRENT_TIMESTAMP,
-
-            ModifiedBy = $1,
-
-            ModifiedDate =
-              CURRENT_TIMESTAMP
-
-          WHERE EquipmentID = $2
-            AND OrganizationID = $3
-            AND IsDeleted = FALSE
-
-          RETURNING EquipmentID;
-          `,
-      [data.UserID, equipmentID, organizationID],
+      RETURNING EquipmentID;
+      `,
+      [data.UserID, equipmentID],
     );
 
     if (!result.rows.length) {
@@ -822,55 +864,47 @@ const deleteEquipment = async (data) => {
       return fail("Engineering equipment not found.", 404);
     }
 
-    // Soft delete documents
+    // ========================================================
+    // Soft Delete Equipment Documents
+    // ========================================================
+
     await client.query(
       `
-        UPDATE Engineering_Equipment_Documents
+      UPDATE Engineering_Equipment_Documents
 
-        SET
-          IsDeleted = TRUE,
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
 
-          DeletedBy = $1,
-
-          DeletedDate =
-            CURRENT_TIMESTAMP,
-
-          ModifiedBy = $1,
-
-          ModifiedDate =
-            CURRENT_TIMESTAMP
-
-        WHERE EquipmentID = $2
-          AND OrganizationID = $3
-          AND IsDeleted = FALSE;
-        `,
-      [data.UserID, equipmentID, organizationID],
+      WHERE EquipmentID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [data.UserID, equipmentID],
     );
 
-    // Soft delete maintenance too
+    // ========================================================
+    // Soft Delete Maintenance Details
+    // ========================================================
+
     await client.query(
       `
-        UPDATE Engineering_Maintenance_Details
+      UPDATE Engineering_Maintenance_Details
 
-        SET
-          IsDeleted = TRUE,
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
 
-          DeletedBy = $1,
-
-          DeletedDate =
-            CURRENT_TIMESTAMP,
-
-          ModifiedBy = $1,
-
-          ModifiedDate =
-            CURRENT_TIMESTAMP
-
-        WHERE EquipmentID = $2
-          AND OrganizationID = $3
-          AND IsDeleted = FALSE;
-        `,
-      [data.UserID, equipmentID, organizationID],
+      WHERE EquipmentID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [data.UserID, equipmentID],
     );
+
+    // ========================================================
+    // Commit
+    // ========================================================
 
     await client.query("COMMIT");
 
@@ -880,7 +914,10 @@ const deleteEquipment = async (data) => {
   } catch (error) {
     await client.query("ROLLBACK");
 
-    return databaseFailure(error, "Delete Engineering equipment");
+    return databaseFailure(
+      error,
+      "Delete Engineering equipment",
+    );
   } finally {
     client.release();
   }
@@ -925,6 +962,87 @@ const getEquipmentDescriptions = async (data) => {
     );
   }
 };
+// ============================================================GET Serial Number
+const getEquipmentSerialNumbers = async (data) => {
+  try {
+    const organizationID = Number(data.OrganizationID);
+
+    if (!Number.isInteger(organizationID) || organizationID <= 0) {
+      return fail("Valid OrganizationID is required.", 400);
+    }
+
+    const result = await pool.query(
+      `
+      SELECT DISTINCT SerialNumber
+      FROM Engineering_Equipment_Entry_Master
+      WHERE OrganizationID = $1
+        AND IsDeleted = FALSE
+        AND SerialNumber IS NOT NULL
+        AND TRIM(SerialNumber) <> ''
+      ORDER BY SerialNumber ASC;
+      `,
+      [organizationID],
+    );
+
+    const records = result.rows.map((row) => ({
+      SerialNumber: row.serialnumber,
+    }));
+
+    return ok(
+      "Equipment serial numbers fetched successfully.",
+      records,
+      {
+        Count: records.length,
+      },
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch equipment serial numbers",
+    );
+  }
+};
+// ============================================================GET Areas
+const getEquipmentAreas = async (data) => {
+  try {
+    const organizationID = Number(data.OrganizationID);
+
+    if (!Number.isInteger(organizationID) || organizationID <= 0) {
+      return fail("Valid OrganizationID is required.", 400);
+    }
+
+    const result = await pool.query(
+      `
+      SELECT DISTINCT Area
+      FROM Engineering_Equipment_Entry_Master
+      WHERE OrganizationID = $1
+        AND IsDeleted = FALSE
+        AND Area IS NOT NULL
+        AND TRIM(Area) <> ''
+      ORDER BY Area ASC;
+      `,
+      [organizationID],
+    );
+
+    const records = result.rows.map((row) => ({
+      Area: row.area,
+    }));
+
+    return ok(
+      "Equipment areas fetched successfully.",
+      records,
+      {
+        Count: records.length,
+      },
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch equipment areas",
+    );
+  }
+};
+
 // ============================================================EXPORTS
 module.exports = {
   createEquipment,
@@ -933,4 +1051,6 @@ module.exports = {
   updateEquipment,
   deleteEquipment,
   getEquipmentDescriptions,
+  getEquipmentSerialNumbers,
+  getEquipmentAreas
 };
