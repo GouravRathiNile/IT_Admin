@@ -7,7 +7,9 @@ const {
   getEquipmentById,
   updateEquipment,
   deleteEquipment,
-  getEquipmentDescriptions
+  getEquipmentDescriptions,
+  getEquipmentSerialNumbers,
+  getEquipmentAreas,
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -15,8 +17,11 @@ const router = express.Router();
 router.post("/CreateEquipment",authenticateToken,upload.array("Documents", 10),createEquipment,);
 router.get("/EquipmentList", authenticateToken, getAllEquipment);
 router.get("/EquipmentById/:id", authenticateToken, getEquipmentById);
-router.put( "/UpdateEquipment/:id",authenticateToken,upload.array("Documents", 10),updateEquipment,);
-router.delete("/DeleteEquipment/:id", authenticateToken, deleteEquipment);
+router.put( "/UpdateEquipment",authenticateToken,upload.array("Documents", 10),updateEquipment,);
+router.delete("/DeleteEquipment", authenticateToken, deleteEquipment);
 router.get("/EquipmentNames", authenticateToken, getEquipmentDescriptions);
+router.get("/EquipmentSerialNo",authenticateToken,getEquipmentSerialNumbers,);
+router.get("/EquipmentAreas",authenticateToken,getEquipmentAreas,);
+// ================================================================Breakdown of Equipment
 
 module.exports = router;

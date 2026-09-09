@@ -94,7 +94,7 @@ exports.createEquipment = async (req, res) => {
   try {
     const {
       OrganizationID,
-      Department,
+      DepartmentID,
       Description,
       SerialNumber,
       TypeOfMachine,
@@ -119,9 +119,12 @@ exports.createEquipment = async (req, res) => {
       ScheduleDay,
       ResponsiblePerson,
 
-      Status,
       Remarks,
     } = req.body || {};
+
+    // ============================================================
+    // Required Fields
+    // ============================================================
 
     if (!OrganizationID) {
       return res.status(400).json({
@@ -130,14 +133,43 @@ exports.createEquipment = async (req, res) => {
       });
     }
 
-    if (!Description || !String(Description).trim()) {
+    if (!DepartmentID) {
       return res.status(400).json({
         success: false,
-        message: "Description is required.",
+        message: "DepartmentID is required.",
       });
     }
 
+    if (!Description || !String(Description).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Equipment Name is required.",
+      });
+    }
+
+    if (!SerialNumber || !String(SerialNumber).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "SerialNumber is required.",
+      });
+    }
+
+    if (!Area || !String(Area).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Area is required.",
+      });
+    }
+
+    // ============================================================
+    // Upload Documents
+    // ============================================================
+
     const Documents = await uploadDocuments(req.files || []);
+
+    // ============================================================
+    // RabbitMQ
+    // ============================================================
 
     return sendQueueResponse(
       req,
@@ -145,14 +177,14 @@ exports.createEquipment = async (req, res) => {
       "CREATE_ENGINEERING_EQUIPMENT",
       {
         OrganizationID,
-        Department,
-        Description,
-        SerialNumber,
+        DepartmentID,
+        Description: String(Description).trim(),
+        SerialNumber: String(SerialNumber).trim(),
         TypeOfMachine,
         Capacity,
         ModelNumber,
         Make,
-        Area,
+        Area: String(Area).trim(),
         CommissioningDate,
 
         WarrantyStartDate,
@@ -170,7 +202,6 @@ exports.createEquipment = async (req, res) => {
         ScheduleDay,
         ResponsiblePerson,
 
-        Status,
         Remarks,
 
         Documents,
@@ -187,7 +218,7 @@ exports.getAllEquipment = async (req, res) => {
     const result = await EngineeringService.getAllEquipment({
       OrganizationID: req.query.OrganizationID || null,
 
-      Department: req.query.Department || null,
+      DepartmentID: req.query.DepartmentID || req.query.Department || null,
       Status: req.query.Status || null,
 
       WarrantyStatus: req.query.WarrantyStatus || null,
@@ -227,17 +258,24 @@ exports.getEquipmentById = async (req, res) => {
 // ============================================================UPDATE Equipment
 exports.updateEquipment = async (req, res) => {
   try {
-    const Documents = await uploadDocuments(req.files || []);
+    const Documents = await uploadDocuments(
+      req.files || [],
+    );
 
-    let DeleteDocumentIDs = req.body?.DeleteDocumentIDs || [];
+    let DeleteDocumentIDs =
+      req.body?.DeleteDocumentIDs || [];
 
     if (typeof DeleteDocumentIDs === "string") {
       try {
-        DeleteDocumentIDs = JSON.parse(DeleteDocumentIDs);
+        DeleteDocumentIDs = JSON.parse(
+          DeleteDocumentIDs,
+        );
       } catch {
-        DeleteDocumentIDs = DeleteDocumentIDs.split(",")
-          .map(Number)
-          .filter(Boolean);
+        DeleteDocumentIDs =
+          DeleteDocumentIDs
+            .split(",")
+            .map(Number)
+            .filter(Boolean);
       }
     }
 
@@ -245,30 +283,41 @@ exports.updateEquipment = async (req, res) => {
       ...req.body,
     };
 
+    delete Changes.EquipmentID;
+    delete Changes.OrganizationID;
     delete Changes.DeleteDocumentIDs;
 
-    return sendQueueResponse(req, res, "UPDATE_ENGINEERING_EQUIPMENT", {
-      EquipmentID: req.params.id,
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_EQUIPMENT",
+      {
+        EquipmentID: req.body.EquipmentID,
 
-      OrganizationID: req.body.OrganizationID,
+        OrganizationID:
+          req.body.OrganizationID,
 
-      Changes,
+        Changes,
 
-      Documents,
+        Documents,
 
-      DeleteDocumentIDs,
-    });
+        DeleteDocumentIDs,
+      },
+    );
   } catch (error) {
     return handleError(error, res);
   }
 };
 // ============================================================DELETE Equipment
 exports.deleteEquipment = async (req, res) => {
-  return sendQueueResponse(req, res, "DELETE_ENGINEERING_EQUIPMENT", {
-    EquipmentID: req.params.id,
-
-    OrganizationID: req.body?.OrganizationID || req.query?.OrganizationID,
-  });
+  return sendQueueResponse(
+    req,
+    res,
+    "DELETE_ENGINEERING_EQUIPMENT",
+    {
+      EquipmentID: req.body.EquipmentID,
+    },
+  );
 };
 // ============================================================GET Equipment Descriptions(Names)
 exports.getEquipmentDescriptions = async (req, res) => {
@@ -282,6 +331,36 @@ exports.getEquipmentDescriptions = async (req, res) => {
         UserType: req.user.UserType,
         DepartmentName: req.user.DepartmentName,
         LoginType: req.user.LoginType,
+      });
+
+    return res
+      .status(result.statusCode || (result.success ? 200 : 400))
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================GET Serial Number
+exports.getEquipmentSerialNumbers = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getEquipmentSerialNumbers({
+        OrganizationID: req.query.OrganizationID,
+      });
+
+    return res
+      .status(result.statusCode || (result.success ? 200 : 400))
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================GET Areas
+exports.getEquipmentAreas = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getEquipmentAreas({
+        OrganizationID: req.query.OrganizationID,
       });
 
     return res
