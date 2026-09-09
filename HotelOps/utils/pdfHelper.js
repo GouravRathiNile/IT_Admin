@@ -53,22 +53,40 @@ const officialNileLogoUrl = async () => {
   } catch (_error) { return null; }
 };
 
+const imageMimeType = (buffer) => {
+  if (buffer.length >= 8
+    && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47
+    && buffer[4] === 0x0D && buffer[5] === 0x0A && buffer[6] === 0x1A && buffer[7] === 0x0A) return "image/png";
+  if (buffer.length >= 3 && buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return "image/jpeg";
+  return null;
+};
+
 const fetchLogo = async (url) => {
   if (!url || typeof fetch !== "function") return null;
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
-    if (!response.ok) return null;
-    const type = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
-    if (!["image/png", "image/jpeg", "image/jpg"].includes(type)) return null;
-    return `data:${type};base64,${Buffer.from(await response.arrayBuffer()).toString("base64")}`;
-  } catch (_error) { return null; }
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      if (!response.ok) continue;
+      const declaredLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > 5 * 1024 * 1024) return null;
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length > 5 * 1024 * 1024) return null;
+      const type = imageMimeType(buffer);
+      if (!type) return null;
+      return `data:${type};base64,${buffer.toString("base64")}`;
+    } catch (_error) {
+      // A second bounded attempt handles transient storage/network failures.
+    }
+  }
+  return null;
 };
 
 const loadLogo = async (organizationId, suppliedUrl) => {
   const organizationUrl = suppliedUrl || await organizationLogoUrl(organizationId);
   const organizationLogo = await fetchLogo(organizationUrl);
   if (organizationLogo) return organizationLogo;
-  return fetchLogo(await officialNileLogoUrl());
+  const fallbackUrl = await officialNileLogoUrl();
+  return fallbackUrl && fallbackUrl !== organizationUrl ? fetchLogo(fallbackUrl) : null;
 };
 
 const buildHeader = async (title, organizationId, logoUrl) => {
