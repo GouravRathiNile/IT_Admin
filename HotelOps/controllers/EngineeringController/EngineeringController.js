@@ -69,6 +69,7 @@ const sendQueueResponse = async (
     return handleError(error, res);
   }
 };
+// ============================================================================================Equipment Entries
 // ===========================================================Upload Multiple Documents Helper
 const uploadDocuments = async (files = []) => {
   const documents = [];
@@ -370,3 +371,5 @@ exports.getEquipmentAreas = async (req, res) => {
     return handleError(error, res);
   }
 };
+// ============================================================================================Breakdown of Equipment Entries
+
