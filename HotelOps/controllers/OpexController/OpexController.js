@@ -17,6 +17,24 @@ const isPositiveInteger = (value) => {
     && Number.isSafeInteger(Number(normalized))
     && Number(normalized) > 0;
 };
+const optionalIsoDate = (value, fieldName) => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return null;
+
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(normalized) ||
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== normalized
+  ) {
+    throw new AppError(
+      `${fieldName} must be a valid date in YYYY-MM-DD format`,
+      STATUS_CODES.BAD_REQUEST,
+    );
+  }
+
+  return normalized;
+};
 const positiveNumber = (value, fieldName) => {
   const normalized = String(value ?? "").trim();
   const number = Number(normalized);
@@ -240,6 +258,16 @@ exports.getAllOpex = async (req, res) => {
         ? String(req.query.Department).trim()
         : null;
 
+    const FromDate = optionalIsoDate(req.query.FromDate, "FromDate");
+    const ToDate = optionalIsoDate(req.query.ToDate, "ToDate");
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "FromDate cannot be greater than ToDate",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
     // ================= Pagination =================
 
     const page = Number(req.query.page) || 1;
@@ -266,6 +294,8 @@ exports.getAllOpex = async (req, res) => {
   OrganizationID,
   Department,
   Status,
+  FromDate,
+  ToDate,
   page,
   PageSize,
 });
@@ -736,6 +766,15 @@ const reportFilters = (req) => {
     String(req.query.Department).trim() !== ""
       ? String(req.query.Department).trim()
       : null;
+  const FromDate = optionalIsoDate(req.query?.FromDate, "FromDate");
+  const ToDate = optionalIsoDate(req.query?.ToDate, "ToDate");
+
+  if (FromDate && ToDate && FromDate > ToDate) {
+    throw new AppError(
+      "FromDate cannot be greater than ToDate",
+      STATUS_CODES.BAD_REQUEST,
+    );
+  }
 
   // ------------------------------------------------------------
   // Missing OR empty OrganizationID
@@ -750,6 +789,8 @@ const reportFilters = (req) => {
     return {
       OrganizationID: null,
       Department,
+      FromDate,
+      ToDate,
     };
   }
 
@@ -768,6 +809,8 @@ const reportFilters = (req) => {
   return {
     OrganizationID: Number(rawOrganizationID),
     Department,
+    FromDate,
+    ToDate,
   };
 };
 // All reports use the same JWT context and RabbitMQ request flow.
@@ -1038,6 +1081,16 @@ exports.generateOpexListPdf = async (req, res) => {
         ? String(req.query.Department).trim()
         : null;
 
+    const FromDate = optionalIsoDate(req.query.FromDate, "FromDate");
+    const ToDate = optionalIsoDate(req.query.ToDate, "ToDate");
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "FromDate cannot be greater than ToDate",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
     // Generate directly so the PDF Buffer is not converted into a JSON
     // { type: "Buffer", data: [...] } object by RabbitMQ serialization.
 
@@ -1048,6 +1101,8 @@ exports.generateOpexListPdf = async (req, res) => {
       OrganizationID,
       Department,
       Status,
+      FromDate,
+      ToDate,
     });
 
     if (!response.success) {
@@ -1093,19 +1148,9 @@ exports.getOpexDepartmentReportPdf = async (req, res) => {
           ? Number(req.query.OrganizationID)
           : null,
 
-      FromDate:
-        req.query.FromDate !== undefined &&
-        req.query.FromDate !== null &&
-        String(req.query.FromDate).trim() !== ""
-          ? String(req.query.FromDate).trim()
-          : null,
+      FromDate: optionalIsoDate(req.query.FromDate, "FromDate"),
 
-      ToDate:
-        req.query.ToDate !== undefined &&
-        req.query.ToDate !== null &&
-        String(req.query.ToDate).trim() !== ""
-          ? String(req.query.ToDate).trim()
-          : null,
+      ToDate: optionalIsoDate(req.query.ToDate, "ToDate"),
 
       Department:
         req.query.Department !== undefined &&
@@ -1131,6 +1176,13 @@ exports.getOpexDepartmentReportPdf = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Valid OrganizationID is required.",
+      });
+    }
+
+    if (data.FromDate && data.ToDate && data.FromDate > data.ToDate) {
+      return res.status(400).json({
+        success: false,
+        message: "FromDate cannot be greater than ToDate.",
       });
     }
 
@@ -1215,11 +1267,9 @@ exports.getOpexOrganizationReportPdf = async (req, res) => {
           ? Number(organizationValue)
           : null,
 
-      FromDate:
-        String(req.query.FromDate ?? "").trim() || null,
+      FromDate: optionalIsoDate(req.query.FromDate, "FromDate"),
 
-      ToDate:
-        String(req.query.ToDate ?? "").trim() || null,
+      ToDate: optionalIsoDate(req.query.ToDate, "ToDate"),
 
       UserID: req.user?.UserID || null,
       UserType: req.user?.UserType || null,

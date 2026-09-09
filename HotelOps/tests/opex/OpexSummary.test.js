@@ -390,6 +390,10 @@ test("Finance HOD receives organization-wide FC list filters", { concurrency: fa
       assert.doesNotMatch(call.sql, /AND LOWER\(TRIM\(cm\.Department\)\)/);
       assert.equal(call.values.includes("finance"), false);
       assert.equal(call.values.includes("HOD"), false);
+      assert.match(
+        call.sql,
+        /UPPER\(BTRIM\(COALESCE\(approval_state\.HODStatus,[\s\S]*?= 'APPROVED'/,
+      );
     }
     assert.equal(calls.some((call) => call.values.includes("FC")), true);
     assert.equal(calls.some((call) => /approval_state\.FCStatus/.test(call.sql)), true);
@@ -709,6 +713,113 @@ test("non-HOD OPEX list behavior remains department-unrestricted", { concurrency
   }
 });
 
+test("normal USER OPEX list uses overall workflow status precedence", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    for (const Status of ["Pending", "Approved", "Rejected", "Hold", "Returned"]) {
+      const response = await OpexService.getAllOpex({
+        OrganizationID: 20,
+        UserType: "User",
+        Status,
+        page: 1,
+        PageSize: 10,
+      });
+      assert.equal(response.success, true);
+    }
+
+    assert.equal(calls.length, 10);
+
+    for (const call of calls.slice(0, 2)) {
+      assert.match(call.sql, /current_stage\.ApprovalRole IS NOT NULL/);
+      assert.match(call.sql, /current_stage\.Status[\s\S]*= 'PENDING'/);
+      assert.match(call.sql, /AND NOT \([\s\S]*'REJECTED', 'HOLD', 'RETURNED'/);
+    }
+
+    for (const call of calls.slice(2, 4)) {
+      assert.equal(call.values.includes("APPROVED"), true);
+      assert.match(call.sql, /approval_state\.FinalStatus[\s\S]*= \$\d+/);
+      assert.match(call.sql, /AND NOT \([\s\S]*'REJECTED', 'HOLD', 'RETURNED'/);
+    }
+
+    for (const [index, status] of ["REJECTED", "HOLD", "RETURNED"].entries()) {
+      for (const call of calls.slice(4 + index * 2, 6 + index * 2)) {
+        assert.equal(call.values.includes(status), true);
+        for (const column of ["HODStatus", "FCStatus", "GMStatus", "RDFCStatus", "CEOStatus", "FinalStatus"]) {
+          assert.match(call.sql, new RegExp(`approval_state\\.${column}`));
+        }
+      }
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("OPEX current stage does not advance past a rejected upstream stage", () => {
+  const serviceSource = fs.readFileSync(
+    path.join(__dirname, "../../services/OpexService/OpexService.js"),
+    "utf8",
+  );
+  const selectQuery = serviceSource.match(
+    /const Opex_SELECT = `[\s\S]*?`;\s*\/\/ Convert PostgreSQL/,
+  )[0];
+
+  assert.match(selectQuery, /\) <> 'APPROVED'/);
+  assert.doesNotMatch(selectQuery, /NOT IN \('APPROVED', 'REJECTED'\)/);
+});
+
+test("OPEX list applies an inclusive CreatedDate range to rows and count", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserType: "User",
+      Status: "Pending",
+      FromDate: "2026-09-01",
+      ToDate: "2026-09-05",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(calls.length, 2);
+    for (const call of calls) {
+      assert.match(call.sql, /cm\.CreatedDate >= \$\d+::date/);
+      assert.match(
+        call.sql,
+        /cm\.CreatedDate < \(\$\d+::date \+ INTERVAL '1 day'\)/,
+      );
+      assert.equal(call.values.includes("2026-09-01"), true);
+      assert.equal(call.values.includes("2026-09-05"), true);
+    }
+
+    const invalid = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserType: "User",
+      FromDate: "2026-09-31",
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(calls.length, 2);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
 test("OPEX controller reads DepartmentName only from JWT context", () => {
   const controllerSource = fs.readFileSync(
     path.join(__dirname, "../../controllers/OpexController/OpexController.js"),
@@ -724,6 +835,9 @@ test("OPEX controller reads DepartmentName only from JWT context", () => {
   )[0];
   assert.doesNotMatch(listHandler, /req\.(query|body).*DepartmentName/);
   assert.match(listHandler, /STATUS_CODES\.FORBIDDEN/);
+  assert.match(listHandler, /optionalIsoDate\(req\.query\.FromDate, "FromDate"\)/);
+  assert.match(listHandler, /optionalIsoDate\(req\.query\.ToDate, "ToDate"\)/);
+  assert.match(listHandler, /FromDate,[\s\S]*ToDate,[\s\S]*page/);
 
   const approvalHandler = controllerSource.match(
     /exports\.approveOpex[\s\S]*?\/\/ =+ Report Helpers/,
@@ -738,18 +852,24 @@ test("OPEX list PDF reuses getAllOpex and exposes the UI data columns", () => {
     "utf8",
   );
   const pdfHandler = serviceSource.match(
-    /const generateOpexListPdf[\s\S]*?\/\/ =+ Exports/,
+    /const generateOpexListPdf[\s\S]*?\/\/ =+ Department Report Pdf/,
   )[0];
 
   assert.match(pdfHandler, /await getAllOpex\(/);
-  for (const header of ["#", "HTL", "DEPT", "ITEM", "RATE"]) {
+  for (const header of ["#", "HTL", "DEPT", "ITEM", "QTY", "RATE", "TOTAL"]) {
     assert.match(pdfHandler, new RegExp(`header: "${header.replace("-", "\\-")}"`));
   }
-  assert.match(
-    pdfHandler,
-    /const approvalRoles = \["HOD", "GM", "RD-FC", "CEO"\]/,
-  );
+  assert.match(pdfHandler, /const approvalRoles = \[\]/);
+  assert.match(pdfHandler, /for \(const approval of row\.Approvals \|\| \[\]\)/);
+  assert.match(pdfHandler, /approvalRoles\.push\(role\)/);
   assert.match(pdfHandler, /header: role/);
+  assert.match(pdfHandler, /\[row\.Item, row\.Description\]/);
+  assert.doesNotMatch(pdfHandler, /align: "(center|right)"/);
+  assert.match(pdfHandler, /SELECT OrganizationName/);
+  assert.match(pdfHandler, /value: organizationName \|\| "All"/);
+  assert.match(pdfHandler, /label: "From Date"/);
+  assert.match(pdfHandler, /label: "To Date"/);
+  assert.doesNotMatch(pdfHandler, /label: "Approval Role"/);
   assert.match(pdfHandler, /ApprovedQuantity/);
   assert.match(pdfHandler, /approval\.Remarks/);
   assert.doesNotMatch(pdfHandler, /header: "ACTION"/);
@@ -778,10 +898,62 @@ test("OPEX department report and PDF apply a normalized department filter", { co
     const reportCalls = calls.filter((call) => /FROM Opex_data/.test(call.sql));
     assert.equal(reportCalls.length, 2);
     for (const call of reportCalls) {
-      assert.deepEqual(call.values, [20, "Engineering"]);
+      assert.deepEqual(call.values, [20, "Engineering", null, null]);
       assert.match(call.sql, /LOWER\(TRIM\(COALESCE\(Department, 'Unspecified'\)\)\)/);
       assert.match(call.sql, /= LOWER\(TRIM\(\$2::text\)\)/);
     }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("OPEX department API and PDF apply the same inclusive date range", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return { rows: [] };
+  };
+
+  try {
+    const filters = {
+      OrganizationID: 20,
+      Department: "Engineering",
+      FromDate: "2026-08-01",
+      ToDate: "2026-08-31",
+    };
+    const report = await OpexService.getOpexDepartmentReport({
+      Filters: filters,
+    });
+    const pdf = await OpexService.getOpexDepartmentReportPdf(filters);
+
+    assert.equal(report.success, true);
+    assert.deepEqual(report.data, []);
+    assert.equal(pdf.success, true);
+    assert.equal(Buffer.isBuffer(pdf.pdfBuffer), true);
+
+    const reportCalls = calls.filter((call) => /FROM Opex_data/.test(call.sql));
+    assert.equal(reportCalls.length, 2);
+    for (const call of reportCalls) {
+      assert.deepEqual(call.values, [
+        20,
+        "Engineering",
+        "2026-08-01",
+        "2026-08-31",
+      ]);
+      assert.match(call.sql, /CreatedDate >= \$3::date/);
+      assert.match(
+        call.sql,
+        /CreatedDate < \(\$4::date \+ INTERVAL '1 day'\)/,
+      );
+    }
+
+    const queryCount = calls.length;
+    const invalid = await OpexService.getOpexDepartmentReport({
+      Filters: { ...filters, ToDate: "2026-08-32" },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(calls.length, queryCount);
   } finally {
     pool.query = originalQuery;
   }
@@ -806,6 +978,35 @@ test("OPEX department and organization API/PDF reports include Hold count", { co
     /FROM Opex_data/.test(sql) ? { rows: [reportRow] } : { rows: [] };
 
   try {
+    const serviceSource = fs.readFileSync(
+      path.join(__dirname, "../../services/OpexService/OpexService.js"),
+      "utf8",
+    );
+    const reportCte = serviceSource.match(
+      /const REPORT_DATA_CTE = `[\s\S]*?`;\s*\/\/ Keep parameter positions/,
+    )[0];
+    const rejectedPosition = reportCte.indexOf("THEN 'Rejected'");
+    const holdPosition = reportCte.indexOf("THEN 'Hold'");
+    const returnedPosition = reportCte.indexOf("THEN 'Returned'");
+    const approvedPosition = reportCte.indexOf("THEN 'Approved'");
+
+    assert.equal(rejectedPosition < holdPosition, true);
+    assert.equal(holdPosition < returnedPosition, true);
+    assert.equal(returnedPosition < approvedPosition, true);
+    for (const column of [
+      "HODStatus",
+      "FCStatus",
+      "GMStatus",
+      "RDFCStatus",
+      "CEOStatus",
+      "FinalStatus",
+    ]) {
+      assert.match(
+        reportCte,
+        new RegExp(`COALESCE\\(ca\\.${column}, ''\\)\\) = 'HOLD'`),
+      );
+    }
+
     const department = await OpexService.getOpexDepartmentReport({
       Filters: { OrganizationID: 20 },
     });
@@ -825,6 +1026,61 @@ test("OPEX department and organization API/PDF reports include Hold count", { co
     assert.equal(Buffer.isBuffer(organizationPdf.pdfBuffer), true);
     assert.equal(departmentPdf.pdfBuffer.subarray(0, 4).toString(), "%PDF");
     assert.equal(organizationPdf.pdfBuffer.subarray(0, 4).toString(), "%PDF");
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("OPEX organization API and PDF apply the same inclusive date range", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return { rows: [] };
+  };
+
+  try {
+    const filters = {
+      OrganizationID: 20,
+      FromDate: "2026-09-01",
+      ToDate: "2026-09-05",
+    };
+    const report = await OpexService.getOpexOrganizationReport({
+      Filters: filters,
+    });
+    const pdf = await OpexService.getOpexOrganizationReportPdf(filters);
+
+    assert.equal(report.success, true);
+    assert.equal(pdf.success, true);
+    assert.equal(Buffer.isBuffer(pdf.pdfBuffer), true);
+
+    const reportCalls = calls.filter((call) => /FROM Opex_data/.test(call.sql));
+    assert.equal(reportCalls.length, 2);
+    for (const call of reportCalls) {
+      assert.deepEqual(call.values, [20, "2026-09-01", "2026-09-05"]);
+      assert.match(call.sql, /cm\.CreatedDate >= \$2::date/);
+      assert.match(
+        call.sql,
+        /cm\.CreatedDate < \(\$3::date \+ INTERVAL '1 day'\)/,
+      );
+    }
+
+    const queryCount = calls.length;
+    const invalid = await OpexService.getOpexOrganizationReport({
+      Filters: { ...filters, FromDate: "2026-09-31" },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(calls.length, queryCount);
+
+    const controllerSource = fs.readFileSync(
+      path.join(__dirname, "../../controllers/OpexController/OpexController.js"),
+      "utf8",
+    );
+    const reportFilterHandler = controllerSource.match(
+      /const reportFilters[\s\S]*?\/\/ All reports use/,
+    )[0];
+    assert.match(reportFilterHandler, /optionalIsoDate\(req\.query\?\.FromDate/);
+    assert.match(reportFilterHandler, /optionalIsoDate\(req\.query\?\.ToDate/);
   } finally {
     pool.query = originalQuery;
   }
