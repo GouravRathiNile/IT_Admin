@@ -6,8 +6,7 @@ const {
 const EngineeringHandler = async (message) => {
   try {
     switch (message.action) {
-     
-      // ====================================================Equipment
+      // ============================================================Equipment Entry
       case "CREATE_ENGINEERING_EQUIPMENT":
         return await EngineeringService.createEquipment(message.data);
 
@@ -16,6 +15,29 @@ const EngineeringHandler = async (message) => {
 
       case "DELETE_ENGINEERING_EQUIPMENT":
         return await EngineeringService.deleteEquipment(message.data);
+
+      // ================================================================Breakdown of Equipment
+      case "CREATE_ENGINEERING_BREAKDOWN":
+        return await EngineeringService.createBreakdown(message.data);
+
+      case "UPDATE_ENGINEERING_BREAKDOWN":
+        return await EngineeringService.updateBreakdown(message.data);
+
+      case "DELETE_ENGINEERING_BREAKDOWN":
+        return await EngineeringService.deleteBreakdown(message.data);
+
+      case "UPDATE_ENGINEERING_BREAKDOWN_STATUS":
+        return await EngineeringService.updateBreakdownStatus(message.data);
+
+      // ================================================================Vendor of Equipment Entries
+      case "CREATE_ENGINEERING_VENDOR":
+        return await EngineeringService.createVendor(message.data);
+
+      case "UPDATE_ENGINEERING_VENDOR":
+        return await EngineeringService.updateVendor(message.data);
+
+      case "DELETE_ENGINEERING_VENDOR":
+        return await EngineeringService.deleteVendor(message.data);
 
       default:
         return {

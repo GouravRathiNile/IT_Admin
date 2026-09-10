@@ -372,4 +372,370 @@ exports.getEquipmentAreas = async (req, res) => {
   }
 };
 // ============================================================================================Breakdown of Equipment Entries
+// ============================================================CREATE Breakdown
+exports.createBreakdown = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      EquipmentID,
+      BreakdownDate,
+      BreakdownTime,
+      BreakdownReason,
+      PartsUsed,
+      RepairedStatus,
+      RepairedDate,
+      RepairedByID,
+      Amount,
+      Parts,
+    } = req.body || {};
 
+    if (!OrganizationID) {
+      return res.status(400).json({
+        success: false,
+        message: "OrganizationID is required.",
+      });
+    }
+
+    if (!EquipmentID) {
+      return res.status(400).json({
+        success: false,
+        message: "EquipmentID is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "CREATE_ENGINEERING_BREAKDOWN",
+      {
+        OrganizationID,
+        EquipmentID,
+        BreakdownDate,
+        BreakdownTime,
+        BreakdownReason,
+        PartsUsed,
+        RepairedStatus,
+        RepairedDate,
+        RepairedByID,
+        Amount,
+        Parts,
+      },
+      STATUS_CODES.CREATED,
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Breakdown List
+exports.getAllBreakdowns = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getAllBreakdowns({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        EquipmentID:
+          req.query.EquipmentID || null,
+
+        RepairedStatus:
+          req.query.RepairedStatus || null,
+
+        FromDate:
+          req.query.FromDate || null,
+
+        ToDate:
+          req.query.ToDate || null,
+
+        Search:
+          req.query.Search || null,
+
+        page:
+          Number(req.query.page) || 1,
+
+        PageSize:
+          Number(req.query.PageSize) || 10,
+      });
+
+    return res
+      .status(
+        result.statusCode ||
+          (result.success ? 200 : 400),
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================GET Breakdown by Id
+exports.getBreakdownById = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getBreakdownById({
+        BreakdownID: req.params.id,
+      });
+
+    return res
+      .status(
+        result.statusCode ||
+          (result.success ? 200 : 400),
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Update Breakdown
+exports.updateBreakdown = async (req, res) => {
+  try {
+    let Parts = req.body?.Parts || [];
+
+    let DeletePartIDs =
+      req.body?.DeletePartIDs || [];
+
+    if (typeof Parts === "string") {
+      try {
+        Parts = JSON.parse(Parts);
+      } catch {
+        Parts = [];
+      }
+    }
+
+    if (typeof DeletePartIDs === "string") {
+      try {
+        DeletePartIDs =
+          JSON.parse(DeletePartIDs);
+      } catch {
+        DeletePartIDs =
+          DeletePartIDs
+            .split(",")
+            .map(Number)
+            .filter(Boolean);
+      }
+    }
+
+    const Changes = {
+      ...req.body,
+    };
+
+    delete Changes.Remarks;
+    delete Changes.BreakdownID;
+    delete Changes.OrganizationID;
+    delete Changes.Parts;
+    delete Changes.DeletePartIDs;
+
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_BREAKDOWN",
+      {
+        BreakdownID:
+          req.body.BreakdownID,
+
+        Changes,
+
+        Parts,
+
+        DeletePartIDs,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Delete Breakdown
+exports.deleteBreakdown = async (req, res) => {
+  return sendQueueResponse(
+    req,
+    res,
+    "DELETE_ENGINEERING_BREAKDOWN",
+    {
+      BreakdownID:
+        req.body.BreakdownID,
+    },
+  );
+};
+// ============================================================Update Breakdown Status
+exports.updateBreakdownStatus = async (req, res) => {
+  try {
+    const {
+      BreakdownID,
+      RepairedStatus,
+    } = req.body || {};
+
+    if (!BreakdownID) {
+      return res.status(400).json({
+        success: false,
+        message: "BreakdownID is required.",
+      });
+    }
+
+    if (
+      !RepairedStatus ||
+      !String(RepairedStatus).trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "RepairedStatus is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_BREAKDOWN_STATUS",
+      {
+        BreakdownID,
+        RepairedStatus: String(RepairedStatus).trim(),
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================================================ Vendors of Equipment Entries
+// ============================================================CREATE Vendor
+exports.createVendor = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      EquipmentID,
+      Name,
+    } = req.body || {};
+
+    if (!OrganizationID) {
+      return res.status(400).json({
+        success: false,
+        message: "OrganizationID is required.",
+      });
+    }
+
+    if (!EquipmentID) {
+      return res.status(400).json({
+        success: false,
+        message: "EquipmentID is required.",
+      });
+    }
+
+    if (!Name || !String(Name).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Name is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "CREATE_ENGINEERING_VENDOR",
+      {
+        OrganizationID,
+        EquipmentID,
+        Name: String(Name).trim(),
+
+        Address: req.body.Address,
+        MobileNumber: req.body.MobileNumber,
+        SecondMobileNumber:
+          req.body.SecondMobileNumber,
+        LandlineNumber:
+          req.body.LandlineNumber,
+        City: req.body.City,
+        Country: req.body.Country,
+        PinCode: req.body.PinCode,
+        Email: req.body.Email,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Vendor List
+exports.getAllVendors = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getAllVendors({
+        OrganizationID:
+          req.query.OrganizationID,
+        EquipmentID:
+          req.query.EquipmentID,
+        Search: req.query.Search,
+        page: req.query.page,
+        PageSize: req.query.PageSize,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================GET Vendor by ID
+exports.getVendorById = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getVendorById({
+        VendorID: req.params.id,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================UPDATE Vendor
+exports.updateVendor = async (req, res) => {
+  try {
+    const { VendorID } = req.body || {};
+
+    if (!VendorID) {
+      return res.status(400).json({
+        success: false,
+        message: "VendorID is required.",
+      });
+    }
+
+    const Changes = {
+      ...req.body,
+    };
+
+    delete Changes.VendorID;
+
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_VENDOR",
+      {
+        VendorID,
+        Changes,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================DELETE Vendor
+exports.deleteVendor = async (req, res) => {
+  try {
+    const { VendorID } = req.body || {};
+
+    if (!VendorID) {
+      return res.status(400).json({
+        success: false,
+        message: "VendorID is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "DELETE_ENGINEERING_VENDOR",
+      {
+        VendorID,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};

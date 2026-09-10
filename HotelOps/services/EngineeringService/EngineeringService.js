@@ -27,7 +27,7 @@ const databaseFailure = (error, operation) => {
   );
 };
 
-// ============================================================CREATE ,Get Apis Helpers
+// ============================================================================================Equipment Entries
 // ============================Document Mapper Helper
 const mapDocument = (row) => ({
   EquipmentDocumentID: Number(row.equipmentdocumentid),
@@ -141,7 +141,6 @@ const attachDocuments = async (equipments) => {
     Documents: documentMap.get(equipment.EquipmentID) || [],
   }));
 };
-// ============================================================================================Equipment Entries
 // ============================================================CREATE Equipment
 const createEquipment = async (data) => {
   const client = await pool.connect();
@@ -1043,6 +1042,1291 @@ const getEquipmentAreas = async (data) => {
   }
 };
 // ============================================================================================Breakdown of Equipment Entries
+// =============================Breakdown Mapper Helper
+const mapBreakdown = (row) => ({
+  BreakdownID: Number(row.breakdownid),
+
+  OrganizationID: Number(row.organizationid),
+
+  OrganizationShortName:
+    row.organizationshortname || null,
+
+  EquipmentID: Number(row.equipmentid),
+
+  BreakdownDate:
+    formatDate(row.breakdowndate),
+
+  BreakdownTime:
+    row.breakdowntime || null,
+
+  BreakdownReason:
+    row.breakdownreason || null,
+
+  PartsUsed:
+    row.partsused || null,
+
+  Parts: Array.isArray(row.parts)
+    ? row.parts.map((part) => ({
+        BreakdownPartID: Number(
+          part.BreakdownPartID,
+        ),
+
+        Item:
+          part.Item || null,
+
+        Qty:
+          part.Qty !== null
+            ? Number(part.Qty)
+            : null,
+
+        Amount:
+          part.Amount !== null
+            ? Number(part.Amount)
+            : null,
+      }))
+    : [],
+
+  RepairedStatus:
+    row.repairedstatus,
+
+  RepairedDate:
+    formatDate(row.repaireddate),
+
+  RepairedByID:
+    row.repairedbyid
+      ? Number(row.repairedbyid)
+      : null,
+
+  RepairedByName:
+    row.repairedbyname || null,
+
+  Amount:
+    row.amount !== null
+      ? Number(row.amount)
+      : null,
+
+
+  CreatedDate:
+    formatDate(row.createddate),
+});
+// ============================================================CREATE Breakdown
+const createBreakdown = async (data) => {
+  const client = await pool.connect();
+
+  try {
+    const organizationID = Number(data.OrganizationID);
+    const equipmentID = Number(data.EquipmentID);
+
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `
+      INSERT INTO Engineering_Breakdown_Entry
+      (
+        OrganizationID,
+        EquipmentID,
+
+        BreakdownDate,
+        BreakdownTime,
+        BreakdownReason,
+        PartsUsed,
+
+        RepairedStatus,
+        RepairedDate,
+        RepairedByID,
+
+        Amount,
+
+        IsDeleted,
+
+        CreatedBy,
+        CreatedDate
+      )
+      VALUES
+      (
+        $1,$2,
+        $3,$4,$5,$6,
+        $7,$8,$9,
+        $10,
+        FALSE,
+        $11,
+        CURRENT_TIMESTAMP
+      )
+      RETURNING BreakdownID;
+      `,
+      [
+        organizationID,
+        equipmentID,
+
+        data.BreakdownDate || null,
+        data.BreakdownTime || null,
+        data.BreakdownReason || null,
+        data.PartsUsed || null,
+
+        data.RepairedStatus || "Pending",
+        data.RepairedDate || null,
+        data.RepairedByID || null,
+
+        data.Amount ?? null,
+
+        data.UserID,
+      ],
+    );
+
+    const breakdownID = Number(
+      result.rows[0].breakdownid,
+    );
+
+    // ========================================================
+    // Parts
+    // ========================================================
+
+    const parts = Array.isArray(data.Parts)
+      ? data.Parts
+      : [];
+
+    for (const part of parts) {
+      await client.query(
+        `
+        INSERT INTO Engineering_Breakdown_Parts_Details
+        (
+          BreakdownID,
+          OrganizationID,
+
+          Item,
+          Qty,
+          Amount,
+
+          IsDeleted,
+
+          CreatedBy,
+          CreatedDate
+        )
+        VALUES
+        (
+          $1,$2,
+          $3,$4,$5,
+          FALSE,
+          $6,
+          CURRENT_TIMESTAMP
+        );
+        `,
+        [
+          breakdownID,
+          organizationID,
+
+          part.Item || null,
+          part.Qty ?? null,
+          part.Amount ?? null,
+
+          data.UserID,
+        ],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    return ok(
+      "Engineering breakdown created successfully.");
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    return databaseFailure(
+      error,
+      "Create Engineering breakdown",
+    );
+  } finally {
+    client.release();
+  }
+};
+// ============================================================Breakdown List
+const getAllBreakdowns = async (data) => {
+  try {
+    const organizationID = Number(data.OrganizationID);
+
+    const page = Math.max(Number(data.page) || 1, 1);
+
+    const pageSize = Math.min(
+      Math.max(Number(data.PageSize) || 10, 1),
+      100,
+    );
+
+    const offset = (page - 1) * pageSize;
+
+    const values = [organizationID];
+
+    const conditions = [
+      "b.OrganizationID = $1",
+      "b.IsDeleted = FALSE",
+    ];
+
+    // EquipmentID Filter
+    if (data.EquipmentID) {
+      values.push(Number(data.EquipmentID));
+
+      conditions.push(
+        `b.EquipmentID = $${values.length}`,
+      );
+    }
+
+    // Repaired Status Filter
+    if (data.RepairedStatus) {
+      values.push(data.RepairedStatus);
+
+      conditions.push(
+        `b.RepairedStatus = $${values.length}`,
+      );
+    }
+
+    // From Date
+    if (data.FromDate) {
+      values.push(data.FromDate);
+
+      conditions.push(
+        `b.BreakdownDate >= $${values.length}`,
+      );
+    }
+
+    // To Date
+    if (data.ToDate) {
+      values.push(data.ToDate);
+
+      conditions.push(
+        `b.BreakdownDate <= $${values.length}`,
+      );
+    }
+
+    // Search
+    if (data.Search) {
+      values.push(
+        `%${String(data.Search).trim()}%`,
+      );
+
+      conditions.push(
+        `
+        (
+          b.BreakdownReason ILIKE $${values.length}
+          OR b.PartsUsed ILIKE $${values.length}
+          OR EXISTS
+          (
+            SELECT 1
+            FROM Engineering_Breakdown_Parts_Details bp
+            WHERE bp.BreakdownID = b.BreakdownID
+              AND bp.IsDeleted = FALSE
+              AND bp.Item ILIKE $${values.length}
+          )
+        )
+        `,
+      );
+    }
+
+    const where = conditions.join(" AND ");
+
+    // ========================================================
+    // Count
+    // ========================================================
+
+    const countResult = await pool.query(
+      `
+      SELECT
+        COUNT(*)::bigint AS TotalCount
+      FROM Engineering_Breakdown_Entry b
+      WHERE ${where};
+      `,
+      values,
+    );
+
+    const totalCount = Number(
+      countResult.rows[0].totalcount,
+    );
+
+    // ========================================================
+    // List
+    // ========================================================
+
+    const listValues = [
+      ...values,
+      pageSize,
+      offset,
+    ];
+
+    const result = await pool.query(
+      `
+      SELECT
+        b.*,
+
+        om.ShortName AS OrganizationShortName,
+
+        u.FullName AS RepairedByName,
+
+        COALESCE(
+          (
+            SELECT JSON_AGG(
+              JSON_BUILD_OBJECT(
+                'BreakdownPartID', bp.BreakdownPartID,
+                'Item', bp.Item,
+                'Qty', bp.Qty,
+                'Amount', bp.Amount
+              )
+              ORDER BY bp.BreakdownPartID
+            )
+            FROM Engineering_Breakdown_Parts_Details bp
+            WHERE bp.BreakdownID = b.BreakdownID
+              AND bp.IsDeleted = FALSE
+          ),
+          '[]'::json
+        ) AS Parts
+
+      FROM Engineering_Breakdown_Entry b
+
+      LEFT JOIN Organization_Master om
+        ON om.OrganizationID = b.OrganizationID
+       AND om.IsDeleted = FALSE
+
+      LEFT JOIN user_master u
+        ON u.UserID = b.RepairedByID
+       AND u.IsDeleted = FALSE
+
+      WHERE ${where}
+
+      ORDER BY b.BreakdownID DESC
+
+      LIMIT $${listValues.length - 1}
+      OFFSET $${listValues.length};
+      `,
+      listValues,
+    );
+
+    const records = result.rows.map(mapBreakdown);
+
+    return ok(
+      "Engineering breakdown fetched successfully.",
+      records,
+      {
+        TotalCount: totalCount,
+        PageCount: records.length,
+        CurrentPage: page,
+        PageSize: pageSize,
+        TotalPages: Math.ceil(totalCount / pageSize),
+      },
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Engineering breakdown",
+    );
+  }
+};
+// ============================================================Get Breakdown by Id
+const getBreakdownById = async (data) => {
+  try {
+    const breakdownID = Number(
+      data.BreakdownID,
+    );
+
+    if (
+      !Number.isInteger(breakdownID) ||
+      breakdownID <= 0
+    ) {
+      return fail(
+        "Valid BreakdownID is required.",
+        400,
+      );
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        b.*,
+
+        om.ShortName AS OrganizationShortName,
+
+        e.Description AS EquipmentName,
+        e.SerialNumber AS SerialNumber,
+
+        u.FullName AS RepairedByName
+
+      FROM Engineering_Breakdown_Entry b
+
+      LEFT JOIN Organization_Master om
+        ON om.OrganizationID = b.OrganizationID
+       AND om.IsDeleted = FALSE
+
+      LEFT JOIN Engineering_Equipment_Entry_Master e
+        ON e.EquipmentID = b.EquipmentID
+       AND e.IsDeleted = FALSE
+
+      LEFT JOIN user_master u
+        ON u.UserID = b.RepairedByID
+       AND u.IsDeleted = FALSE
+
+      WHERE b.BreakdownID = $1
+        AND b.IsDeleted = FALSE
+
+      LIMIT 1;
+      `,
+      [breakdownID],
+    );
+
+    if (!result.rows.length) {
+      return fail(
+        "Engineering breakdown not found.",
+        404,
+      );
+    }
+
+    const record = mapBreakdown(
+      result.rows[0],
+    );
+
+    // ========================================================
+    // Parts
+    // ========================================================
+
+    const partsResult = await pool.query(
+      `
+      SELECT
+        BreakdownPartID,
+        BreakdownID,
+        OrganizationID,
+        Item,
+        Qty,
+        Amount
+
+      FROM Engineering_Breakdown_Parts_Details
+
+      WHERE BreakdownID = $1
+        AND IsDeleted = FALSE
+
+      ORDER BY BreakdownPartID ASC;
+      `,
+      [breakdownID],
+    );
+
+    record.Parts = partsResult.rows.map(
+      (row) => ({
+        BreakdownPartID:
+          Number(row.breakdownpartid),
+
+        BreakdownID:
+          Number(row.breakdownid),
+
+        OrganizationID:
+          Number(row.organizationid),
+
+        Item:
+          row.item || null,
+
+        Qty:
+          row.qty !== null
+            ? Number(row.qty)
+            : null,
+
+        Amount:
+          row.amount !== null
+            ? Number(row.amount)
+            : null,
+      }),
+    );
+
+    return ok(
+      "Engineering breakdown fetched successfully.",
+      record,
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Engineering breakdown",
+    );
+  }
+};
+// ============================================================Update Breakdown
+const breakdownUpdateFields = {
+  EquipmentID: "EquipmentID",
+  BreakdownDate: "BreakdownDate",
+  BreakdownTime: "BreakdownTime",
+  BreakdownReason: "BreakdownReason",
+  PartsUsed: "PartsUsed",
+  RepairedStatus: "RepairedStatus",
+  RepairedDate: "RepairedDate",
+  RepairedByID: "RepairedByID",
+  Amount: "Amount",
+};
+const updateBreakdown = async (data) => {
+  const client = await pool.connect();
+
+  try {
+    const breakdownID = Number(
+      data.BreakdownID,
+    );
+
+    await client.query("BEGIN");
+
+    const existing = await client.query(
+      `
+      SELECT
+        BreakdownID,
+        OrganizationID
+
+      FROM Engineering_Breakdown_Entry
+
+      WHERE BreakdownID = $1
+        AND IsDeleted = FALSE
+
+      FOR UPDATE;
+      `,
+      [breakdownID],
+    );
+
+    if (!existing.rows.length) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "Engineering breakdown not found.",
+        404,
+      );
+    }
+
+    const organizationID = Number(
+      existing.rows[0].organizationid,
+    );
+
+    const changes =
+      data.Changes &&
+      typeof data.Changes === "object"
+        ? data.Changes
+        : {};
+
+    const assignments = [];
+    const values = [];
+
+    for (
+      const [field, column]
+      of Object.entries(
+        breakdownUpdateFields,
+      )
+    ) {
+      if (
+        !Object.prototype.hasOwnProperty.call(
+          changes,
+          field,
+        )
+      ) {
+        continue;
+      }
+
+      let value = changes[field];
+
+      if (
+        value === "" ||
+        value === undefined
+      ) {
+        value = null;
+      }
+
+      values.push(value);
+
+      assignments.push(
+        `${column} = $${values.length}`,
+      );
+    }
+
+    if (assignments.length) {
+      values.push(data.UserID);
+
+      const modifiedByIndex =
+        values.length;
+
+      values.push(breakdownID);
+
+      const breakdownIndex =
+        values.length;
+
+      await client.query(
+        `
+        UPDATE Engineering_Breakdown_Entry
+
+        SET
+          ${assignments.join(", ")},
+
+          ModifiedBy =
+            $${modifiedByIndex},
+
+          ModifiedDate =
+            CURRENT_TIMESTAMP
+
+        WHERE BreakdownID =
+          $${breakdownIndex}
+
+          AND IsDeleted = FALSE;
+        `,
+        values,
+      );
+    }
+
+    // ========================================================
+    // Delete Existing Selected Parts
+    // ========================================================
+
+    const deletePartIDs =
+      Array.isArray(data.DeletePartIDs)
+        ? data.DeletePartIDs
+            .map(Number)
+            .filter(
+              (id) =>
+                Number.isInteger(id) &&
+                id > 0,
+            )
+        : [];
+
+    if (deletePartIDs.length) {
+      await client.query(
+        `
+        UPDATE Engineering_Breakdown_Parts_Details
+
+        SET
+          IsDeleted = TRUE,
+
+          DeletedBy = $1,
+
+          DeletedDate =
+            CURRENT_TIMESTAMP
+
+        WHERE BreakdownID = $2
+
+          AND BreakdownPartID =
+            ANY($3::bigint[])
+
+          AND IsDeleted = FALSE;
+        `,
+        [
+          data.UserID,
+          breakdownID,
+          deletePartIDs,
+        ],
+      );
+    }
+
+    // ========================================================
+    // Add New Parts
+    // ========================================================
+
+    const parts = Array.isArray(data.Parts)
+      ? data.Parts
+      : [];
+
+    for (const part of parts) {
+      await client.query(
+        `
+        INSERT INTO Engineering_Breakdown_Parts_Details
+        (
+          BreakdownID,
+          OrganizationID,
+
+          Item,
+          Qty,
+          Amount,
+
+          IsDeleted,
+
+          CreatedBy,
+          CreatedDate
+        )
+        VALUES
+        (
+          $1,$2,
+          $3,$4,$5,
+          FALSE,
+          $6,
+          CURRENT_TIMESTAMP
+        );
+        `,
+        [
+          breakdownID,
+          organizationID,
+
+          part.Item || null,
+          part.Qty ?? null,
+          part.Amount ?? null,
+
+          data.UserID,
+        ],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    return ok(
+      "Engineering breakdown updated successfully.");
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    return databaseFailure(
+      error,
+      "Update Engineering breakdown",
+    );
+  } finally {
+    client.release();
+  }
+};
+// ============================================================Delete Breakdown
+const deleteBreakdown = async (data) => {
+  const client = await pool.connect();
+
+  try {
+    const breakdownID = Number(
+      data.BreakdownID,
+    );
+
+    if (
+      !Number.isInteger(breakdownID) ||
+      breakdownID <= 0
+    ) {
+      return fail(
+        "Valid BreakdownID is required.",
+        400,
+      );
+    }
+
+    await client.query("BEGIN");
+
+    // ========================================================
+    // Delete Breakdown
+    // ========================================================
+
+    const result = await client.query(
+      `
+      UPDATE Engineering_Breakdown_Entry
+
+      SET
+        IsDeleted = TRUE,
+
+        DeletedBy = $1,
+
+        DeletedDate =
+          CURRENT_TIMESTAMP
+
+      WHERE BreakdownID = $2
+        AND IsDeleted = FALSE
+
+      RETURNING BreakdownID;
+      `,
+      [
+        data.UserID,
+        breakdownID,
+      ],
+    );
+
+    if (!result.rows.length) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "Engineering breakdown not found.",
+        404,
+      );
+    }
+
+    // ========================================================
+    // Delete Parts
+    // ========================================================
+
+    await client.query(
+      `
+      UPDATE Engineering_Breakdown_Parts_Details
+
+      SET
+        IsDeleted = TRUE,
+
+        DeletedBy = $1,
+
+        DeletedDate =
+          CURRENT_TIMESTAMP
+
+      WHERE BreakdownID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [
+        data.UserID,
+        breakdownID,
+      ],
+    );
+
+    await client.query("COMMIT");
+
+    return ok(
+      "Engineering breakdown deleted successfully."
+    );
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    return databaseFailure(
+      error,
+      "Delete Engineering breakdown",
+    );
+  } finally {
+    client.release();
+  }
+};
+// ============================================================Update Breakdown Status
+const updateBreakdownStatus = async (data) => {
+  try {
+    const breakdownID = Number(data.BreakdownID);
+
+    if (
+      !Number.isInteger(breakdownID) ||
+      breakdownID <= 0
+    ) {
+      return fail(
+        "Valid BreakdownID is required.",
+        400,
+      );
+    }
+
+    if (
+      !data.RepairedStatus ||
+      !String(data.RepairedStatus).trim()
+    ) {
+      return fail(
+        "RepairedStatus is required.",
+        400,
+      );
+    }
+
+    const repairedStatus =
+      String(data.RepairedStatus).trim();
+
+    const result = await pool.query(
+      `
+      UPDATE Engineering_Breakdown_Entry
+      SET
+        RepairedStatus = $1,
+        RepairedDate = CURRENT_DATE,
+        RepairedByID = $2
+      WHERE BreakdownID = $3
+        AND IsDeleted = FALSE
+      RETURNING BreakdownID;
+      `,
+      [
+        repairedStatus,
+        data.UserID,
+        breakdownID,
+      ],
+    );
+
+    if (!result.rows.length) {
+      return fail(
+        "Engineering breakdown not found.",
+        404,
+      );
+    }
+
+    return ok(
+      "Breakdown status updated successfully.",
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Update Engineering breakdown status",
+    );
+  }
+};
+// ============================================================================================Vendor of Equipment
+// =============================Vendor Mapper Helper
+const mapVendor = (row) => ({
+  VendorID: Number(row.vendorid),
+  OrganizationID: Number(row.organizationid),
+  EquipmentID: Number(row.equipmentid),
+
+  Name: row.name || null,
+  Address: row.address || null,
+
+  MobileNumber: row.mobilenumber || null,
+  SecondMobileNumber: row.secondmobilenumber || null,
+  LandlineNumber: row.landlinenumber || null,
+
+  City: row.city || null,
+  Country: row.country || null,
+  PinCode: row.pincode || null,
+  Email: row.email || null,
+
+  CreatedDate: formatDate(row.createddate),
+});
+// ============================================================create Vendor
+const createVendor = async (data) => {
+  try {
+    const organizationID = Number(data.OrganizationID);
+    const equipmentID = Number(data.EquipmentID);
+
+    await pool.query(
+      `
+      INSERT INTO Engineering_Vendor_Entry
+      (
+        OrganizationID,
+        EquipmentID,
+        Name,
+        Address,
+        MobileNumber,
+        SecondMobileNumber,
+        LandlineNumber,
+        City,
+        Country,
+        PinCode,
+        Email,
+        IsDeleted,
+        CreatedBy,
+        CreatedDate
+      )
+      VALUES
+      (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+        FALSE,$12,CURRENT_TIMESTAMP
+      );
+      `,
+      [
+        organizationID,
+        equipmentID,
+        data.Name,
+        data.Address || null,
+        data.MobileNumber || null,
+        data.SecondMobileNumber || null,
+        data.LandlineNumber || null,
+        data.City || null,
+        data.Country || null,
+        data.PinCode || null,
+        data.Email || null,
+        data.UserID,
+      ],
+    );
+
+    return ok(
+      "Engineering vendor created successfully.",
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Create Engineering vendor",
+    );
+  }
+};
+// ============================================================Vendors List
+const getAllVendors = async (data) => {
+  try {
+    const page = Math.max(Number(data.page) || 1, 1);
+
+    const pageSize = Math.min(
+      Math.max(Number(data.PageSize) || 10, 1),
+      100,
+    );
+
+    const offset = (page - 1) * pageSize;
+
+    const values = [];
+    const conditions = [
+      "v.IsDeleted = FALSE",
+    ];
+
+    if (data.OrganizationID) {
+      values.push(Number(data.OrganizationID));
+
+      conditions.push(
+        `v.OrganizationID = $${values.length}`,
+      );
+    }
+
+    if (data.EquipmentID) {
+      values.push(Number(data.EquipmentID));
+
+      conditions.push(
+        `v.EquipmentID = $${values.length}`,
+      );
+    }
+
+    if (
+      data.Search &&
+      String(data.Search).trim()
+    ) {
+      values.push(
+        `%${String(data.Search).trim()}%`,
+      );
+
+      const index = values.length;
+
+      conditions.push(`
+        (
+          v.Name ILIKE $${index}
+          OR v.MobileNumber ILIKE $${index}
+          OR v.SecondMobileNumber ILIKE $${index}
+          OR v.LandlineNumber ILIKE $${index}
+          OR v.City ILIKE $${index}
+          OR v.Country ILIKE $${index}
+          OR v.PinCode ILIKE $${index}
+          OR v.Email ILIKE $${index}
+        )
+      `);
+    }
+
+    const where = conditions.join(" AND ");
+
+    const countResult = await pool.query(
+      `
+      SELECT COUNT(*)::bigint AS TotalCount
+      FROM Engineering_Vendor_Entry v
+      WHERE ${where};
+      `,
+      values,
+    );
+
+    const totalCount = Number(
+      countResult.rows[0].totalcount,
+    );
+
+    const totalPages = Math.ceil(
+      totalCount / pageSize,
+    );
+
+    const listValues = [
+      ...values,
+      pageSize,
+      offset,
+    ];
+
+    const limitIndex = values.length + 1;
+    const offsetIndex = values.length + 2;
+
+    const result = await pool.query(
+      `
+      SELECT
+        v.*
+      FROM Engineering_Vendor_Entry v
+      WHERE ${where}
+      ORDER BY v.VendorID DESC
+      LIMIT $${limitIndex}
+      OFFSET $${offsetIndex};
+      `,
+      listValues,
+    );
+
+    return ok(
+      "Engineering vendors fetched successfully.",
+      {
+        TotalCount: totalCount,
+        PageCount: result.rows.length,
+        CurrentPage: page,
+        PageSize: pageSize,
+        TotalPages: totalPages,
+        data: result.rows.map(mapVendor),
+      },
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Engineering vendors",
+    );
+  }
+};
+// ============================================================Get Vendor by ID
+const getVendorById = async (data) => {
+  try {
+    const vendorID = Number(data.VendorID);
+
+    if (
+      !Number.isInteger(vendorID) ||
+      vendorID <= 0
+    ) {
+      return fail(
+        "Valid VendorID is required.",
+        400,
+      );
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        v.*
+      FROM Engineering_Vendor_Entry v
+      WHERE v.VendorID = $1
+        AND v.IsDeleted = FALSE
+      LIMIT 1;
+      `,
+      [vendorID],
+    );
+
+    if (!result.rows.length) {
+      return fail(
+        "Engineering vendor not found.",
+        404,
+      );
+    }
+
+    return ok(
+      "Engineering vendor fetched successfully.",
+      mapVendor(result.rows[0]),
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Engineering vendor",
+    );
+  }
+};
+// ============================================================Update Vendor
+const vendorUpdateFields = {
+  OrganizationID: "OrganizationID",
+  EquipmentID: "EquipmentID",
+  Name: "Name",
+  Address: "Address",
+  MobileNumber: "MobileNumber",
+  SecondMobileNumber: "SecondMobileNumber",
+  LandlineNumber: "LandlineNumber",
+  City: "City",
+  Country: "Country",
+  PinCode: "PinCode",
+  Email: "Email",
+};
+const updateVendor = async (data) => {
+  try {
+    const vendorID = Number(data.VendorID);
+
+    if (
+      !Number.isInteger(vendorID) ||
+      vendorID <= 0
+    ) {
+      return fail(
+        "Valid VendorID is required.",
+        400,
+      );
+    }
+
+    const changes =
+      data.Changes &&
+      typeof data.Changes === "object"
+        ? data.Changes
+        : {};
+
+    const setParts = [];
+    const values = [];
+
+    for (const [key, column] of Object.entries(
+      vendorUpdateFields,
+    )) {
+      if (
+        Object.prototype.hasOwnProperty.call(
+          changes,
+          key,
+        )
+      ) {
+        values.push(
+          changes[key] === "" ||
+          changes[key] === undefined
+            ? null
+            : changes[key],
+        );
+
+        setParts.push(
+          `${column} = $${values.length}`,
+        );
+      }
+    }
+
+    if (!setParts.length) {
+      return fail(
+        "No valid changes provided.",
+        400,
+      );
+    }
+
+    values.push(data.UserID);
+
+    setParts.push(
+      `ModifiedBy = $${values.length}`,
+    );
+
+    setParts.push(
+      "ModifiedDate = CURRENT_TIMESTAMP",
+    );
+
+    values.push(vendorID);
+
+    const vendorIndex = values.length;
+
+    const result = await pool.query(
+      `
+      UPDATE Engineering_Vendor_Entry
+      SET
+        ${setParts.join(", ")}
+      WHERE VendorID = $${vendorIndex}
+        AND IsDeleted = FALSE
+      RETURNING VendorID;
+      `,
+      values,
+    );
+
+    if (!result.rows.length) {
+      return fail(
+        "Engineering vendor not found.",
+        404,
+      );
+    }
+
+    return ok(
+      "Engineering vendor updated successfully.",
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Update Engineering vendor",
+    );
+  }
+};
+// ============================================================Delete Vendor
+const deleteVendor = async (data) => {
+  try {
+    const vendorID = Number(data.VendorID);
+
+    if (
+      !Number.isInteger(vendorID) ||
+      vendorID <= 0
+    ) {
+      return fail(
+        "Valid VendorID is required.",
+        400,
+      );
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE Engineering_Vendor_Entry
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+      WHERE VendorID = $2
+        AND IsDeleted = FALSE
+      RETURNING VendorID;
+      `,
+      [
+        data.UserID,
+        vendorID,
+      ],
+    );
+
+    if (!result.rows.length) {
+      return fail(
+        "Engineering vendor not found.",
+        404,
+      );
+    }
+
+    return ok(
+      "Engineering vendor deleted successfully.",
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Delete Engineering vendor",
+    );
+  }
+};
 
 
 // ============================================================EXPORTS
@@ -1054,5 +2338,16 @@ module.exports = {
   deleteEquipment,
   getEquipmentDescriptions,
   getEquipmentSerialNumbers,
-  getEquipmentAreas
+  getEquipmentAreas,
+  createBreakdown,
+  getAllBreakdowns,
+  getBreakdownById,
+  updateBreakdown,
+  deleteBreakdown,
+  updateBreakdownStatus,
+  createVendor,
+  getAllVendors,
+  getVendorById,
+  updateVendor,
+  deleteVendor,
 };
