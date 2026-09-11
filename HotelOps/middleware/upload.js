@@ -16,6 +16,7 @@ const storage = multer.memoryStorage();
 
 const allowedTypes = new Set([
   "application/pdf",
+  "application/octet-stream",
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-excel.sheet.macroenabled.12",
@@ -39,9 +40,11 @@ const upload = multer({
     const isAllowedImage = mimeType.startsWith("image/");
 
     if (!isAllowedImage && !allowedTypes.has(mimeType)) {
-      return callback(
-        new Error("Only image, PDF, Excel, and CSV attachments are allowed.")
-      );
+      const error = new Error("Only image, PDF, Excel, CSV, and application/octet-stream attachments are allowed.");
+      error.code = "UNSUPPORTED_ATTACHMENT_TYPE";
+      error.fileName = file.originalname;
+      error.mimeType = mimeType;
+      return callback(error);
     }
 
     callback(null, true);

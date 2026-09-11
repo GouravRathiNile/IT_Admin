@@ -21,8 +21,17 @@ const {
   getVendorById,
   updateVendor,
   deleteVendor,
+  createMaintenanceChecklist,
+  getAllMaintenanceChecklists,
+  updateMaintenanceChecklist,
+  deleteMaintenanceChecklist,
+  saveMaintenance,
+  getAllMaintenance,
+  getMaintenanceById,
+  deleteMaintenance,
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
+
 
 // ============================================================Equipment Entry
 router.post("/CreateEquipment",authenticateToken,upload.array("Documents", 10),createEquipment,);
@@ -46,5 +55,16 @@ router.put("/UpdateVendor",authenticateToken,updateVendor,);
 router.delete("/DeleteVendor",authenticateToken,deleteVendor,);
 router.get("/VendorsList",authenticateToken,getAllVendors,);
 router.get("/VendorById/:id",authenticateToken,getVendorById,);
-// ==================================================================
+// =============================================================Maintenance of Equipment
+// =========================================================Maintenance Checklist
+router.post("/CreateMaintenanceChecklist",authenticateToken,createMaintenanceChecklist,);
+router.put("/UpdateMaintenanceChecklist",authenticateToken,updateMaintenanceChecklist,);
+router.delete("/DeleteMaintenanceChecklist",authenticateToken,deleteMaintenanceChecklist,);
+router.get("/MaintenanceChecklistsList",authenticateToken,getAllMaintenanceChecklists,);
+// =========================================================Maintenance Details
+router.post("/SaveMaintenance",authenticateToken,upload.array("Documents", 10),saveMaintenance,);
+router.delete("/DeleteMaintenance",authenticateToken,deleteMaintenance,);
+router.get("/MaintenanceList",authenticateToken,getAllMaintenance,);
+router.get("/GetMaintenanceById/:id",authenticateToken,getMaintenanceById,);
+
 module.exports = router;

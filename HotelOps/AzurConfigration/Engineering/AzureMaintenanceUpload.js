@@ -12,7 +12,7 @@ const uploadToAzure = async (file) => {
   );
 
   const blobName =
-    `EngineeringDocuments/Equipment/${crypto.randomUUID()}${extension}`;
+    `EngineeringDocuments/Maintenance/${crypto.randomUUID()}${extension}`;
 
   const blockBlobClient =
     containerClient.getBlockBlobClient(

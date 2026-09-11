@@ -6,7 +6,7 @@ const {
 const EngineeringHandler = async (message) => {
   try {
     switch (message.action) {
-      // ============================================================Equipment Entry
+      // ===============================================================Equipment Entry
       case "CREATE_ENGINEERING_EQUIPMENT":
         return await EngineeringService.createEquipment(message.data);
 
@@ -15,7 +15,6 @@ const EngineeringHandler = async (message) => {
 
       case "DELETE_ENGINEERING_EQUIPMENT":
         return await EngineeringService.deleteEquipment(message.data);
-
       // ================================================================Breakdown of Equipment
       case "CREATE_ENGINEERING_BREAKDOWN":
         return await EngineeringService.createBreakdown(message.data);
@@ -28,8 +27,7 @@ const EngineeringHandler = async (message) => {
 
       case "UPDATE_ENGINEERING_BREAKDOWN_STATUS":
         return await EngineeringService.updateBreakdownStatus(message.data);
-
-      // ================================================================Vendor of Equipment Entries
+      // ================================================================Vendor of Equipment
       case "CREATE_ENGINEERING_VENDOR":
         return await EngineeringService.createVendor(message.data);
 
@@ -38,6 +36,28 @@ const EngineeringHandler = async (message) => {
 
       case "DELETE_ENGINEERING_VENDOR":
         return await EngineeringService.deleteVendor(message.data);
+      // ================================================================Maintenance of Equipment
+      // ===================================================Maintenance Checklist
+      case "CREATE_ENGINEERING_MAINTENANCE_CHECKLIST":
+        return await EngineeringService.createMaintenanceChecklist(
+          message.data,
+        );
+
+      case "UPDATE_ENGINEERING_MAINTENANCE_CHECKLIST":
+        return await EngineeringService.updateMaintenanceChecklist(
+          message.data,
+        );
+
+      case "DELETE_ENGINEERING_MAINTENANCE_CHECKLIST":
+        return await EngineeringService.deleteMaintenanceChecklist(
+          message.data,
+        );
+      // ===================================================Maintenance Details
+      case "SAVE_ENGINEERING_MAINTENANCE":
+        return await EngineeringService.saveMaintenance(message.data);
+
+      case "DELETE_ENGINEERING_MAINTENANCE":
+        return await EngineeringService.deleteMaintenance(message.data);
 
       default:
         return {
