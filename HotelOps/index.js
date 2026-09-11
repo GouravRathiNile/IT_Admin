@@ -30,6 +30,7 @@ const OpexRoutes = require("./routes/OpexRoute/OpexRoute");
 const HLPReportRoutes = require("./routes/HLPReportRoutes/HLPReportRoutes");
 const ReportRoutes = require("./routes/ReportRoutes/ReportRoutes");
 const EngineeringRoutes = require("./routes/EngineeringRoutes/EngineeringRoutes");
+const NotificationRoutes = require("./routes/NotificationRoute/NotificationRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
 const OrganizationHandler = require("./consumer/ITAdminConsumer/OrganizationHandler");
@@ -47,6 +48,7 @@ const OpexHandler = require("./consumer/OpexConsumer/OpexHandler");
 const HLPReportHandler = require("./consumer/HLPReportConsumer/HLPReportHandler");
 const ReportBuilderHandler = require("./consumer/ReportBuilderConsumer/ReportBuilderHandler");
 const EngineeringHandler = require("./consumer/EngineeringConsumer/EngineeringHandler");
+const NotificationHandler = require("./consumer/NotificationConsumer/NotificationHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -71,6 +73,7 @@ app.use("/api/Opex", OpexRoutes);
 app.use("/api/HLPReport", HLPReportRoutes);
 app.use("/api/Report", ReportRoutes);
 app.use("/api/Engineering", EngineeringRoutes);
+app.use("/api/Notification", NotificationRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -135,7 +138,7 @@ const startServer = async () => {
       QUEUE.AUTH.RESPONSE,
       HotelOpsLoginHandler
     );
-     // ===================================== Guest Glitch Consumer
+    // ===================================== Guest Glitch Consumer
     await startConsumer(
       QUEUE.GUEST_GLITCH.REQUEST,
       QUEUE.GUEST_GLITCH.RESPONSE,
@@ -177,11 +180,18 @@ const startServer = async () => {
       QUEUE.REPORT_BUILDER.RESPONSE,
       ReportBuilderHandler
     );
-     // =====================================  Engineering Consumer
+    // =====================================  Engineering Consumer
     await startConsumer(
-       QUEUE.ENGINEERING.REQUEST,
-        QUEUE.ENGINEERING.RESPONSE,
+      QUEUE.ENGINEERING.REQUEST,
+      QUEUE.ENGINEERING.RESPONSE,
       EngineeringHandler
+    );
+    // ===================================== Notification Consumer
+
+    await startConsumer(
+      QUEUE.NOTIFICATION.REQUEST,
+      QUEUE.NOTIFICATION.RESPONSE,
+      NotificationHandler
     );
     //=====================================Port
     const PORT = process.env.PORT || 5000;

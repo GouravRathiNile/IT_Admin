@@ -6,7 +6,7 @@ const validator = require("../../validators/IncidentReportValidator");
 const { createDTO, listDTO, compactDTO, detailDTO, reportDTO, publicID } = require("../../dto/IncidentReportDTO");
 const service = require("../../services/IncidentReportService/IncidentReportService");
 const repository = require("../../repositories/IncidentReportRepository/IncidentReportRepository");
-const { generatePdf } = require("../../utils/pdfHelper");
+const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
 
 const valid = {
   OrganizationID: 10,
@@ -98,12 +98,49 @@ test("filtered Incident PDF reuses report list logic and excludes removed audit 
   const path = require("node:path");
   const source = fs.readFileSync(path.resolve(__dirname, "../../services/IncidentReportService/IncidentReportService.js"), "utf8");
   const block = source.match(/const INCIDENT_REPORT_PDF_COLUMNS[\s\S]*?\n\]\);/)?.[0] || "";
-  for (const key of ["ID", "Organization", "ReportDate", "IncidentDate", "Time", "Location", "AccidentCause", "Anycasualty", "Description", "Damagedcaused", "Investigation", "PresentDuringIncident", "ReportTo", "ReportBy", "InvestigatedBy"]) {
+  for (const key of ["Serial", "Organization", "ReportDate", "IncidentDate", "Time", "Location", "AccidentCause", "Anycasualty", "Description", "Damagedcaused", "Investigation", "PresentDuringIncident", "ReportTo", "ReportBy", "InvestigatedBy"]) {
     assert.match(block, new RegExp(`key: "${key}"`));
   }
+  assert.match(block, /key: "Serial", header: "SR#"/);
+  assert.doesNotMatch(block, /key: "ID"/);
   assert.doesNotMatch(block, /CreatedBy|ModifyDate|ModifyBy/);
   assert.match(source, /const response = await list\(data, true\)/);
+  assert.match(source, /response\.data\.map\(\(row, index\) => \(\{ \.\.\.row, Serial: index \+ 1 \}\)\)/);
   assert.match(source, /orientation: "landscape"/);
+});
+
+test("PDF logo loading retries transient failures, validates image bytes and falls back", async () => {
+  const originalFetch = global.fetch;
+  const originalFallback = process.env.NILE_OFFICIAL_LOGO_URL;
+  const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00]);
+  const response = (ok, body) => ({
+    ok,
+    headers: { get: () => null },
+    arrayBuffer: async () => body,
+  });
+  try {
+    process.env.NILE_OFFICIAL_LOGO_URL = "https://logos.test/nile.png";
+    let calls = 0;
+    global.fetch = async (url) => {
+      calls += 1;
+      if (url.includes("property") && calls === 1) throw new Error("temporary failure");
+      return response(true, png);
+    };
+    assert.match(await loadLogo(null, "https://logos.test/property.png"), /^data:image\/png;base64,/);
+    assert.equal(calls, 2);
+
+    const urls = [];
+    global.fetch = async (url) => {
+      urls.push(url);
+      return url.includes("property") ? response(true, Buffer.from("not-an-image")) : response(true, png);
+    };
+    assert.match(await loadLogo(null, "https://logos.test/property.png"), /^data:image\/png;base64,/);
+    assert.deepEqual(urls, ["https://logos.test/property.png", "https://logos.test/nile.png"]);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalFallback === undefined) delete process.env.NILE_OFFICIAL_LOGO_URL;
+    else process.env.NILE_OFFICIAL_LOGO_URL = originalFallback;
+  }
 });
 
 test("list organization query is optional, validated and preserved with existing filters", () => {
@@ -283,4 +320,15 @@ test("record organization is derived from the incident and access checked", asyn
 test("pdfmake generates a PDF buffer", async () => {
   const pdf = await generatePdf({ title: "INCIDENT REPORT", reportName: "Incident Report", metadata: [{ label: "Incident Report ID", value: "1" }] });
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
+});
+
+test("single Incident PDF renders long narrative sections at full width", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.resolve(__dirname, "../../services/IncidentReportService/IncidentReportService.js"), "utf8");
+  const singlePdf = source.match(/const reportPdf = async[\s\S]*?const exportReport/)?.[0] || "";
+  assert.match(singlePdf, /title: "Description",\s*value: detail\.Description/);
+  assert.match(singlePdf, /title: "Damaged caused",\s*value: detail\.Damagedcaused/);
+  assert.match(singlePdf, /title: "Investigation",\s*value: detail\.Investigation/);
+  assert.doesNotMatch(singlePdf, /fullWidth: true/);
 });

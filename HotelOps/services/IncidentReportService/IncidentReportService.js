@@ -114,7 +114,7 @@ const list = async (data, detailed = false) => {
 };
 
 const INCIDENT_REPORT_PDF_COLUMNS = Object.freeze([
-  { key: "ID", header: "ID", width: 30, align: "center" },
+  { key: "Serial", header: "SR#", width: 30, align: "center" },
   { key: "Organization", header: "Organization", width: 44 },
   { key: "ReportDate", header: "Report Date", width: 43, align: "center" },
   { key: "IncidentDate", header: "Incident Date", width: 43, align: "center" },
@@ -165,7 +165,7 @@ const reportListPdf = async (data) => {
       pageMargins: [16, 22, 16, 34],
       metadata,
       columns: INCIDENT_REPORT_PDF_COLUMNS,
-      rows: response.data,
+      rows: response.data.map((row, index) => ({ ...row, Serial: index + 1 })),
       styles: {
         pdfTableHeader: { fontSize: 5.4, bold: true, color: "#FFFFFF" },
         pdfTableCell: { fontSize: 5.2 },
@@ -257,15 +257,15 @@ const reportPdf = async (data) => {
     const sections = [
       {
         title: "Description",
-        items: [{ label: "", value: detail.Description, fullWidth: true }],
+        value: detail.Description,
       },
       {
         title: "Damaged caused",
-        items: [{ label: "", value: detail.Damagedcaused, fullWidth: true }],
+        value: detail.Damagedcaused,
       },
       {
         title: "Investigation",
-        items: [{ label: "", value: detail.Investigation, fullWidth: true }],
+        value: detail.Investigation,
       },
     ];
 

@@ -16,6 +16,13 @@ const generateAttachmentUrl = require("../../AzurConfigration/GuestGlitch/AzureG
 const { generateCSV, generateExcel } = require("../../utils/exportHelper");
 const { formatDate } = require("../../utils/dateFormatter");
 
+// Run only after commit. Queue/RPC failures must never retry a saved glitch.
+const notifyCommittedGuestGlitch = (event) => {
+  Promise.resolve()
+    .then(() => require("../NotificationService/NotificationService").notifyGuestGlitch(event))
+    .catch((error) => console.error("Guest Glitch notification failed:", error.message));
+};
+
 const GUEST_GLITCH_EXPORT_COLUMNS = Object.freeze([
   { key: "ID", header: "ID", width: 12 }, { key: "OrganizationName", header: "Organization", width: 24 },
   { key: "EntryDate", header: "Entry Date", width: 16 }, { key: "Time", header: "Time", width: 12 },
@@ -331,6 +338,10 @@ const create = async (data) => {
     const prepared = applySnapshots(data, selections);
     const result = await repository.insert(client, prepared);
     await client.query("COMMIT");
+    notifyCommittedGuestGlitch({
+      actorUserId: data.UserID,
+      current: { ...prepared, ID: Number(result.id), CreatedBy: data.UserID },
+    });
     return { success: true, message: "Guest Glitch created successfully", data: { ID: Number(result.id) } };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -487,6 +498,11 @@ const update = async (data) => {
     }
     await repository.updateChangedFields(client, data.ID, data.OrganizationID, changed, data.UserID, data.Username, data.IP);
     await client.query("COMMIT");
+    notifyCommittedGuestGlitch({
+      actorUserId: data.UserID,
+      previous: current,
+      current: { ...current, ...changed, CreatedBy: found.record.createdby },
+    });
     return { success: true, message: "Guest glitch updated successfully.", data: { ID: Number(data.ID) } };
   } catch (error) {
     await client.query("ROLLBACK");

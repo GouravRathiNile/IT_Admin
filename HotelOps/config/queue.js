@@ -20,10 +20,10 @@ module.exports = {
     RESPONSE: "product_category_response_queue",
   },
   PRODUCT: {
-   REQUEST: "product_request_queue",
+    REQUEST: "product_request_queue",
     RESPONSE: "product_response_queue",
-},
- USER: {
+  },
+  USER: {
     REQUEST: "user_request_queue",
     RESPONSE: "user_response_queue",
   },
@@ -60,7 +60,11 @@ module.exports = {
     RESPONSE: "report_builder_response_queue",
   },
   ENGINEERING: {
-  REQUEST: "engineering_request_queue",
-  RESPONSE: "engineering_response_queue",
-},
+    REQUEST: "engineering_request_queue",
+    RESPONSE: "engineering_response_queue",
+  },
+  NOTIFICATION: {
+    REQUEST: "notification_request",
+    RESPONSE: "notification_response",
+  },
 };
