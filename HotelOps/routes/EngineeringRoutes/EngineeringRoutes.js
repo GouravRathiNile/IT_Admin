@@ -10,8 +10,28 @@ const {
   getEquipmentDescriptions,
   getEquipmentSerialNumbers,
   getEquipmentAreas,
+  createBreakdown,
+  getAllBreakdowns,
+  getBreakdownById,
+  updateBreakdown,
+  deleteBreakdown,
+  updateBreakdownStatus,
+  createVendor,
+  getAllVendors,
+  getVendorById,
+  updateVendor,
+  deleteVendor,
+  createMaintenanceChecklist,
+  getAllMaintenanceChecklists,
+  updateMaintenanceChecklist,
+  deleteMaintenanceChecklist,
+  saveMaintenance,
+  getAllMaintenance,
+  getMaintenanceById,
+  deleteMaintenance,
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
+
 
 // ============================================================Equipment Entry
 router.post("/CreateEquipment",authenticateToken,upload.array("Documents", 10),createEquipment,);
@@ -22,6 +42,29 @@ router.delete("/DeleteEquipment", authenticateToken, deleteEquipment);
 router.get("/EquipmentNames", authenticateToken, getEquipmentDescriptions);
 router.get("/EquipmentSerialNo",authenticateToken,getEquipmentSerialNumbers,);
 router.get("/EquipmentAreas",authenticateToken,getEquipmentAreas,);
-// ================================================================Breakdown of Equipment
+// =============================================================Breakdown of Equipment
+router.post("/CreateBreakdown",authenticateToken,createBreakdown,);
+router.put("/UpdateBreakdown",authenticateToken,updateBreakdown,);
+router.delete("/DeleteBreakdown",authenticateToken,deleteBreakdown,);
+router.get("/BreakdownList",authenticateToken,getAllBreakdowns,);
+router.get("/BreakdownById/:id",authenticateToken,getBreakdownById,);
+router.put("/BreakdownStatus",authenticateToken,updateBreakdownStatus,);
+// =============================================================Vendor of Equipment
+router.post("/CreateVendor",authenticateToken,createVendor,);
+router.put("/UpdateVendor",authenticateToken,updateVendor,);
+router.delete("/DeleteVendor",authenticateToken,deleteVendor,);
+router.get("/VendorsList",authenticateToken,getAllVendors,);
+router.get("/VendorById/:id",authenticateToken,getVendorById,);
+// =============================================================Maintenance of Equipment
+// =========================================================Maintenance Checklist
+router.post("/CreateMaintenanceChecklist",authenticateToken,createMaintenanceChecklist,);
+router.put("/UpdateMaintenanceChecklist",authenticateToken,updateMaintenanceChecklist,);
+router.delete("/DeleteMaintenanceChecklist",authenticateToken,deleteMaintenanceChecklist,);
+router.get("/MaintenanceChecklistsList",authenticateToken,getAllMaintenanceChecklists,);
+// =========================================================Maintenance Details
+router.post("/SaveMaintenance",authenticateToken,upload.array("Documents", 10),saveMaintenance,);
+router.delete("/DeleteMaintenance",authenticateToken,deleteMaintenance,);
+router.get("/MaintenanceList",authenticateToken,getAllMaintenance,);
+router.get("/GetMaintenanceById/:id",authenticateToken,getMaintenanceById,);
 
 module.exports = router;

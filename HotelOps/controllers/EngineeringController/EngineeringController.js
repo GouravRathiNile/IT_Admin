@@ -7,6 +7,7 @@ const AppError = require("../../utils/AppError");
 const handleError = require("../../utils/errorHandler");
 //==================================================Azur
 const uploadToAzure = require("../../AzurConfigration/Engineering/AzureUpload");
+const uploadMaintenanceToAzure = require("../../AzurConfigration/Engineering/AzureMaintenanceUpload");
 // =========================================================Get Data From service
 const EngineeringService = require("../../services/EngineeringService/EngineeringService",);
 
@@ -69,6 +70,7 @@ const sendQueueResponse = async (
     return handleError(error, res);
   }
 };
+// ============================================================================================Equipment Entries
 // ===========================================================Upload Multiple Documents Helper
 const uploadDocuments = async (files = []) => {
   const documents = [];
@@ -368,5 +370,788 @@ exports.getEquipmentAreas = async (req, res) => {
       .json(result);
   } catch (error) {
     return handleError(error, res);
+  }
+};
+// ============================================================================================Breakdown of Equipment Entries
+// ============================================================CREATE Breakdown
+exports.createBreakdown = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      EquipmentID,
+      BreakdownDate,
+      BreakdownTime,
+      BreakdownReason,
+      PartsUsed,
+      RepairedStatus,
+      RepairedDate,
+      RepairedByID,
+      Amount,
+      Parts,
+    } = req.body || {};
+
+    if (!OrganizationID) {
+      return res.status(400).json({
+        success: false,
+        message: "OrganizationID is required.",
+      });
+    }
+
+    if (!EquipmentID) {
+      return res.status(400).json({
+        success: false,
+        message: "EquipmentID is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "CREATE_ENGINEERING_BREAKDOWN",
+      {
+        OrganizationID,
+        EquipmentID,
+        BreakdownDate,
+        BreakdownTime,
+        BreakdownReason,
+        PartsUsed,
+        RepairedStatus,
+        RepairedDate,
+        RepairedByID,
+        Amount,
+        Parts,
+      },
+      STATUS_CODES.CREATED,
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Breakdown List
+exports.getAllBreakdowns = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getAllBreakdowns({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        EquipmentID:
+          req.query.EquipmentID || null,
+
+        RepairedStatus:
+          req.query.RepairedStatus || null,
+
+        FromDate:
+          req.query.FromDate || null,
+
+        ToDate:
+          req.query.ToDate || null,
+
+        Search:
+          req.query.Search || null,
+
+        page:
+          Number(req.query.page) || 1,
+
+        PageSize:
+          Number(req.query.PageSize) || 10,
+      });
+
+    return res
+      .status(
+        result.statusCode ||
+          (result.success ? 200 : 400),
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================GET Breakdown by Id
+exports.getBreakdownById = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getBreakdownById({
+        BreakdownID: req.params.id,
+      });
+
+    return res
+      .status(
+        result.statusCode ||
+          (result.success ? 200 : 400),
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Update Breakdown
+exports.updateBreakdown = async (req, res) => {
+  try {
+    let Parts = req.body?.Parts || [];
+
+    let DeletePartIDs =
+      req.body?.DeletePartIDs || [];
+
+    if (typeof Parts === "string") {
+      try {
+        Parts = JSON.parse(Parts);
+      } catch {
+        Parts = [];
+      }
+    }
+
+    if (typeof DeletePartIDs === "string") {
+      try {
+        DeletePartIDs =
+          JSON.parse(DeletePartIDs);
+      } catch {
+        DeletePartIDs =
+          DeletePartIDs
+            .split(",")
+            .map(Number)
+            .filter(Boolean);
+      }
+    }
+
+    const Changes = {
+      ...req.body,
+    };
+
+    delete Changes.Remarks;
+    delete Changes.BreakdownID;
+    delete Changes.OrganizationID;
+    delete Changes.Parts;
+    delete Changes.DeletePartIDs;
+
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_BREAKDOWN",
+      {
+        BreakdownID:
+          req.body.BreakdownID,
+
+        Changes,
+
+        Parts,
+
+        DeletePartIDs,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Delete Breakdown
+exports.deleteBreakdown = async (req, res) => {
+  return sendQueueResponse(
+    req,
+    res,
+    "DELETE_ENGINEERING_BREAKDOWN",
+    {
+      BreakdownID:
+        req.body.BreakdownID,
+    },
+  );
+};
+// ============================================================Update Breakdown Status
+exports.updateBreakdownStatus = async (req, res) => {
+  try {
+    const {
+      BreakdownID,
+      RepairedStatus,
+    } = req.body || {};
+
+    if (!BreakdownID) {
+      return res.status(400).json({
+        success: false,
+        message: "BreakdownID is required.",
+      });
+    }
+
+    if (
+      !RepairedStatus ||
+      !String(RepairedStatus).trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "RepairedStatus is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_BREAKDOWN_STATUS",
+      {
+        BreakdownID,
+        RepairedStatus: String(RepairedStatus).trim(),
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================================================ Vendors of Equipment Entries
+// ============================================================CREATE Vendor
+exports.createVendor = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      EquipmentID,
+      Name,
+    } = req.body || {};
+
+    if (!OrganizationID) {
+      return res.status(400).json({
+        success: false,
+        message: "OrganizationID is required.",
+      });
+    }
+
+    if (!EquipmentID) {
+      return res.status(400).json({
+        success: false,
+        message: "EquipmentID is required.",
+      });
+    }
+
+    if (!Name || !String(Name).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Name is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "CREATE_ENGINEERING_VENDOR",
+      {
+        OrganizationID,
+        EquipmentID,
+        Name: String(Name).trim(),
+
+        Address: req.body.Address,
+        MobileNumber: req.body.MobileNumber,
+        SecondMobileNumber:
+          req.body.SecondMobileNumber,
+        LandlineNumber:
+          req.body.LandlineNumber,
+        City: req.body.City,
+        Country: req.body.Country,
+        PinCode: req.body.PinCode,
+        Email: req.body.Email,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Vendor List
+exports.getAllVendors = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getAllVendors({
+        OrganizationID:
+          req.query.OrganizationID,
+        EquipmentID:
+          req.query.EquipmentID,
+        Search: req.query.Search,
+        page: req.query.page,
+        PageSize: req.query.PageSize,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================GET Vendor by ID
+exports.getVendorById = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getVendorById({
+        VendorID: req.params.id,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================UPDATE Vendor
+exports.updateVendor = async (req, res) => {
+  try {
+    const { VendorID } = req.body || {};
+
+    if (!VendorID) {
+      return res.status(400).json({
+        success: false,
+        message: "VendorID is required.",
+      });
+    }
+
+    const Changes = {
+      ...req.body,
+    };
+
+    delete Changes.VendorID;
+
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_VENDOR",
+      {
+        VendorID,
+        Changes,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================DELETE Vendor
+exports.deleteVendor = async (req, res) => {
+  try {
+    const { VendorID } = req.body || {};
+
+    if (!VendorID) {
+      return res.status(400).json({
+        success: false,
+        message: "VendorID is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "DELETE_ENGINEERING_VENDOR",
+      {
+        VendorID,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+
+// ============================================================================================Maintenance of Equipment
+// =========================================================================Maintenance Checklist Master
+// ============================================================Create Maintenance Checklist
+exports.createMaintenanceChecklist = async (
+  req,
+  res,
+) => {
+  try {
+    const { Title, IsActive } =
+      req.body || {};
+
+    if (
+      !Title ||
+      !String(Title).trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Title is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "CREATE_ENGINEERING_MAINTENANCE_CHECKLIST",
+      {
+        Title: String(Title).trim(),
+        IsActive,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Maintenance Checklist List
+exports.getAllMaintenanceChecklists = async (req, res) => {
+    try {
+      const result =
+        await EngineeringService.getAllMaintenanceChecklists(
+          {
+            Search: req.query.Search,
+            IsActive: req.query.IsActive,
+            page: req.query.page,
+            PageSize: req.query.PageSize,
+          },
+        );
+
+      return res
+        .status(result.statusCode || 200)
+        .json(result);
+    } catch (error) {
+      return handleError(error, res);
+    }
+};
+// ============================================================Update Maintenance Checklist
+exports.updateMaintenanceChecklist = async (
+  req,
+  res,
+) => {
+  try {
+    const { ChecklistID } =
+      req.body || {};
+
+    if (!ChecklistID) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "ChecklistID is required.",
+      });
+    }
+
+    const Changes = {
+      ...req.body,
+    };
+
+    delete Changes.ChecklistID;
+
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_MAINTENANCE_CHECKLIST",
+      {
+        ChecklistID,
+        Changes,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Delete Maintenance Checklist
+exports.deleteMaintenanceChecklist = async (
+  req,
+  res,
+) => {
+  try {
+    const { ChecklistID } =
+      req.body || {};
+
+    if (!ChecklistID) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "ChecklistID is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "DELETE_ENGINEERING_MAINTENANCE_CHECKLIST",
+      {
+        ChecklistID,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ==========================================================================Maintenance Details
+// ============================================================Create + Update Maintenance Details
+exports.saveMaintenance = async (req, res) => {
+  try {
+    const maintenanceID = Number(
+      req.body.MaintenanceID,
+    );
+
+    const isUpdate =
+      Number.isInteger(maintenanceID) &&
+      maintenanceID > 0;
+
+    // =====================================================
+    // CREATE VALIDATION
+    // =====================================================
+
+    if (!isUpdate) {
+      if (!req.body.OrganizationID) {
+        return res.status(400).json({
+          success: false,
+          message: "OrganizationID is required.",
+        });
+      }
+
+      if (!req.body.EquipmentID) {
+        return res.status(400).json({
+          success: false,
+          message: "EquipmentID is required.",
+        });
+      }
+    }
+
+    // =====================================================
+    // CHECKLISTS
+    // =====================================================
+
+    let Checklists =
+      req.body.Checklists || [];
+
+    if (typeof Checklists === "string") {
+      try {
+        Checklists = JSON.parse(Checklists);
+      } catch {
+        Checklists = [];
+      }
+    }
+
+    // =====================================================
+    // DELETE CHECKLIST IDS
+    // =====================================================
+
+    let DeleteChecklistEntryIDs =
+      req.body.DeleteChecklistEntryIDs || [];
+
+    if (
+      typeof DeleteChecklistEntryIDs ===
+      "string"
+    ) {
+      try {
+        DeleteChecklistEntryIDs =
+          JSON.parse(DeleteChecklistEntryIDs);
+      } catch {
+        DeleteChecklistEntryIDs =
+          DeleteChecklistEntryIDs
+            .split(",")
+            .map(Number)
+            .filter(Boolean);
+      }
+    }
+
+    // =====================================================
+    // DELETE DOCUMENT IDS
+    // =====================================================
+
+    let DeleteDocumentIDs =
+      req.body.DeleteDocumentIDs || [];
+
+    if (
+      typeof DeleteDocumentIDs === "string"
+    ) {
+      try {
+        DeleteDocumentIDs =
+          JSON.parse(DeleteDocumentIDs);
+      } catch {
+        DeleteDocumentIDs =
+          DeleteDocumentIDs
+            .split(",")
+            .map(Number)
+            .filter(Boolean);
+      }
+    }
+
+    // =====================================================
+    // NEW DOCUMENTS
+    // =====================================================
+
+    const Documents = [];
+
+    if (Array.isArray(req.files)) {
+      for (const file of req.files) {
+        const blobName =
+          await uploadMaintenanceToAzure(
+            file,
+          );
+
+        Documents.push({
+          FileName: file.originalname,
+          FilePath: blobName,
+          FileType: file.mimetype,
+          FileSize: file.size,
+        });
+      }
+    }
+
+    // =====================================================
+    // CREATE
+    // =====================================================
+
+    if (!isUpdate) {
+      return sendQueueResponse(
+        req,
+        res,
+        "SAVE_ENGINEERING_MAINTENANCE",
+        {
+          MaintenanceID: null,
+
+          OrganizationID:
+            req.body.OrganizationID,
+
+          EquipmentID:
+            req.body.EquipmentID,
+
+          Maintenance:
+            req.body.Maintenance,
+
+          MaintenanceDay:
+            req.body.MaintenanceDay,
+
+          
+
+          MaintenanceBy:
+            req.body.MaintenanceBy,
+
+          ServicedBy:
+            req.body.ServicedBy,
+
+          EngineerAssigned:
+            req.body.EngineerAssigned,
+
+          Status:
+            req.body.Status,
+
+          
+
+          Checklists,
+          Documents,
+        },
+      );
+    }
+
+    // =====================================================
+    // UPDATE
+    // =====================================================
+
+    const Changes = {
+      ...req.body,
+    };
+
+    delete Changes.MaintenanceID;
+    delete Changes.Checklists;
+    delete Changes.Documents;
+    delete Changes.DeleteDocumentIDs;
+    delete Changes.DeleteChecklistEntryIDs;
+
+    return sendQueueResponse(
+      req,
+      res,
+      "SAVE_ENGINEERING_MAINTENANCE",
+      {
+        MaintenanceID: maintenanceID,
+        Changes,
+        Checklists,
+        DeleteChecklistEntryIDs,
+        Documents,
+        DeleteDocumentIDs,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Maintenance Details List
+exports.getAllMaintenance = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService
+        .getAllMaintenance({
+          OrganizationID:
+            req.query.OrganizationID,
+
+          EquipmentID:
+            req.query.EquipmentID,
+
+          Status:
+            req.query.Status,
+
+          FromDate:
+            req.query.FromDate,
+
+          ToDate:
+            req.query.ToDate,
+
+          Search:
+            req.query.Search,
+
+          page:
+            req.query.page,
+
+          PageSize:
+            req.query.PageSize,
+        });
+
+    return res
+      .status(
+        result.statusCode || 200,
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Get Maintenance Details By ID
+exports.getMaintenanceById = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService
+        .getMaintenanceById({
+          MaintenanceID:
+            req.params.id,
+        });
+
+    return res
+      .status(
+        result.statusCode || 200,
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Delete Maintenance Details
+exports.deleteMaintenance = async (
+  req,
+  res,
+) => {
+  try {
+    const {
+      MaintenanceID,
+    } = req.body || {};
+
+    if (!MaintenanceID) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "MaintenanceID is required.",
+      });
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "DELETE_ENGINEERING_MAINTENANCE",
+      {
+        MaintenanceID,
+      },
+    );
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
   }
 };
