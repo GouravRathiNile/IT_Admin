@@ -415,7 +415,6 @@ const createNotification = async (data) => {
 //
 // Supports:
 // ?moduleName=GuestGlitch
-// ?isRead=false
 // ?page=1
 // ?limit=20
 // ============================================================
@@ -465,6 +464,7 @@ const getNotifications = async (data) => {
 
         const conditions = [
             "nr.user_id = $1",
+            "nr.is_read = FALSE",
         ];
 
         const queryParams = [userId];
@@ -488,46 +488,6 @@ const getNotifications = async (data) => {
 
             queryParams.push(
                 String(data.moduleName).trim()
-            );
-
-            parameterIndex++;
-        }
-
-
-        // ======================================================
-        // Read / Unread Filter
-        // ======================================================
-
-        if (
-            data.isRead !== undefined &&
-            data.isRead !== null &&
-            String(data.isRead).trim() !== ""
-        ) {
-
-            const normalizedIsRead =
-                String(data.isRead)
-                    .trim()
-                    .toLowerCase();
-
-
-            if (
-                normalizedIsRead !== "true" &&
-                normalizedIsRead !== "false"
-            ) {
-
-                return fail(
-                    "isRead must be true or false.",
-                    400
-                );
-            }
-
-
-            conditions.push(
-                `nr.is_read = $${parameterIndex}`
-            );
-
-            queryParams.push(
-                normalizedIsRead === "true"
             );
 
             parameterIndex++;
