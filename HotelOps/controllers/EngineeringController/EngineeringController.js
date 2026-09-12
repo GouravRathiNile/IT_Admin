@@ -1169,10 +1169,12 @@ exports.getTotalEquipmentReports = async (req, res) => {
       AMCType: req.query.AMCType || null,
       AMCStartDate: req.query.AMCStartDate || null,
       WarrantyStartDate: req.query.WarrantyStartDate || null,
+      AMCEndDate: req.query.AMCEndDate || null,
+      WarrantyEndDate: req.query.WarrantyEndDate || null,
 
       SerialNo: req.query.SerialNo || null,
       Area: req.query.Area || null,
-      Equipment: req.query.Equipment || null,
+      EquipmentID: req.query.EquipmentID || null,
 
       Search: req.query.Search || null,
 
@@ -1201,6 +1203,9 @@ exports.getAllBreakdownsReport = async (req, res) => {
         RepairedStatus:
           req.query.RepairedStatus || null,
 
+        BreakdownDate:
+          req.query.BreakdownDate || null,
+
         FromDate:
           req.query.FromDate || null,
 
@@ -1227,3 +1232,137 @@ exports.getAllBreakdownsReport = async (req, res) => {
     return handleError(error, res);
   }
 };
+// =============================================================3. Daily Maintenance Reports
+exports.getDailyMaintenanceReports = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService
+        .getDailyMaintenanceReports({
+          OrganizationID:
+            req.query.OrganizationID,
+
+          EquipmentID:
+            req.query.EquipmentID,
+
+          Status:
+            req.query.Status,
+
+          MaintenanceDate:
+            req.query.MaintenanceDate,
+
+          FromDate:
+            req.query.FromDate,
+
+          ToDate:
+            req.query.ToDate,
+
+          Search:
+            req.query.Search,
+
+          page:
+            req.query.page,
+
+          PageSize:
+            req.query.PageSize,
+        });
+
+    return res
+      .status(
+        result.statusCode || 200,
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// =============================================================4. Monthly Maintenance Reports
+exports.getMonthlyMaintenanceReports = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService
+        .getMonthlyMaintenanceReports({
+          OrganizationID:
+            req.query.OrganizationID,
+
+          EquipmentID:
+            req.query.EquipmentID,
+
+          Month:
+            req.query.Month,
+
+          Year:
+            req.query.Year,
+
+          Status:
+            req.query.Status,
+
+          FromDate:
+            req.query.FromDate,
+
+          ToDate:
+            req.query.ToDate,
+
+          Search:
+            req.query.Search,
+
+          page:
+            req.query.page,
+
+          PageSize:
+            req.query.PageSize,
+        });
+
+    return res
+      .status(
+        result.statusCode || 200,
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// =============================================================5. Scheduled Missing Reports
+exports.getScheduledMissingReports = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService
+        .getScheduledMissingReports({
+          OrganizationID:
+            req.query.OrganizationID,
+
+          page:
+            req.query.page,
+
+          PageSize:
+            req.query.PageSize,
+        });
+
+    return res
+      .status(
+        result.statusCode || 200,
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================================================Pdfs of Equipment
+// =============================================================1.Total Number of Machine Reports PDF

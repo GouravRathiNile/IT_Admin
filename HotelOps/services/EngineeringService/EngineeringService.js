@@ -3429,9 +3429,11 @@ const getTotalEquipmentReports = async (data) => {
       ["AMCType", "AMCType", "="],
       ["AMCStartDate", "AMCStartDate", "="],
       ["WarrantyStartDate", "WarrantyStartDate", "="],
+      ["AMCEndDate", "AMCEndDate", "="],
+      ["WarrantyEndDate", "WarrantyEndDate", "="],
       ["SerialNo", "SerialNumber", "ILIKE"],
       ["Area", "Area", "ILIKE"],
-      ["Equipment", "Description", "ILIKE"],
+      ["EquipmentID", "EquipmentID", "="],
     ]) {
       const value = String(data[parameter] ?? "").trim();
 
@@ -3760,6 +3762,2243 @@ const getAllBreakdownsReport = async (data) => {
     );
   }
 };
+// =============================================================3. Daily Maintenance Reports
+const getDailyMaintenanceReports = async (data) => {
+  try {
+    const page = Math.max(Number(data.page) || 1, 1);
+
+    const pageSize = Math.min(
+      Math.max(Number(data.PageSize) || 10, 1),
+      100,
+    );
+
+    const organizationID = Number(data.OrganizationID);
+
+    const equipmentID =
+      data.EquipmentID &&
+      String(data.EquipmentID).trim()
+        ? Number(data.EquipmentID)
+        : null;
+
+    // =====================================================
+    // VIRTUAL SCHEDULED MAINTENANCE
+    // =====================================================
+
+    let virtualMaintenances = [];
+
+    // =====================================================
+    // FETCH EQUIPMENT
+    //
+    // EquipmentID diya hai:
+    //   sirf wahi equipment
+    //
+    // EquipmentID blank hai:
+    //   organization ke saare equipment
+    // =====================================================
+
+    const equipmentValues = [];
+    const equipmentConditions = [
+      "e.IsDeleted = FALSE",
+    ];
+
+    if (
+      Number.isInteger(organizationID) &&
+      organizationID > 0
+    ) {
+      equipmentValues.push(organizationID);
+
+      equipmentConditions.push(
+        `e.OrganizationID = $${equipmentValues.length}`,
+      );
+    }
+
+    if (
+      Number.isInteger(equipmentID) &&
+      equipmentID > 0
+    ) {
+      equipmentValues.push(equipmentID);
+
+      equipmentConditions.push(
+        `e.EquipmentID = $${equipmentValues.length}`,
+      );
+    }
+
+    const equipmentResult = await pool.query(
+      `
+      SELECT
+        e.EquipmentID,
+        e.OrganizationID,
+        e.Description,
+        e.SerialNumber,
+        e.Capacity,
+        e.ModelNumber,
+        e.Make,
+        e.Area,
+        e.ScheduleOfServicing,
+        e.ScheduleDay,
+
+        EXTRACT(
+          MONTH FROM CURRENT_DATE
+        )::int AS CurrentMonth,
+
+        EXTRACT(
+          YEAR FROM CURRENT_DATE
+        )::int AS CurrentYear
+
+      FROM Engineering_Equipment_Entry_Master e
+
+      WHERE
+        ${equipmentConditions.join(" AND ")}
+
+      ORDER BY
+        e.EquipmentID ASC;
+      `,
+      equipmentValues,
+    );
+
+    // =====================================================
+    // FIND EXISTING CURRENT MONTH MAINTENANCE
+    // =====================================================
+
+    const equipmentIDs =
+      equipmentResult.rows.map((item) =>
+        Number(item.equipmentid),
+      );
+
+    const existingEquipmentIDs =
+      new Set();
+
+    if (equipmentIDs.length) {
+      const existingResult =
+        await pool.query(
+          `
+          SELECT DISTINCT
+            EquipmentID
+
+          FROM Engineering_Maintenance_Details
+
+          WHERE
+            EquipmentID = ANY($1::bigint[])
+
+            AND IsDeleted = FALSE
+
+            AND MaintenanceDate >=
+              DATE_TRUNC(
+                'month',
+                CURRENT_DATE
+              )::date
+
+            AND MaintenanceDate <
+              (
+                DATE_TRUNC(
+                  'month',
+                  CURRENT_DATE
+                )
+                + INTERVAL '1 month'
+              )::date;
+          `,
+          [equipmentIDs],
+        );
+
+      existingResult.rows.forEach(
+        (item) => {
+          existingEquipmentIDs.add(
+            Number(item.equipmentid),
+          );
+        },
+      );
+    }
+
+    // =====================================================
+    // CREATE VIRTUAL MAINTENANCE FOR EACH EQUIPMENT
+    // =====================================================
+
+    for (
+      const equipment of
+      equipmentResult.rows
+    ) {
+      const currentEquipmentID =
+        Number(
+          equipment.equipmentid,
+        );
+
+      // Current month maintenance already exists
+      if (
+        existingEquipmentIDs.has(
+          currentEquipmentID,
+        )
+      ) {
+        continue;
+      }
+
+      const schedule = String(
+        equipment.scheduleofservicing ||
+          "",
+      )
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_-]+/g, "");
+
+      const dayMatch = String(
+        equipment.scheduleday || "",
+      ).match(/\d+/);
+
+      const scheduleDay =
+        dayMatch
+          ? Number(dayMatch[0])
+          : null;
+
+      const currentMonth =
+        Number(
+          equipment.currentmonth,
+        );
+
+      const currentYear =
+        Number(
+          equipment.currentyear,
+        );
+
+      // ===================================================
+      // CHECK CURRENT MONTH IS DUE
+      // ===================================================
+
+      let isDueMonth = false;
+
+      switch (schedule) {
+        case "monthly":
+          isDueMonth = true;
+          break;
+
+        case "bimonth":
+        case "bimonthly":
+          isDueMonth =
+            [
+              1,
+              3,
+              5,
+              7,
+              9,
+              11,
+            ].includes(
+              currentMonth,
+            );
+          break;
+
+        case "quarterly":
+        case "quarter":
+          isDueMonth =
+            [
+              1,
+              4,
+              7,
+              10,
+            ].includes(
+              currentMonth,
+            );
+          break;
+
+        case "sixmonth":
+        case "sixmonthly":
+        case "6month":
+        case "6monthly":
+          isDueMonth =
+            [
+              1,
+              7,
+            ].includes(
+              currentMonth,
+            );
+          break;
+
+        case "yearly":
+        case "annual":
+        case "annually":
+          isDueMonth =
+            currentMonth === 1;
+          break;
+
+        default:
+          isDueMonth = false;
+          break;
+      }
+
+      if (!isDueMonth) {
+        continue;
+      }
+
+      if (
+        !Number.isInteger(
+          scheduleDay,
+        ) ||
+        scheduleDay <= 0
+      ) {
+        continue;
+      }
+
+      // ===================================================
+      // SCHEDULE DATE
+      // ===================================================
+
+      const maxDay =
+        new Date(
+          currentYear,
+          currentMonth,
+          0,
+        ).getDate();
+
+      const finalScheduleDay =
+        Math.min(
+          scheduleDay,
+          maxDay,
+        );
+
+      const monthText =
+        String(
+          currentMonth,
+        ).padStart(
+          2,
+          "0",
+        );
+
+      const dayText =
+        String(
+          finalScheduleDay,
+        ).padStart(
+          2,
+          "0",
+        );
+
+      const scheduledDate =
+        `${currentYear}-${monthText}-${dayText}`;
+
+      // ===================================================
+      // MAINTENANCE DATE EXACT FILTER
+      // Virtual row par bhi apply
+      // ===================================================
+
+      if (
+        data.MaintenanceDate &&
+        String(
+          data.MaintenanceDate,
+        ) !== scheduledDate
+      ) {
+        continue;
+      }
+
+      // ===================================================
+      // STATUS FILTER
+      // Virtual row always Pending
+      // ===================================================
+
+      if (
+        data.Status &&
+        String(
+          data.Status,
+        ).trim() &&
+        String(
+          data.Status,
+        )
+          .trim()
+          .toLowerCase() !==
+          "pending"
+      ) {
+        continue;
+      }
+
+      // ===================================================
+      // CREATE VIRTUAL ROW
+      // ===================================================
+
+      virtualMaintenances.push({
+        MaintenanceID: 0,
+
+        OrganizationID:
+          Number(
+            equipment.organizationid,
+          ),
+
+        EquipmentID:
+          currentEquipmentID,
+
+        MaintenanceBy:
+          null,
+
+        Status:
+          "Pending",
+
+        MaintenanceDate:
+          formatDate(
+            scheduledDate,
+          ),
+
+        Description:
+          equipment.description ||
+          null,
+
+        SerialNumber:
+          equipment.serialnumber ||
+          null,
+
+        Capacity:
+          equipment.capacity ||
+          null,
+
+        ModelNumber:
+          equipment.modelnumber ||
+          null,
+
+        Make:
+          equipment.make ||
+          null,
+
+        Area:
+          equipment.area ||
+          null,
+
+        ScheduleOfServicing:
+          equipment.scheduleofservicing ||
+          null,
+
+        ScheduleDay:
+          equipment.scheduleday ||
+          null,
+      });
+    }
+
+    // =====================================================
+    // DATABASE FILTER CONDITIONS
+    // =====================================================
+
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+    ];
+
+    // =====================================================
+    // ORGANIZATION
+    // =====================================================
+
+    if (data.OrganizationID) {
+      values.push(
+        Number(
+          data.OrganizationID,
+        ),
+      );
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // EQUIPMENT
+    // =====================================================
+
+    if (
+      data.EquipmentID &&
+      String(
+        data.EquipmentID,
+      ).trim()
+    ) {
+      values.push(
+        Number(
+          data.EquipmentID,
+        ),
+      );
+
+      conditions.push(
+        `m.EquipmentID = $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // STATUS
+    // =====================================================
+
+    if (
+      data.Status &&
+      String(
+        data.Status,
+      ).trim()
+    ) {
+      values.push(
+        String(
+          data.Status,
+        ).trim(),
+      );
+
+      conditions.push(
+        `m.Status = $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // MAINTENANCE DATE
+    // =====================================================
+
+    if (data.MaintenanceDate) {
+      values.push(
+        data.MaintenanceDate,
+      );
+
+      conditions.push(
+        `m.MaintenanceDate = $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // FROM DATE
+    // =====================================================
+
+    if (data.FromDate) {
+      values.push(
+        data.FromDate,
+      );
+
+      conditions.push(
+        `m.MaintenanceDate >= $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // TO DATE
+    // =====================================================
+
+    if (data.ToDate) {
+      values.push(
+        data.ToDate,
+      );
+
+      conditions.push(
+        `m.MaintenanceDate <= $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // SEARCH
+    // =====================================================
+
+    if (
+      data.Search &&
+      String(
+        data.Search,
+      ).trim()
+    ) {
+      values.push(
+        `%${String(
+          data.Search,
+        ).trim()}%`,
+      );
+
+      const index =
+        values.length;
+
+      conditions.push(`
+        (
+          m.Maintenance
+            ILIKE $${index}
+
+          OR m.MaintenanceBy
+            ILIKE $${index}
+
+          OR em.Description
+            ILIKE $${index}
+
+          OR em.SerialNumber
+            ILIKE $${index}
+
+          OR em.Area
+            ILIKE $${index}
+
+          OR EXISTS
+          (
+            SELECT 1
+
+            FROM user_master searchUser
+
+            WHERE
+              searchUser.UserID =
+                m.ServicedBy
+
+              AND searchUser.IsDeleted =
+                FALSE
+
+              AND searchUser.FullName
+                ILIKE $${index}
+          )
+        )
+      `);
+    }
+
+    const where =
+      conditions.join(
+        " AND ",
+      );
+
+    // =====================================================
+    // COUNT DATABASE RECORDS
+    // =====================================================
+
+    const countResult =
+      await pool.query(
+        `
+        SELECT
+          COUNT(*)::bigint
+            AS TotalCount
+
+        FROM Engineering_Maintenance_Details m
+
+        LEFT JOIN Engineering_Equipment_Entry_Master em
+          ON em.EquipmentID =
+             m.EquipmentID
+
+          AND em.IsDeleted =
+             FALSE
+
+        WHERE ${where};
+        `,
+        values,
+      );
+
+    const databaseTotalCount =
+      Number(
+        countResult.rows[0]
+          .totalcount,
+      );
+
+    const virtualCount =
+      virtualMaintenances.length;
+
+    const totalCount =
+      virtualCount +
+      databaseTotalCount;
+
+    const totalPages =
+      Math.ceil(
+        totalCount /
+        pageSize,
+      );
+
+    // =====================================================
+    // PAGINATION
+    //
+    // Virtual rows first
+    // Database rows uske baad
+    // =====================================================
+
+    const pageStart =
+      (page - 1) *
+      pageSize;
+
+    const pageEnd =
+      pageStart +
+      pageSize;
+
+    const paginatedVirtualRows =
+      virtualMaintenances.slice(
+        pageStart,
+        pageEnd,
+      );
+
+    const databaseLimit =
+      Math.max(
+        pageSize -
+          paginatedVirtualRows.length,
+        0,
+      );
+
+    const databaseOffset =
+      Math.max(
+        pageStart -
+          virtualCount,
+        0,
+      );
+
+    // =====================================================
+    // FETCH DATABASE RECORDS
+    // =====================================================
+
+    let databaseRecords = [];
+
+    if (databaseLimit > 0) {
+      const listValues = [
+        ...values,
+        databaseLimit,
+        databaseOffset,
+      ];
+
+      const limitIndex =
+        values.length + 1;
+
+      const offsetIndex =
+        values.length + 2;
+
+      const result =
+        await pool.query(
+          `
+          SELECT
+            m.*,
+
+            u.FullName
+              AS EngineerAssignedName,
+
+            sb.FullName
+              AS ServicedByName,
+
+            em.Description
+              AS EquipmentDescription,
+
+            em.SerialNumber,
+
+            em.Capacity,
+
+            em.ModelNumber,
+
+            em.Make,
+
+            em.Area,
+
+            em.ScheduleOfServicing,
+
+            em.ScheduleDay
+
+          FROM Engineering_Maintenance_Details m
+
+          LEFT JOIN user_master u
+            ON u.UserID =
+               m.EngineerAssigned
+
+            AND u.IsDeleted =
+               FALSE
+
+          LEFT JOIN user_master sb
+            ON sb.UserID =
+               m.ServicedBy
+
+            AND sb.IsDeleted =
+               FALSE
+
+          LEFT JOIN Engineering_Equipment_Entry_Master em
+            ON em.EquipmentID =
+               m.EquipmentID
+
+            AND em.IsDeleted =
+               FALSE
+
+          WHERE ${where}
+
+          ORDER BY
+            m.MaintenanceID DESC
+
+          LIMIT $${limitIndex}
+
+          OFFSET $${offsetIndex};
+          `,
+          listValues,
+        );
+
+      databaseRecords =
+        result.rows.map(
+          (row) => ({
+            MaintenanceID:
+              Number(
+                row.maintenanceid,
+              ),
+
+            OrganizationID:
+              Number(
+                row.organizationid,
+              ),
+
+            EquipmentID:
+              Number(
+                row.equipmentid,
+              ),
+
+            Maintenance:
+              row.maintenance ||
+              null,
+
+            MaintenanceDay:
+              row.maintenanceday ||
+              null,
+
+            MaintenanceDate:
+              formatDate(
+                row.maintenancedate,
+              ),
+
+            MaintenanceBy:
+              row.maintenanceby ||
+              null,
+
+            ServicedBy:
+              row.servicedby
+                ? Number(
+                    row.servicedby,
+                  )
+                : null,
+
+            ServicedByName:
+              row.servicedbyname ||
+              null,
+
+            EngineerAssigned:
+              row.engineerassigned
+                ? Number(
+                    row.engineerassigned,
+                  )
+                : null,
+
+            EngineerAssignedName:
+              row.engineerassignedname ||
+              null,
+
+            Status:
+              row.status ||
+              null,
+
+            CreatedDate:
+              formatDate(
+                row.createddate,
+              ),
+
+            Description:
+              row.equipmentdescription ||
+              null,
+
+            SerialNumber:
+              row.serialnumber ||
+              null,
+
+            Capacity:
+              row.capacity ||
+              null,
+
+            ModelNumber:
+              row.modelnumber ||
+              null,
+
+            Make:
+              row.make ||
+              null,
+
+            Area:
+              row.area ||
+              null,
+
+            ScheduleOfServicing:
+              row.scheduleofservicing ||
+              null,
+
+            ScheduleDay:
+              row.scheduleday ||
+              null,
+          }),
+        );
+    }
+
+    // =====================================================
+    // FINAL PAGE DATA
+    // =====================================================
+
+    const records = [
+      ...paginatedVirtualRows,
+      ...databaseRecords,
+    ];
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
+
+    return ok(
+      "Engineering daily maintenance report fetched successfully.",
+      {
+        TotalCount:
+          totalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize:
+          pageSize,
+
+        TotalPages:
+          totalPages,
+
+        data:
+          records,
+      },
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Engineering daily maintenance report",
+    );
+  }
+};
+// =============================================================4. Monthly Maintenance Reports
+const getMonthlyMaintenanceReports = async (data) => {
+  try {
+    const page = Math.max(
+      Number(data.page) || 1,
+      1,
+    );
+
+    const pageSize = Math.min(
+      Math.max(
+        Number(data.PageSize) || 10,
+        1,
+      ),
+      100,
+    );
+
+    const organizationID =
+      Number(data.OrganizationID);
+
+    const equipmentID =
+      data.EquipmentID &&
+      String(data.EquipmentID).trim()
+        ? Number(data.EquipmentID)
+        : null;
+
+    // =====================================================
+    // MONTH / YEAR
+    // Blank hone par current month/year
+    // =====================================================
+
+    const currentDate = new Date();
+
+    const reportMonth =
+      data.Month &&
+      Number(data.Month) >= 1 &&
+      Number(data.Month) <= 12
+        ? Number(data.Month)
+        : currentDate.getMonth() + 1;
+
+    const reportYear =
+      data.Year &&
+      Number(data.Year) > 0
+        ? Number(data.Year)
+        : currentDate.getFullYear();
+
+    // =====================================================
+    // VIRTUAL SCHEDULED MAINTENANCE
+    // =====================================================
+
+    let virtualMaintenances = [];
+
+    // =====================================================
+    // FETCH EQUIPMENT
+    // =====================================================
+
+    const equipmentValues = [];
+
+    const equipmentConditions = [
+      "e.IsDeleted = FALSE",
+    ];
+
+    if (
+      Number.isInteger(organizationID) &&
+      organizationID > 0
+    ) {
+      equipmentValues.push(
+        organizationID,
+      );
+
+      equipmentConditions.push(
+        `e.OrganizationID = $${equipmentValues.length}`,
+      );
+    }
+
+    if (
+      Number.isInteger(equipmentID) &&
+      equipmentID > 0
+    ) {
+      equipmentValues.push(
+        equipmentID,
+      );
+
+      equipmentConditions.push(
+        `e.EquipmentID = $${equipmentValues.length}`,
+      );
+    }
+
+    const equipmentResult =
+      await pool.query(
+        `
+        SELECT
+          e.EquipmentID,
+          e.OrganizationID,
+
+          e.Description,
+          e.SerialNumber,
+          e.Capacity,
+          e.ModelNumber,
+          e.Make,
+          e.Area,
+
+          e.CommissioningDate,
+
+          e.WarrantyStartDate,
+          e.WarrantyEndDate,
+          e.WarrantyStatus,
+
+          e.AMCType,
+          e.AMCStartDate,
+          e.AMCEndDate,
+          e.AMCStatus,
+          e.AMCYearlyExpense,
+
+          e.ScheduleOfServicing,
+          e.ScheduleDay
+
+        FROM Engineering_Equipment_Entry_Master e
+
+        WHERE
+          ${equipmentConditions.join(" AND ")}
+
+        ORDER BY
+          e.EquipmentID ASC;
+        `,
+        equipmentValues,
+      );
+
+    // =====================================================
+    // EQUIPMENT IDS
+    // =====================================================
+
+    const equipmentIDs =
+      equipmentResult.rows.map(
+        (item) =>
+          Number(
+            item.equipmentid,
+          ),
+      );
+
+    // =====================================================
+    // FIND EXISTING MAINTENANCE
+    // FOR SELECTED MONTH / YEAR
+    // =====================================================
+
+    const existingEquipmentIDs =
+      new Set();
+
+    if (equipmentIDs.length) {
+      const existingResult =
+        await pool.query(
+          `
+          SELECT DISTINCT
+            EquipmentID
+
+          FROM Engineering_Maintenance_Details
+
+          WHERE
+            EquipmentID =
+              ANY($1::bigint[])
+
+            AND IsDeleted = FALSE
+
+            AND EXTRACT(
+              MONTH FROM MaintenanceDate
+            )::int = $2
+
+            AND EXTRACT(
+              YEAR FROM MaintenanceDate
+            )::int = $3;
+          `,
+          [
+            equipmentIDs,
+            reportMonth,
+            reportYear,
+          ],
+        );
+
+      existingResult.rows.forEach(
+        (item) => {
+          existingEquipmentIDs.add(
+            Number(
+              item.equipmentid,
+            ),
+          );
+        },
+      );
+    }
+
+    // =====================================================
+    // CREATE VIRTUAL MAINTENANCE
+    // =====================================================
+
+    for (
+      const equipment of
+      equipmentResult.rows
+    ) {
+      const currentEquipmentID =
+        Number(
+          equipment.equipmentid,
+        );
+
+      // Selected month ka maintenance already hai
+      if (
+        existingEquipmentIDs.has(
+          currentEquipmentID,
+        )
+      ) {
+        continue;
+      }
+
+      const schedule = String(
+        equipment.scheduleofservicing ||
+          "",
+      )
+        .trim()
+        .toLowerCase()
+        .replace(
+          /[\s_-]+/g,
+          "",
+        );
+
+      const dayMatch =
+        String(
+          equipment.scheduleday ||
+            "",
+        ).match(/\d+/);
+
+      const scheduleDay =
+        dayMatch
+          ? Number(
+              dayMatch[0],
+            )
+          : null;
+
+      // ===================================================
+      // CHECK SELECTED MONTH IS DUE
+      // ===================================================
+
+      let isDueMonth = false;
+
+      switch (schedule) {
+        case "monthly":
+          isDueMonth = true;
+          break;
+
+        case "bimonth":
+        case "bimonthly":
+          isDueMonth = [
+            1,
+            3,
+            5,
+            7,
+            9,
+            11,
+          ].includes(
+            reportMonth,
+          );
+          break;
+
+        case "quarterly":
+        case "quarter":
+          isDueMonth = [
+            1,
+            4,
+            7,
+            10,
+          ].includes(
+            reportMonth,
+          );
+          break;
+
+        case "sixmonth":
+        case "sixmonthly":
+        case "6month":
+        case "6monthly":
+          isDueMonth = [
+            1,
+            7,
+          ].includes(
+            reportMonth,
+          );
+          break;
+
+        case "yearly":
+        case "annual":
+        case "annually":
+          isDueMonth =
+            reportMonth === 1;
+          break;
+
+        default:
+          isDueMonth = false;
+          break;
+      }
+
+      if (!isDueMonth) {
+        continue;
+      }
+
+      if (
+        !Number.isInteger(
+          scheduleDay,
+        ) ||
+        scheduleDay <= 0
+      ) {
+        continue;
+      }
+
+      // ===================================================
+      // SCHEDULE DATE
+      // ===================================================
+
+      const maxDay =
+        new Date(
+          reportYear,
+          reportMonth,
+          0,
+        ).getDate();
+
+      const finalScheduleDay =
+        Math.min(
+          scheduleDay,
+          maxDay,
+        );
+
+      const monthText =
+        String(
+          reportMonth,
+        ).padStart(
+          2,
+          "0",
+        );
+
+      const dayText =
+        String(
+          finalScheduleDay,
+        ).padStart(
+          2,
+          "0",
+        );
+
+      const scheduledDate =
+        `${reportYear}-${monthText}-${dayText}`;
+
+      // ===================================================
+      // STATUS FILTER
+      // Virtual maintenance = Pending
+      // ===================================================
+
+      if (
+        data.Status &&
+        String(
+          data.Status,
+        ).trim() &&
+        String(
+          data.Status,
+        )
+          .trim()
+          .toLowerCase() !==
+          "pending"
+      ) {
+        continue;
+      }
+
+      // ===================================================
+      // CREATE VIRTUAL ROW
+      // ===================================================
+
+      virtualMaintenances.push({
+        MaintenanceID: 0,
+
+        OrganizationID:
+          Number(
+            equipment.organizationid,
+          ),
+
+        EquipmentID:
+          currentEquipmentID,
+
+        MaintenanceBy:
+          null,
+
+        Status:
+          "Pending",
+
+        MaintenanceDate:
+          formatDate(
+            scheduledDate,
+          ),
+
+        Description:
+          equipment.description ||
+          null,
+
+        SerialNumber:
+          equipment.serialnumber ||
+          null,
+
+        Capacity:
+          equipment.capacity ||
+          null,
+
+        ModelNumber:
+          equipment.modelnumber ||
+          null,
+
+        Make:
+          equipment.make ||
+          null,
+
+        Area:
+          equipment.area ||
+          null,
+
+        CommissioningDate:
+          formatDate(
+            equipment.commissioningdate,
+          ),
+
+        WarrantyStartDate:
+          formatDate(
+            equipment.warrantystartdate,
+          ),
+
+        WarrantyEndDate:
+          formatDate(
+            equipment.warrantyenddate,
+          ),
+
+        WarrantyStatus:
+          equipment.warrantystatus ||
+          null,
+
+        AMCType:
+          equipment.amctype ||
+          null,
+
+        AMCStartDate:
+          formatDate(
+            equipment.amcstartdate,
+          ),
+
+        AMCEndDate:
+          formatDate(
+            equipment.amcenddate,
+          ),
+
+        AMCStatus:
+          equipment.amcstatus ||
+          null,
+
+        AMCYearlyExpense:
+          equipment.amcyearlyexpense !==
+            null
+            ? Number(
+                equipment.amcyearlyexpense,
+              )
+            : null,
+
+        ScheduleOfServicing:
+          equipment.scheduleofservicing ||
+          null,
+
+        ScheduleDay:
+          equipment.scheduleday ||
+          null,
+      });
+    }
+
+    // =====================================================
+    // DATABASE FILTER CONDITIONS
+    // =====================================================
+
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+    ];
+
+    // =====================================================
+    // ORGANIZATION
+    // =====================================================
+
+    if (data.OrganizationID) {
+      values.push(
+        Number(
+          data.OrganizationID,
+        ),
+      );
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // EQUIPMENT
+    // =====================================================
+
+    if (
+      data.EquipmentID &&
+      String(
+        data.EquipmentID,
+      ).trim()
+    ) {
+      values.push(
+        Number(
+          data.EquipmentID,
+        ),
+      );
+
+      conditions.push(
+        `m.EquipmentID = $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // MONTH
+    // =====================================================
+
+    values.push(
+      reportMonth,
+    );
+
+    conditions.push(
+      `EXTRACT(MONTH FROM m.MaintenanceDate)::int = $${values.length}`,
+    );
+
+    // =====================================================
+    // YEAR
+    // =====================================================
+
+    values.push(
+      reportYear,
+    );
+
+    conditions.push(
+      `EXTRACT(YEAR FROM m.MaintenanceDate)::int = $${values.length}`,
+    );
+
+    // =====================================================
+    // STATUS
+    // =====================================================
+
+    if (
+      data.Status &&
+      String(
+        data.Status,
+      ).trim()
+    ) {
+      values.push(
+        String(
+          data.Status,
+        ).trim(),
+      );
+
+      conditions.push(
+        `TRIM(m.Status) = $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // FROM DATE
+    // =====================================================
+
+    if (data.FromDate) {
+      values.push(
+        data.FromDate,
+      );
+
+      conditions.push(
+        `m.MaintenanceDate >= $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // TO DATE
+    // =====================================================
+
+    if (data.ToDate) {
+      values.push(
+        data.ToDate,
+      );
+
+      conditions.push(
+        `m.MaintenanceDate <= $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // SEARCH
+    // =====================================================
+
+    if (
+      data.Search &&
+      String(
+        data.Search,
+      ).trim()
+    ) {
+      values.push(
+        `%${String(
+          data.Search,
+        ).trim()}%`,
+      );
+
+      const index =
+        values.length;
+
+      conditions.push(`
+        (
+          m.Maintenance
+            ILIKE $${index}
+
+          OR m.MaintenanceBy
+            ILIKE $${index}
+
+          OR em.Description
+            ILIKE $${index}
+
+          OR em.SerialNumber
+            ILIKE $${index}
+
+          OR em.Area
+            ILIKE $${index}
+
+          OR EXISTS
+          (
+            SELECT 1
+
+            FROM user_master searchUser
+
+            WHERE
+              searchUser.UserID =
+                m.ServicedBy
+
+              AND searchUser.IsDeleted =
+                FALSE
+
+              AND searchUser.FullName
+                ILIKE $${index}
+          )
+        )
+      `);
+    }
+
+    const where =
+      conditions.join(
+        " AND ",
+      );
+
+    // =====================================================
+    // COUNT
+    // =====================================================
+
+    const countResult =
+      await pool.query(
+        `
+        SELECT
+          COUNT(*)::bigint
+            AS TotalCount
+
+        FROM Engineering_Maintenance_Details m
+
+        LEFT JOIN Engineering_Equipment_Entry_Master em
+          ON em.EquipmentID =
+             m.EquipmentID
+
+          AND em.IsDeleted =
+             FALSE
+
+        WHERE
+          ${where};
+        `,
+        values,
+      );
+
+    const databaseTotalCount =
+      Number(
+        countResult.rows[0]
+          .totalcount,
+      );
+
+    const virtualCount =
+      virtualMaintenances.length;
+
+    const totalCount =
+      virtualCount +
+      databaseTotalCount;
+
+    const totalPages =
+      Math.ceil(
+        totalCount /
+          pageSize,
+      );
+
+    // =====================================================
+    // PAGINATION
+    // =====================================================
+
+    const pageStart =
+      (page - 1) *
+      pageSize;
+
+    const pageEnd =
+      pageStart +
+      pageSize;
+
+    const paginatedVirtualRows =
+      virtualMaintenances.slice(
+        pageStart,
+        pageEnd,
+      );
+
+    const databaseLimit =
+      Math.max(
+        pageSize -
+          paginatedVirtualRows.length,
+        0,
+      );
+
+    const databaseOffset =
+      Math.max(
+        pageStart -
+          virtualCount,
+        0,
+      );
+
+    // =====================================================
+    // DATABASE RECORDS
+    // =====================================================
+
+    let databaseRecords = [];
+
+    if (databaseLimit > 0) {
+      const listValues = [
+        ...values,
+        databaseLimit,
+        databaseOffset,
+      ];
+
+      const limitIndex =
+        values.length + 1;
+
+      const offsetIndex =
+        values.length + 2;
+
+      const result =
+        await pool.query(
+          `
+          SELECT
+            m.*,
+
+            u.FullName
+              AS EngineerAssignedName,
+
+            sb.FullName
+              AS ServicedByName,
+
+            em.Description
+              AS EquipmentDescription,
+
+            em.SerialNumber,
+
+            em.Capacity,
+
+            em.ModelNumber,
+
+            em.Make,
+
+            em.Area,
+
+            em.CommissioningDate,
+
+            em.WarrantyStartDate,
+
+            em.WarrantyEndDate,
+
+            em.WarrantyStatus,
+
+            em.AMCType,
+
+            em.AMCStartDate,
+
+            em.AMCEndDate,
+
+            em.AMCStatus,
+
+            em.AMCYearlyExpense,
+
+            em.ScheduleOfServicing,
+
+            em.ScheduleDay
+
+          FROM Engineering_Maintenance_Details m
+
+          LEFT JOIN user_master u
+            ON u.UserID =
+               m.EngineerAssigned
+
+            AND u.IsDeleted =
+               FALSE
+
+          LEFT JOIN user_master sb
+            ON sb.UserID =
+               m.ServicedBy
+
+            AND sb.IsDeleted =
+               FALSE
+
+          LEFT JOIN Engineering_Equipment_Entry_Master em
+            ON em.EquipmentID =
+               m.EquipmentID
+
+            AND em.IsDeleted =
+               FALSE
+
+          WHERE
+            ${where}
+
+          ORDER BY
+            m.MaintenanceDate DESC,
+            m.MaintenanceID DESC
+
+          LIMIT
+            $${limitIndex}
+
+          OFFSET
+            $${offsetIndex};
+          `,
+          listValues,
+        );
+
+      databaseRecords =
+        result.rows.map(
+          (row) => ({
+            MaintenanceID:
+              Number(
+                row.maintenanceid,
+              ),
+
+            OrganizationID:
+              Number(
+                row.organizationid,
+              ),
+
+            EquipmentID:
+              Number(
+                row.equipmentid,
+              ),
+
+            Maintenance:
+              row.maintenance ||
+              null,
+
+            MaintenanceDay:
+              row.maintenanceday ||
+              null,
+
+            MaintenanceDate:
+              formatDate(
+                row.maintenancedate,
+              ),
+
+            MaintenanceBy:
+              row.maintenanceby ||
+              null,
+
+            ServicedBy:
+              row.servicedby
+                ? Number(
+                    row.servicedby,
+                  )
+                : null,
+
+            ServicedByName:
+              row.servicedbyname ||
+              null,
+
+            EngineerAssigned:
+              row.engineerassigned
+                ? Number(
+                    row.engineerassigned,
+                  )
+                : null,
+
+            EngineerAssignedName:
+              row.engineerassignedname ||
+              null,
+
+            Status:
+              row.status
+                ? String(
+                    row.status,
+                  ).trim()
+                : null,
+
+            CreatedDate:
+              formatDate(
+                row.createddate,
+              ),
+
+            Description:
+              row.equipmentdescription ||
+              null,
+
+            SerialNumber:
+              row.serialnumber ||
+              null,
+
+            Capacity:
+              row.capacity ||
+              null,
+
+            ModelNumber:
+              row.modelnumber ||
+              null,
+
+            Make:
+              row.make ||
+              null,
+
+            Area:
+              row.area ||
+              null,
+
+            CommissioningDate:
+              formatDate(
+                row.commissioningdate,
+              ),
+
+            WarrantyStartDate:
+              formatDate(
+                row.warrantystartdate,
+              ),
+
+            WarrantyEndDate:
+              formatDate(
+                row.warrantyenddate,
+              ),
+
+            WarrantyStatus:
+              row.warrantystatus ||
+              null,
+
+            AMCType:
+              row.amctype ||
+              null,
+
+            AMCStartDate:
+              formatDate(
+                row.amcstartdate,
+              ),
+
+            AMCEndDate:
+              formatDate(
+                row.amcenddate,
+              ),
+
+            AMCStatus:
+              row.amcstatus ||
+              null,
+
+            AMCYearlyExpense:
+              row.amcyearlyexpense !==
+                null
+                ? Number(
+                    row.amcyearlyexpense,
+                  )
+                : null,
+
+            ScheduleOfServicing:
+              row.scheduleofservicing ||
+              null,
+
+            ScheduleDay:
+              row.scheduleday ||
+              null,
+          }),
+        );
+    }
+
+    // =====================================================
+    // FINAL DATA
+    // =====================================================
+
+    const records = [
+      ...paginatedVirtualRows,
+      ...databaseRecords,
+    ];
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
+
+    return ok(
+      "Engineering monthly maintenance report fetched successfully.",
+      {
+        TotalCount:
+          totalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize:
+          pageSize,
+
+        TotalPages:
+          totalPages,
+
+        data:
+          records,
+      },
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Engineering monthly maintenance report",
+    );
+  }
+};
+// =============================================================5. Scheduled Missing Reports
+const getScheduledMissingReports = async (data) => {
+  try {
+    const page = Math.max(Number(data.page) || 1, 1);
+
+    const pageSize = Math.min(
+      Math.max(Number(data.PageSize) || 10, 1),
+      100,
+    );
+
+    const values = [];
+
+    const conditions = [
+      "e.IsDeleted = FALSE",
+    ];
+
+    // =====================================================
+    // ORGANIZATION FILTER
+    // =====================================================
+
+    if (data.OrganizationID) {
+      values.push(
+        Number(data.OrganizationID),
+      );
+
+      conditions.push(
+        `e.OrganizationID = $${values.length}`,
+      );
+    }
+
+    // =====================================================
+    // ONLY INCOMPLETE EQUIPMENT
+    // Agar inme se koi bhi field blank/null hai
+    // to record response me aayega
+    // =====================================================
+
+    conditions.push(`
+      (
+        e.WarrantyStartDate IS NULL
+
+        OR e.WarrantyEndDate IS NULL
+
+        OR e.WarrantyStatus IS NULL
+        OR TRIM(e.WarrantyStatus) = ''
+
+        OR e.AMCType IS NULL
+        OR TRIM(e.AMCType) = ''
+
+        OR e.AMCStartDate IS NULL
+
+        OR e.AMCEndDate IS NULL
+
+        OR e.AMCStatus IS NULL
+        OR TRIM(e.AMCStatus) = ''
+
+        OR e.AMCYearlyExpense IS NULL
+
+        OR e.ScheduleOfServicing IS NULL
+        OR TRIM(e.ScheduleOfServicing) = ''
+
+        OR e.ScheduleDay IS NULL
+        OR TRIM(e.ScheduleDay) = ''
+      )
+    `);
+
+    const where = conditions.join(
+      " AND ",
+    );
+
+    // =====================================================
+    // COUNT
+    // =====================================================
+
+    const countResult =
+      await pool.query(
+        `
+        SELECT
+          COUNT(*)::bigint
+            AS TotalCount
+
+        FROM Engineering_Equipment_Entry_Master e
+
+        WHERE
+          ${where};
+        `,
+        values,
+      );
+
+    const totalCount =
+      Number(
+        countResult.rows[0]
+          .totalcount,
+      );
+
+    const totalPages =
+      Math.ceil(
+        totalCount /
+        pageSize,
+      );
+
+    // =====================================================
+    // PAGINATION
+    // =====================================================
+
+    const offset =
+      (page - 1) *
+      pageSize;
+
+    const listValues = [
+      ...values,
+      pageSize,
+      offset,
+    ];
+
+    const limitIndex =
+      values.length + 1;
+
+    const offsetIndex =
+      values.length + 2;
+
+    // =====================================================
+    // LIST
+    // =====================================================
+
+    const result =
+      await pool.query(
+        `
+        SELECT
+          e.EquipmentID,
+          e.OrganizationID,
+
+          e.Description,
+          e.SerialNumber,
+          e.TypeOfMachine,
+          e.Capacity,
+          e.ModelNumber,
+          e.Make,
+          e.Area,
+
+          e.CommissioningDate,
+
+          e.WarrantyStartDate,
+          e.WarrantyEndDate,
+          e.WarrantyStatus,
+
+          e.AMCType,
+          e.AMCStartDate,
+          e.AMCEndDate,
+          e.AMCStatus,
+          e.AMCYearlyExpense,
+
+          e.ScheduleOfServicing,
+          e.ScheduleDay,
+
+          e.ResponsiblePerson,
+          e.Remarks,
+
+          e.CreatedDate
+
+        FROM Engineering_Equipment_Entry_Master e
+
+        WHERE
+          ${where}
+
+        ORDER BY
+          e.EquipmentID DESC
+
+        LIMIT
+          $${limitIndex}
+
+        OFFSET
+          $${offsetIndex};
+        `,
+        listValues,
+      );
+
+    // =====================================================
+    // MAPPING
+    // =====================================================
+
+    const records =
+      result.rows.map(
+        (row) => ({
+          EquipmentID:
+            Number(
+              row.equipmentid,
+            ),
+
+          OrganizationID:
+            Number(
+              row.organizationid,
+            ),
+
+          Description:
+            row.description ||
+            null,
+
+          SerialNumber:
+            row.serialnumber ||
+            null,
+
+          TypeOfMachine:
+            row.typeofmachine ||
+            null,
+
+          Capacity:
+            row.capacity ||
+            null,
+
+          ModelNumber:
+            row.modelnumber ||
+            null,
+
+          Make:
+            row.make ||
+            null,
+
+          Area:
+            row.area ||
+            null,
+
+          CommissioningDate:
+            formatDate(
+              row.commissioningdate,
+            ),
+
+          WarrantyStartDate:
+            formatDate(
+              row.warrantystartdate,
+            ),
+
+          WarrantyEndDate:
+            formatDate(
+              row.warrantyenddate,
+            ),
+
+          WarrantyStatus:
+            row.warrantystatus ||
+            null,
+
+          AMCType:
+            row.amctype ||
+            null,
+
+          AMCStartDate:
+            formatDate(
+              row.amcstartdate,
+            ),
+
+          AMCEndDate:
+            formatDate(
+              row.amcenddate,
+            ),
+
+          AMCStatus:
+            row.amcstatus ||
+            null,
+
+          AMCYearlyExpense:
+            row.amcyearlyexpense !==
+              null
+              ? Number(
+                  row.amcyearlyexpense,
+                )
+              : null,
+
+          ScheduleOfServicing:
+            row.scheduleofservicing ||
+            null,
+
+          ScheduleDay:
+            row.scheduleday ||
+            null,
+
+          ResponsiblePerson:
+            row.responsibleperson
+              ? Number(
+                  row.responsibleperson,
+                )
+              : null,
+
+          Remarks:
+            row.remarks ||
+            null,
+
+          CreatedDate:
+            formatDate(
+              row.createddate,
+            ),
+        }),
+      );
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
+
+    return ok(
+      "Incomplete engineering equipment fetched successfully.",
+      {
+        TotalCount:
+          totalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize:
+          pageSize,
+
+        TotalPages:
+          totalPages,
+
+        data:
+          records,
+      },
+    );
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch incomplete engineering equipment",
+    );
+  }
+};
+
+// NOTE => Total reports 12 he Jisme se - warrty status ki 3 , Amc Status ki 3,servred by hotel team ki 1 yani total 7 reports 
+          // ke liye 1.Total Number of Machine Reports vali api use hogo  
+          // To 1.Total Number of Machine Reports iske smet baki status api mila ke isse 8 bn gyi 
+          // Baki ki 4 retport ki alg bna di gayi he 1. Breakdowns Report, 2. Daily Maintenance Report, 3. Monthly Maintenance Report, 4. Scheduled Missing Report
+          // to Total 8 + 4 = 12 reports he
+
+// ============================================================================================Pdfs
+// =============================================================1.Total Number of Machine Reports
+
 
 // ============================================================EXPORTS
 module.exports = {
@@ -3794,4 +6033,7 @@ module.exports = {
   saveMaintenance,
   getTotalEquipmentReports,
   getAllBreakdownsReport,
+  getDailyMaintenanceReports,
+  getMonthlyMaintenanceReports,
+  getScheduledMissingReports,
 };

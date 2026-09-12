@@ -31,6 +31,9 @@ const {
   deleteMaintenance,
   getTotalEquipmentReports,
   getAllBreakdownsReport,
+  getDailyMaintenanceReports,
+  getMonthlyMaintenanceReports,
+  getScheduledMissingReports,
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -71,5 +74,9 @@ router.get("/GetMaintenanceById/:id",authenticateToken,getMaintenanceById,);
 // =============================================================Reports of Equipment
 router.get("/TotalEquipmentReports", authenticateToken, getTotalEquipmentReports);
 router.get("/BreakdownReports",authenticateToken,getAllBreakdownsReport,);
+router.get("/DailyMaintenanceReports",authenticateToken,getDailyMaintenanceReports,);
+router.get("/MonthlyMaintenanceReports",authenticateToken,getMonthlyMaintenanceReports,);
+router.get("/ScheduledMissingReports",authenticateToken,getScheduledMissingReports,);
+// =============================================================PDFs of Equipment
 
 module.exports = router;
