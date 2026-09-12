@@ -34,6 +34,11 @@ const {
   getDailyMaintenanceReports,
   getMonthlyMaintenanceReports,
   getScheduledMissingReports,
+  getTotalEquipmentReportsPdf,
+  getBreakdownReportPdf,
+  getDailyMaintenanceReportPdf,
+  getMonthlyMaintenanceReportPdf,
+  getScheduledMissingReportPdf,
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -78,5 +83,9 @@ router.get("/DailyMaintenanceReports",authenticateToken,getDailyMaintenanceRepor
 router.get("/MonthlyMaintenanceReports",authenticateToken,getMonthlyMaintenanceReports,);
 router.get("/ScheduledMissingReports",authenticateToken,getScheduledMissingReports,);
 // =============================================================PDFs of Equipment
-
+router.get("/TotalEquipmentReportsPdf", authenticateToken, getTotalEquipmentReportsPdf);
+router.get("/BreakdownReportsPdf",authenticateToken,getBreakdownReportPdf,);
+router.get("/DailyMaintenanceReportsPdf",authenticateToken,getDailyMaintenanceReportPdf,);
+router.get("/MonthlyMaintenanceReportsPdf",authenticateToken,getMonthlyMaintenanceReportPdf,);
+router.get("/ScheduledMissingReportsPdf",authenticateToken,getScheduledMissingReportPdf,);
 module.exports = router;
