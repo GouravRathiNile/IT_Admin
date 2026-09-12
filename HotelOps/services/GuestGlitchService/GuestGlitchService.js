@@ -15,11 +15,140 @@ const { generatePdf } = require("../../utils/pdfHelper");
 const generateAttachmentUrl = require("../../AzurConfigration/GuestGlitch/AzureGetData");
 const { generateCSV, generateExcel } = require("../../utils/exportHelper");
 const { formatDate } = require("../../utils/dateFormatter");
+const { pool } = require("../../db");
 
-// Run only after commit. Queue/RPC failures must never retry a saved glitch.
+// Canonical server-owned module name; clients cannot override notification identity.
+const GUEST_GLITCH_NOTIFICATION_MODULE = "Guest Glitch";
+const GUEST_GLITCH_ASSIGNMENT_FIELDS = Object.freeze([
+  "DepartmentIDs", "ReceivedByIDs", "InformedToIDs", "ResolvedBy",
+]);
+
+const notificationIds = (values) => [...new Set((Array.isArray(values) ? values : [values])
+  .filter((value) => value != null && /^[1-9]\d*$/.test(String(value).trim()))
+  .map((value) => String(value).trim()))].sort();
+
+const notificationValue = (field, value) => {
+  if (GUEST_GLITCH_ASSIGNMENT_FIELDS.includes(field)) {
+    return JSON.stringify(notificationIds(value));
+  }
+  if (field === "DepartmentHODComments") {
+    return JSON.stringify((Array.isArray(value) ? value : [])
+      .map((item) => [String(item.departmentName || "").trim().toLowerCase(),
+        String(item.HODComment ?? item.comment ?? "").trim()])
+      .filter((item) => item[1]).sort((a, b) => a[0].localeCompare(b[0])));
+  }
+  return String(value ?? "").trim();
+};
+
+const hodCommentMap = (comments) => new Map((Array.isArray(comments) ? comments : [])
+  .map((item) => [String(item.departmentName || "").trim().toLowerCase(),
+    String(item.HODComment ?? item.comment ?? "").trim()])
+  .filter(([department, comment]) => department && comment));
+
+// A HOD notification represents a comment being added or changed. Merely
+// clearing a comment does not create an update notification.
+const hasHodCommentAddedOrUpdated = (previous, current) => {
+  const oldComments = hodCommentMap(previous);
+  return [...hodCommentMap(current)].some(([department, comment]) =>
+    oldComments.get(department) !== comment);
+};
+
+// Return only update events that are meaningful to the Guest Glitch workflow.
+// The caller sends one notification even when this array contains many events.
+const guestGlitchUpdateEvents = (previous, current) => {
+  const events = [];
+  if (notificationValue("Status", previous.Status) !== notificationValue("Status", current.Status)) {
+    events.push("Status");
+  }
+  if (hasHodCommentAddedOrUpdated(previous.DepartmentHODComments, current.DepartmentHODComments)) {
+    events.push("DepartmentHODComments");
+  }
+  if (notificationValue("GMComment", previous.GMComment) !== notificationValue("GMComment", current.GMComment)
+      && notificationValue("GMComment", current.GMComment)) {
+    events.push("GMComment");
+  }
+  if (GUEST_GLITCH_ASSIGNMENT_FIELDS.some((field) =>
+    notificationValue(field, previous[field]) !== notificationValue(field, current[field]))) {
+    events.push("Assignment");
+  }
+  return events;
+};
+
+// Resolve Guest Glitch recipients and submit the generic notification command.
+// Creation is organization-wide for HOD/GM/CEO; update targeting keeps the existing behavior.
+const notifyGuestGlitch = async ({ actorUserId, previous, current }) => {
+  const isCreate = !previous;
+  const changed = isCreate ? [] : guestGlitchUpdateEvents(previous, current);
+  if (!isCreate && !changed.length) return;
+
+  const status = changed.includes("Status");
+  const gmComment = changed.includes("GMComment");
+  const hodComment = changed.includes("DepartmentHODComments");
+  const assignment = changed.includes("Assignment");
+  const action = isCreate ? "CREATED" : status ? "STATUS_CHANGED" : gmComment ? "GM_COMMENT_UPDATED"
+    : hodComment ? "HOD_COMMENT_UPDATED" : assignment ? "ASSIGNMENT_CHANGED" : "UPDATED";
+  const directIds = notificationIds([
+    ...(current.InformedToIDs || []),
+    ...((status || gmComment) ? current.ReceivedByIDs || [] : []),
+    ...((status || gmComment || hodComment) ? [current.CreatedBy] : []),
+    ...((status || assignment) ? [current.ResolvedBy] : []),
+  ]);
+  const departmentIds = notificationIds(current.DepartmentIDs);
+  const includeGMs = status || gmComment || hodComment || assignment;
+
+  // Recipients must have an active mapping to this exact organization. On create,
+  // an actor who is also an HOD/GM/CEO remains a valid recipient.
+  // DISTINCT plus the final Set prevents duplicates from multiple mappings.
+  const recipients = await pool.query(`
+    SELECT DISTINCT um.userid,
+           COALESCE(NULLIF(TRIM(om.shortname), ''), om.organizationname) AS organization_short_name
+    FROM user_master um
+    INNER JOIN user_org_mapping uom ON uom.userid = um.userid
+    INNER JOIN organization_master om ON om.organizationid = uom.organizationid
+    WHERE uom.organizationid = $1
+      AND uom.isactive = TRUE AND uom.isdeleted = FALSE
+      AND om.isactive = TRUE AND om.activationstatus = TRUE AND om.isdeleted = FALSE
+      AND um.isactive = TRUE AND um.isdeleted = FALSE AND um.islocked = FALSE
+      AND ($5::boolean OR um.userid::text <> $2)
+      AND (($5::boolean AND REPLACE(UPPER(TRIM(um.usertype)), '_', ' ') IN ('HOD', 'CORPORATE HOD', 'GM', 'CEO'))
+        OR (NOT $5::boolean AND (
+          um.userid::text = ANY($3::text[])
+          OR (UPPER(TRIM(um.usertype)) = 'HOD' AND EXISTS (
+            SELECT 1 FROM department_master dm
+            WHERE dm.departmentid = um.departmentid AND dm.organizationid = $1
+              AND dm.isdeleted = FALSE AND dm.departmentid::text = ANY($4::text[])))
+          OR ($6::boolean AND UPPER(TRIM(um.usertype)) = 'GM'))))`,
+    [current.OrganizationID, String(actorUserId), directIds, departmentIds, isCreate, includeGMs]);
+  const userIds = notificationIds(recipients.rows.map((row) => row.userid))
+    .filter((id) => isCreate || id !== String(actorUserId));
+  if (!userIds.length) return;
+
+  const organizationShortName = String(recipients.rows[0]?.organization_short_name || "").trim();
+  const glitchContext = `Glitch ${String(current.RoomNumber || "").trim()} - ${organizationShortName} - ${String(current.GuestName || "").trim()}`;
+  const complaint = String(current.Complaint || "").trim();
+  const { sendMessage } = require("../../producer/producer");
+  const QUEUE = require("../../config/queue");
+  const response = await sendMessage(QUEUE.NOTIFICATION.REQUEST, QUEUE.NOTIFICATION.RESPONSE, {
+    action: "CREATE_NOTIFICATION",
+    data: {
+      organizationId: current.OrganizationID,
+      // Create keeps its contextual title. Updates use a stable title and place
+      // the Guest Glitch context plus original complaint in the message.
+      title: isCreate ? glitchContext : "Guest Glitch Updated",
+      message: isCreate ? complaint : `${glitchContext} : ${complaint}`,
+      type: "info", moduleName: GUEST_GLITCH_NOTIFICATION_MODULE, entityType: "GuestGlitch",
+      entityId: String(current.ID), action, priority: "normal", userIds,
+    },
+  });
+  if (!response || response.success !== true) {
+    console.error("Guest Glitch notification request unsuccessful:", response?.message || "No response");
+  }
+};
+
+// Run only after commit. Notification failures must never rollback a saved glitch.
 const notifyCommittedGuestGlitch = (event) => {
   Promise.resolve()
-    .then(() => require("../NotificationService/NotificationService").notifyGuestGlitch(event))
+    .then(() => notifyGuestGlitch(event))
     .catch((error) => console.error("Guest Glitch notification failed:", error.message));
 };
 

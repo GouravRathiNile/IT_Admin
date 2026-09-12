@@ -6,92 +6,22 @@ const {
 
 const { sendPushNotification } = require("../../utils/sendPushNotification");
 
-const guestGlitchIds = (values) => [...new Set((Array.isArray(values) ? values : [values])
-    .filter((value) => value != null && /^[1-9]\d*$/.test(String(value).trim()))
-    .map((value) => String(value).trim()))].sort();
+// Canonical notification module names are defined in one place. Add a new
+// normalized key here when another module needs casing/spacing normalization.
+const NOTIFICATION_MODULE_NAMES = Object.freeze({
+    guestglitch: "Guest Glitch",
+    opex: "Opex",
+});
 
-const guestGlitchValue = (field, value) => {
-    if (["DepartmentIDs", "InformedToIDs", "ResolvedBy"].includes(field)) {
-        return JSON.stringify(guestGlitchIds(value));
-    }
-    if (field === "DepartmentHODComments") {
-        return JSON.stringify((Array.isArray(value) ? value : [])
-            .map((item) => [String(item.departmentName || "").trim().toLowerCase(),
-                String(item.HODComment ?? item.comment ?? "").trim()])
-            .filter((item) => item[1]).sort((a, b) => a[0].localeCompare(b[0])));
-    }
-    return String(value ?? "").trim();
+const normalizeNotificationModuleName = (moduleName) => {
+    if (moduleName === undefined || moduleName === null) return moduleName;
+    const trimmed = String(moduleName).trim();
+    const normalizedKey = trimmed.toLowerCase().replace(/\s+/g, "");
+    return NOTIFICATION_MODULE_NAMES[normalizedKey] || trimmed;
 };
 
-// This uses the committed snapshot, including the original creator and current assignments.
-const notifyGuestGlitch = async ({ actorUserId, previous, current }) => {
-    try {
-        const fields = ["Status", "GMComment", "DepartmentHODComments", "DepartmentIDs",
-            "InformedToIDs", "ResolvedBy", "Complaint", "DetailedInvestigation",
-            "ServiceRecovery", "InternalActionTaken"];
-        const changed = previous ? fields.filter((field) =>
-            guestGlitchValue(field, previous[field]) !== guestGlitchValue(field, current[field])) : [];
-        if (previous && !changed.length) return;
-        const status = changed.includes("Status");
-        const gmComment = changed.includes("GMComment");
-        const hodComment = changed.includes("DepartmentHODComments");
-        const assignment = changed.some((field) => ["DepartmentIDs", "InformedToIDs", "ResolvedBy"].includes(field));
-        const action = !previous ? "CREATED" : status ? "STATUS_CHANGED" : gmComment ? "GM_COMMENT_UPDATED"
-            : hodComment ? "HOD_COMMENT_UPDATED" : assignment ? "ASSIGNMENT_CHANGED" : "UPDATED";
-        const directIds = guestGlitchIds([
-            ...(current.InformedToIDs || []),
-            ...((status || gmComment) ? current.ReceivedByIDs || [] : []),
-            ...((status || gmComment || hodComment) ? [current.CreatedBy] : []),
-            ...((status || assignment) ? [current.ResolvedBy] : []),
-        ]);
-        const departmentIds = guestGlitchIds(current.DepartmentIDs);
-        const includeGMs = !previous || status || gmComment || hodComment || assignment;
-        const recipients = await pool.query(`
-            SELECT DISTINCT um.userid,
-                   COALESCE(NULLIF(TRIM(om.shortname), ''), om.organizationname) AS organization_short_name
-            FROM user_master um
-            INNER JOIN user_org_mapping uom ON uom.userid = um.userid
-            INNER JOIN organization_master om ON om.organizationid = uom.organizationid
-            WHERE uom.organizationid = $1
-              AND uom.isactive = TRUE AND uom.isdeleted = FALSE
-              AND om.isactive = TRUE AND om.activationstatus = TRUE AND om.isdeleted = FALSE
-              AND um.isactive = TRUE AND um.isdeleted = FALSE AND um.islocked = FALSE
-              AND um.userid::text <> $2
-              AND (um.userid::text = ANY($3::text[])
-                OR (UPPER(TRIM(um.usertype)) = 'HOD' AND EXISTS (
-                    SELECT 1 FROM department_master dm
-                    WHERE dm.departmentid = um.departmentid AND dm.organizationid = $1
-                      AND dm.isdeleted = FALSE AND dm.departmentid::text = ANY($4::text[])))
-                OR ($5::boolean AND UPPER(TRIM(um.usertype)) = 'GM'))`,
-            [current.OrganizationID, String(actorUserId), directIds, departmentIds, includeGMs]);
-        const userIds = guestGlitchIds(recipients.rows.map((row) => row.userid))
-            .filter((id) => id !== String(actorUserId));
-        if (!userIds.length) return;
-        const organizationShortName = String(recipients.rows[0]?.organization_short_name || "").trim();
-        const createTitle = `Glitch ${String(current.RoomNumber || "").trim()} - ${organizationShortName} - ${String(current.GuestName || "").trim()}`;
-        const { sendMessage } = require("../../producer/producer");
-        const QUEUE = require("../../config/queue");
-        const response = await sendMessage(QUEUE.NOTIFICATION.REQUEST, QUEUE.NOTIFICATION.RESPONSE, {
-            action: "CREATE_NOTIFICATION",
-            data: {
-                organizationId: current.OrganizationID,
-                title: previous ? "Guest Glitch updated" : createTitle,
-                message: previous ? `Guest Glitch #${current.ID} updated: ${changed.join(", ")}.`
-                    : String(current.Complaint || "").trim(),
-                type: "info", moduleName: "GuestGlitch", entityType: "GuestGlitch",
-                entityId: String(current.ID), action, priority: "normal", userIds,
-            },
-        });
-        // A queued database retry is already owned by the existing consumer.
-        if (!response || response.success !== true) {
-            console.error("Guest Glitch notification request unsuccessful:", response?.message || "No response");
-        }
-    } catch (error) {
-        console.error("Guest Glitch notification failed:", error.message);
-    }
-};
-
-const pushGuestGlitchNotification = async (notification, userIds) => {
+// Generic Firebase delivery used after a notification has been committed.
+const pushNotificationToRecipients = async (notification, userIds) => {
     try {
         const devices = await pool.query(`
             SELECT DISTINCT TRIM(ud.devicetoken) AS token
@@ -112,12 +42,12 @@ const pushGuestGlitchNotification = async (notification, userIds) => {
                             moduleName: notification.module_name, entityId: notification.entity_id,
                             action: notification.action } });
                 } catch (error) {
-                    console.error("Guest Glitch push failed:", error.code || "delivery failed");
+                    console.error("Notification push failed:", error.code || "delivery failed");
                 }
             }));
         }
     } catch (error) {
-        console.error("Guest Glitch device lookup failed:", error.code || "lookup failed");
+        console.error("Notification device lookup failed:", error.code || "lookup failed");
     }
 };
 
@@ -151,6 +81,10 @@ const createNotification = async (data) => {
     let transactionStarted = false;
 
     try {
+
+        // Normalize before persistence so equivalent names never create
+        // separate notification modules/tabs because of casing or spaces.
+        const moduleName = normalizeNotificationModuleName(data.moduleName);
 
         client = await pool.connect();
 
@@ -259,7 +193,7 @@ const createNotification = async (data) => {
                 data.title,
                 data.message,
                 data.type || "info",
-                data.moduleName,
+                moduleName,
                 data.action || null,
                 data.entityType || null,
                 data.entityId !== undefined &&
@@ -326,10 +260,10 @@ const createNotification = async (data) => {
         await client.query("COMMIT");
         transactionStarted = false;
 
-        if (notification.module_name === "GuestGlitch") {
+        if (notification.module_name === "Guest Glitch") {
             // Do not hold the transaction connection or delay the RabbitMQ reply for Firebase.
-            Promise.resolve().then(() => pushGuestGlitchNotification(notification, userIds))
-                .catch(() => console.error("Guest Glitch push dispatch failed"));
+            Promise.resolve().then(() => pushNotificationToRecipients(notification, userIds))
+                .catch(() => console.error("Notification push dispatch failed"));
         }
 
 
@@ -417,7 +351,7 @@ const createNotification = async (data) => {
 // Direct PostgreSQL Read
 //
 // Supports:
-// ?moduleName=GuestGlitch
+// ?moduleName=Guest%20Glitch
 // ?page=1
 // ?limit=20
 // ============================================================
@@ -490,7 +424,7 @@ const getNotifications = async (data) => {
             );
 
             queryParams.push(
-                String(data.moduleName).trim()
+                normalizeNotificationModuleName(data.moduleName)
             );
 
             parameterIndex++;
@@ -677,14 +611,14 @@ const getNotifications = async (data) => {
 //             unreadCount: 2
 //         },
 //         {
-//             moduleName: "GuestGlitch",
+//             moduleName: "Guest Glitch",
 //             unreadCount: 2
 //         }
 //     ]
 // }
 //
 // Optional:
-// ?moduleName=GuestGlitch
+// ?moduleName=Guest%20Glitch
 // ============================================================
 
 const getUnreadCount = async (userId, moduleName = null) => {
@@ -720,7 +654,7 @@ const getUnreadCount = async (userId, moduleName = null) => {
             );
 
             queryParams.push(
-                String(moduleName).trim()
+                normalizeNotificationModuleName(moduleName)
             );
 
             parameterIndex++;
@@ -1018,9 +952,6 @@ const testPushNotification = async ({
 // ============================================================
 
 module.exports = {
-
-    notifyGuestGlitch,
-
     createNotification,
 
     getNotifications,
