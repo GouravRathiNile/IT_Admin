@@ -47,7 +47,8 @@ const notifyGuestGlitch = async ({ actorUserId, previous, current }) => {
         const departmentIds = guestGlitchIds(current.DepartmentIDs);
         const includeGMs = !previous || status || gmComment || hodComment || assignment;
         const recipients = await pool.query(`
-            SELECT DISTINCT um.userid
+            SELECT DISTINCT um.userid,
+                   COALESCE(NULLIF(TRIM(om.shortname), ''), om.organizationname) AS organization_short_name
             FROM user_master um
             INNER JOIN user_org_mapping uom ON uom.userid = um.userid
             INNER JOIN organization_master om ON om.organizationid = uom.organizationid
@@ -66,15 +67,17 @@ const notifyGuestGlitch = async ({ actorUserId, previous, current }) => {
         const userIds = guestGlitchIds(recipients.rows.map((row) => row.userid))
             .filter((id) => id !== String(actorUserId));
         if (!userIds.length) return;
+        const organizationShortName = String(recipients.rows[0]?.organization_short_name || "").trim();
+        const createTitle = `Glitch ${String(current.RoomNumber || "").trim()} - ${organizationShortName} - ${String(current.GuestName || "").trim()}`;
         const { sendMessage } = require("../../producer/producer");
         const QUEUE = require("../../config/queue");
         const response = await sendMessage(QUEUE.NOTIFICATION.REQUEST, QUEUE.NOTIFICATION.RESPONSE, {
             action: "CREATE_NOTIFICATION",
             data: {
                 organizationId: current.OrganizationID,
-                title: previous ? "Guest Glitch updated" : "Guest Glitch created",
+                title: previous ? "Guest Glitch updated" : createTitle,
                 message: previous ? `Guest Glitch #${current.ID} updated: ${changed.join(", ")}.`
-                    : `Guest Glitch #${current.ID} has been created.`,
+                    : String(current.Complaint || "").trim(),
                 type: "info", moduleName: "GuestGlitch", entityType: "GuestGlitch",
                 entityId: String(current.ID), action, priority: "normal", userIds,
             },
