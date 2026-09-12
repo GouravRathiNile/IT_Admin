@@ -29,6 +29,8 @@ const {
   getAllMaintenance,
   getMaintenanceById,
   deleteMaintenance,
+  getTotalEquipmentReports,
+  getAllBreakdownsReport,
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -66,5 +68,8 @@ router.post("/SaveMaintenance",authenticateToken,upload.array("Documents", 10),s
 router.delete("/DeleteMaintenance",authenticateToken,deleteMaintenance,);
 router.get("/MaintenanceList",authenticateToken,getAllMaintenance,);
 router.get("/GetMaintenanceById/:id",authenticateToken,getMaintenanceById,);
+// =============================================================Reports of Equipment
+router.get("/TotalEquipmentReports", authenticateToken, getTotalEquipmentReports);
+router.get("/BreakdownReports",authenticateToken,getAllBreakdownsReport,);
 
 module.exports = router;

@@ -740,7 +740,6 @@ exports.deleteVendor = async (req, res) => {
     return handleError(error, res);
   }
 };
-
 // ============================================================================================Maintenance of Equipment
 // =========================================================================Maintenance Checklist Master
 // ============================================================Create Maintenance Checklist
@@ -998,7 +997,7 @@ exports.saveMaintenance = async (req, res) => {
           MaintenanceDay:
             req.body.MaintenanceDay,
 
-          
+          MaintenanceDate: req.body.MaintenanceDate,
 
           MaintenanceBy:
             req.body.MaintenanceBy,
@@ -1153,5 +1152,78 @@ exports.deleteMaintenance = async (
       error,
       res,
     );
+  }
+};
+// ============================================================================================Reports of Equipment
+// =============================================================1.Total Number of Machine Reports
+exports.getTotalEquipmentReports = async (req, res) => {
+  try {
+    const result = await EngineeringService.getTotalEquipmentReports({
+      OrganizationID: req.query.OrganizationID || null,
+
+      DepartmentID: req.query.DepartmentID || req.query.Department || null,
+      Status: req.query.Status || null,
+
+      WarrantyStatus: req.query.WarrantyStatus || null,
+      AMCStatus: req.query.AMCStatus || null,
+      AMCType: req.query.AMCType || null,
+      AMCStartDate: req.query.AMCStartDate || null,
+      WarrantyStartDate: req.query.WarrantyStartDate || null,
+
+      SerialNo: req.query.SerialNo || null,
+      Area: req.query.Area || null,
+      Equipment: req.query.Equipment || null,
+
+      Search: req.query.Search || null,
+
+      page: Number(req.query.page) || 1,
+      PageSize: Number(req.query.PageSize) || 10,
+    });
+
+    return res
+      .status(result.statusCode || (result.success ? 200 : 400))
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// =============================================================2.Breakdown Reports 
+exports.getAllBreakdownsReport = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getAllBreakdownsReport({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        EquipmentID:
+          req.query.EquipmentID || null,
+
+        RepairedStatus:
+          req.query.RepairedStatus || null,
+
+        FromDate:
+          req.query.FromDate || null,
+
+        ToDate:
+          req.query.ToDate || null,
+
+        Search:
+          req.query.Search || null,
+
+        page:
+          Number(req.query.page) || 1,
+
+        PageSize:
+          Number(req.query.PageSize) || 10,
+      });
+
+    return res
+      .status(
+        result.statusCode ||
+          (result.success ? 200 : 400),
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
   }
 };
