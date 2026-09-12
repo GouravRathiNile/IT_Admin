@@ -19,7 +19,7 @@ test("notification module names are normalized centrally before persistence and 
   const source = fs.readFileSync(
     path.resolve(__dirname, "../../services/NotificationService/NotificationService.js"), "utf8"
   );
-  assert.match(source, /const NOTIFICATION_MODULE_NAMES = Object\.freeze\(\{\s*guestglitch: "Guest Glitch",\s*opex: "Opex"/);
+  assert.match(source, /const NOTIFICATION_MODULE_NAMES = Object\.freeze\(\{\s*guestglitch: "Guest Glitch",\s*incidentreport: "Incident Report",\s*opex: "Opex"/);
   assert.match(source, /trimmed\.toLowerCase\(\)\.replace\(\/\\s\+\/g, ""\)/);
   const create = source.match(/const createNotification = async \(data\)[\s\S]*?const getNotifications/)?.[0] || "";
   assert.match(create, /const moduleName = normalizeNotificationModuleName\(data\.moduleName\)/);
@@ -27,6 +27,8 @@ test("notification module names are normalized centrally before persistence and 
   assert.doesNotMatch(create, /data\.type \|\| "info",\s*data\.moduleName,/);
   assert.match(source, /normalizeNotificationModuleName\(data\.moduleName\)/);
   assert.match(source, /normalizeNotificationModuleName\(moduleName\)/);
+  assert.match(source, /new Set\(\["Guest Glitch", "Incident Report"\]\)/);
+  assert.match(source, /PUSH_NOTIFICATION_MODULES\.has\(notification\.module_name\)/);
 });
 
 test("Guest Glitch create notification is organization-scoped to HOD, GM and CEO recipients", () => {

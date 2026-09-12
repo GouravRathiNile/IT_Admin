@@ -10,8 +10,13 @@ const { sendPushNotification } = require("../../utils/sendPushNotification");
 // normalized key here when another module needs casing/spacing normalization.
 const NOTIFICATION_MODULE_NAMES = Object.freeze({
     guestglitch: "Guest Glitch",
+    incidentreport: "Incident Report",
     opex: "Opex",
 });
+
+// Modules using the shared Firebase dispatcher. Recipient selection remains in
+// each module service; this set only enables generic post-persistence delivery.
+const PUSH_NOTIFICATION_MODULES = new Set(["Guest Glitch", "Incident Report"]);
 
 const normalizeNotificationModuleName = (moduleName) => {
     if (moduleName === undefined || moduleName === null) return moduleName;
@@ -260,7 +265,7 @@ const createNotification = async (data) => {
         await client.query("COMMIT");
         transactionStarted = false;
 
-        if (notification.module_name === "Guest Glitch") {
+        if (PUSH_NOTIFICATION_MODULES.has(notification.module_name)) {
             // Do not hold the transaction connection or delay the RabbitMQ reply for Firebase.
             Promise.resolve().then(() => pushNotificationToRecipients(notification, userIds))
                 .catch(() => console.error("Notification push dispatch failed"));

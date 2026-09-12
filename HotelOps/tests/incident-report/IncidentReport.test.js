@@ -18,7 +18,7 @@ const valid = {
 test("Incident Report routes expose the approved methods and report precedes ID route", () => {
   const definitions = router.stack.filter((layer) => layer.route).map((layer) => ({ path: layer.route.path, methods: layer.route.methods }));
   const has = (path, method) => definitions.some((item) => item.path === path && item.methods[method]);
-  for (const [path, method] of [["/Create", "post"], ["/List", "get"], ["/Report", "get"], ["/Report/export/csv", "get"], ["/Report/export/excel", "get"], ["/Report/pdf", "get"], ["/Report/:id", "get"], ["/Update", "put"], ["/Delete", "delete"], ["/:id", "get"]]) assert.ok(has(path, method));
+  for (const [path, method] of [["/Create", "post"], ["/List", "get"], ["/Report", "get"], ["/Report/export/csv", "get"], ["/Report/export/excel", "get"], ["/Report/pdf", "get"], ["/List/Report/:id", "get"], ["/Update", "put"], ["/Delete", "delete"], ["/:id", "get"]]) assert.ok(has(path, method));
   assert.ok(definitions.findIndex((item) => item.path === "/Report") < definitions.findIndex((item) => item.path === "/:id"));
 });
 
@@ -79,6 +79,50 @@ test("Incident GET controllers use direct services while mutation actions remain
   for (const action of ["CREATE_INCIDENT_REPORT", "UPDATE_INCIDENT_REPORT", "DELETE_INCIDENT_REPORT"]) {
     assert.match(handler, new RegExp(`case "${action}"`));
   }
+});
+
+test("Incident create notification selects deduplicated organization HOD, GM and CEO recipients", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.resolve(__dirname, "../../services/IncidentReportService/IncidentReportService.js"), "utf8");
+  const notify = source.match(/const notifyIncidentReportCreated[\s\S]*?const notifyCommittedIncidentReport/)?.[0] || "";
+  assert.match(notify, /SELECT DISTINCT um\.userid/);
+  assert.match(notify, /INNER JOIN user_org_mapping uom ON uom\.userid = um\.userid/);
+  assert.match(notify, /WHERE uom\.organizationid = \$1/);
+  assert.match(notify, /IN \('HOD', 'CORPORATE HOD', 'GM', 'CEO'\)/);
+  assert.match(notify, /notificationUserIds\(recipients\.rows\.map/);
+  assert.doesNotMatch(notify, /actorUserId|ReportTo|ReportBy|InvestigatedBy/);
+});
+
+test("Incident create notification uses the required canonical payload", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.resolve(__dirname, "../../services/IncidentReportService/IncidentReportService.js"), "utf8");
+  const notify = source.match(/const notifyIncidentReportCreated[\s\S]*?const notifyCommittedIncidentReport/)?.[0] || "";
+  assert.match(source, /const INCIDENT_REPORT_NOTIFICATION_MODULE = "Incident Report"/);
+  assert.match(notify, /const title = `Incident \$\{String\(incident\.IncidentDate[\s\S]* - \$\{organizationName\}`/);
+  assert.match(notify, /const message = `\$\{String\(incident\.Location[\s\S]*: \$\{String\(incident\.Description/);
+  assert.match(notify, /title,\s*message,/);
+  assert.doesNotMatch(notify, /title: "Incident Report Created"/);
+  assert.match(notify, /moduleName: INCIDENT_REPORT_NOTIFICATION_MODULE/);
+  assert.match(notify, /entityType: "IncidentReport"/);
+  assert.match(notify, /entityId: String\(incident\.ID\)/);
+  assert.match(notify, /action: "CREATED"/);
+  assert.match(notify, /type: "info"/);
+  assert.match(notify, /priority: "normal"/);
+  assert.doesNotMatch(notify, /req\.body|data\.moduleName/);
+});
+
+test("Incident notification runs once after commit and failures remain isolated", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.resolve(__dirname, "../../services/IncidentReportService/IncidentReportService.js"), "utf8");
+  const createBlock = source.match(/const create = async \(data\)[\s\S]*?\/\/ Detail reads/)?.[0] || "";
+  assert.match(createBlock, /await client\.query\("BEGIN"\)/);
+  assert.match(createBlock, /await repository\.insert[\s\S]*await client\.query\("COMMIT"\);[\s\S]*notifyCommittedIncidentReport\(/);
+  assert.equal((createBlock.match(/notifyCommittedIncidentReport\(/g) || []).length, 1);
+  assert.match(source, /Promise\.resolve\(\)[\s\S]*notifyIncidentReportCreated\(event\)[\s\S]*\.catch\(/);
+  assert.match(createBlock, /if \(client && transactionStarted\) await client\.query\("ROLLBACK"\)/);
 });
 
 test("Incident report DTO removes only the requested audit fields", () => {
@@ -191,7 +235,7 @@ test("create stores the explicitly requested accessible organization", async () 
   let insertedOrganization;
   try {
     repository.resolveRequestedOrganization = async (_userID, organizationID) => ({ organizationid: organizationID, organizationname: "Hotel" });
-    repository.getClient = async () => ({ release() {} });
+    repository.getClient = async () => ({ async query() {}, release() {} });
     repository.nextIncidentID = async () => 123;
     repository.insert = async (_client, id, organizationID, payload) => {
       insertedOrganization = organizationID;
@@ -283,7 +327,7 @@ test("concurrent creates obtain distinct sequence IDs", async () => {
   let sequence = 0;
   try {
     repository.resolveRequestedOrganization = async () => ({ organizationid: 10, organizationname: "Hotel" });
-    repository.getClient = async () => ({ release() {} });
+    repository.getClient = async () => ({ async query() {}, release() {} });
     repository.nextIncidentID = async () => { sequence += 1; return sequence; };
     repository.insert = async (_client, id) => ({ id: String(id) });
     const responses = await Promise.all(Array.from({ length: 25 }, () => service.create({ UserID: 7, Payload: createDTO(valid) })));
