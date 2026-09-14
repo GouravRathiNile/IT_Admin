@@ -4,6 +4,64 @@ const { retryableDatabaseResponse } = require("../../utils/retryableDatabaseErro
 const { generatePdf } = require("../../utils/pdfHelper");
 const { generateCSV, generateExcel } = require("../../utils/exportHelper");
 const { formatDate } = require("../../utils/dateFormatter");
+const { pool } = require("../../db");
+
+const INCIDENT_REPORT_NOTIFICATION_MODULE = "Incident Report";
+
+const notificationUserIds = (values) => [...new Set((Array.isArray(values) ? values : [values])
+  .filter((value) => value != null && /^[1-9]\d*$/.test(String(value).trim()))
+  .map((value) => String(value).trim()))].sort();
+
+// Incident Reports have no user-assignment fields. Notify only active HOD/GM/CEO
+// users mapped to the same organization; DISTINCT and Set prevent duplicates.
+const notifyIncidentReportCreated = async ({ organization, incident }) => {
+  const recipients = await pool.query(`
+    SELECT DISTINCT um.userid
+    FROM user_master um
+    INNER JOIN user_org_mapping uom ON uom.userid = um.userid
+    INNER JOIN organization_master om ON om.organizationid = uom.organizationid
+    WHERE uom.organizationid = $1
+      AND uom.isactive = TRUE AND uom.isdeleted = FALSE
+      AND om.isactive = TRUE AND om.activationstatus = TRUE AND om.isdeleted = FALSE
+      AND um.isactive = TRUE AND um.isdeleted = FALSE AND um.islocked = FALSE
+      AND REPLACE(UPPER(TRIM(um.usertype)), '_', ' ') IN ('HOD', 'CORPORATE HOD', 'GM', 'CEO')`,
+    [organization.OrganizationID]);
+  const userIds = notificationUserIds(recipients.rows.map((row) => row.userid));
+  if (!userIds.length) return;
+
+  const organizationName = String(organization.OrganizationShortName || organization.OrganizationName || "").trim();
+  // Keep the date/property context in the title and the incident location plus
+  // description in the message so notification cards remain concise.
+  const title = `Incident ${String(incident.IncidentDate || "").trim()} - ${organizationName}`;
+  const message = `${String(incident.Location || "").trim()}: ${String(incident.Description || "").trim()}`;
+  const { sendMessage } = require("../../producer/producer");
+  const QUEUE = require("../../config/queue");
+  const response = await sendMessage(QUEUE.NOTIFICATION.REQUEST, QUEUE.NOTIFICATION.RESPONSE, {
+    action: "CREATE_NOTIFICATION",
+    data: {
+      organizationId: organization.OrganizationID,
+      title,
+      message,
+      type: "info",
+      moduleName: INCIDENT_REPORT_NOTIFICATION_MODULE,
+      entityType: "IncidentReport",
+      entityId: String(incident.ID),
+      action: "CREATED",
+      priority: "normal",
+      userIds,
+    },
+  });
+  if (!response || response.success !== true) {
+    console.error("Incident Report notification request unsuccessful:", response?.message || "No response");
+  }
+};
+
+// Called only after COMMIT. Notification failures are isolated from creation.
+const notifyCommittedIncidentReport = (event) => {
+  Promise.resolve()
+    .then(() => notifyIncidentReportCreated(event))
+    .catch((error) => console.error("Incident Report notification failed:", error.message));
+};
 
 const INCIDENT_EXPORT_COLUMNS = Object.freeze([
   { key: "ID", header: "ID", width: 24 }, { key: "Organization", header: "Organization", width: 24 },
@@ -64,16 +122,26 @@ const resolveRecordOrganization = async (client, userID, incidentID) => {
 // Create delegates ID reservation and insertion to the organization-scoped repository.
 const create = async (data) => {
   let client;
+  let transactionStarted = false;
   try {
     const organization = await resolveOrganization(data.UserID, data.Payload.OrganizationID);
     if (organization.error) return organization.error;
     client = await repository.getClient();
+    await client.query("BEGIN");
+    transactionStarted = true;
     const { OrganizationID, ...payload } = data.Payload;
     const prepared = clean(payload);
     const id = await repository.nextIncidentID(client);
     const result = await repository.insert(client, id, organization.OrganizationID, prepared, data.UserID);
+    await client.query("COMMIT");
+    transactionStarted = false;
+    notifyCommittedIncidentReport({
+      organization,
+      incident: { ...prepared, ID: Number(result.id) },
+    });
     return { success: true, message: "Incident report created successfully.", data: { ID: Number(result.id) } };
   } catch (error) {
+    if (client && transactionStarted) await client.query("ROLLBACK").catch(() => { });
     console.error("Create Incident Report Error:", error.message);
     return retryableDatabaseResponse(error) || fail("Unable to create incident report at this time.", 503);
   } finally { if (client) client.release(); }

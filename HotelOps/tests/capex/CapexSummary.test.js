@@ -6,6 +6,82 @@ const path = require("node:path");
 const { pool } = require("../../db");
 const CapexService = require("../../services/CapexService/CapexService");
 
+test("CAPEX notifications use organization-scoped configured-role recipients", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "../../services/CapexService/CapexService.js"), "utf8");
+  const resolver = source.match(/const resolveCapexNotificationRecipients[\s\S]*?const notifyCapex/)?.[0] || "";
+  assert.match(resolver, /SELECT DISTINCT um\.userid/);
+  assert.match(resolver, /INNER JOIN user_org_mapping uom ON uom\.userid = um\.userid/);
+  assert.match(resolver, /WHERE uom\.organizationid = \$1/);
+  assert.match(resolver, /UPPER\(TRIM\(um\.usertype\)\) = ANY\(\$2::text\[\]\)/);
+  assert.match(resolver, /um\.userid::text = ANY\(\$3::text\[\]\)/);
+  assert.match(resolver, /um\.userid::text <> \$4::text/);
+  assert.match(resolver, /userIds: notificationUserIds\(result\.rows\.map/);
+});
+
+test("CAPEX create and approval notifications follow configured stages and recipient rules", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "../../services/CapexService/CapexService.js"), "utf8");
+  const createBlock = source.match(/const createCapex = async[\s\S]*?\/\/ =+ Read Query/)?.[0] || "";
+  const approvalBlock = source.match(/const processCapexApproval = async[\s\S]*?\/\/ =+ Summary/)?.[0] || source.match(/const processCapexApproval = async[\s\S]*?const getCapexSummaryReport/)?.[0] || "";
+  assert.match(createBlock, /const firstApprovalRole = String\(approvals\[0\]\?\.ApprovalRole/);
+  assert.match(createBlock, /roles: firstApprovalRole \? \[firstApprovalRole\] : \[\]/);
+  assert.match(approvalBlock, /roles: \[followingStage\.role\][\s\S]*includeCreator: true,[\s\S]*excludeActor: true/);
+  assert.match(approvalBlock, /kind: "APPROVE"[\s\S]*includeCreator: true/);
+  for (const action of ["REJECT", "RETURN"]) {
+    assert.match(approvalBlock, new RegExp(`kind: "${action}"[\\s\\S]*roles: \\[approverRole\\][\\s\\S]*includeCreator: true,[\\s\\S]*excludeActor: true`));
+  }
+  assert.match(approvalBlock, /kind: "HOLD"[\s\S]*roles: \[currentRole\][\s\S]*includeCreator: true,[\s\S]*excludeActor: true/);
+});
+
+test("CAPEX notification payloads are canonical and never include CAPEX number", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "../../services/CapexService/CapexService.js"), "utf8");
+  const notifier = source.match(/const notifyCapex[\s\S]*?const notifyCommittedCapex/)?.[0] || "";
+  assert.match(source, /const CAPEX_NOTIFICATION_MODULE = "Capex"/);
+  assert.match(notifier, /moduleName: CAPEX_NOTIFICATION_MODULE/);
+  assert.match(notifier, /entityType: "Capex"/);
+  assert.match(notifier, /type: "info"/);
+  assert.match(notifier, /priority: "normal"/);
+  assert.match(source, /action: "CREATED"/);
+  for (const action of ["APPROVED", "REJECTED", "RETURNED", "HOLD"]) assert.match(source, new RegExp(`notificationAction: "${action}"`));
+  const notificationContent = source.match(/const firstApprovalRole[\s\S]*?return \{\s*success: true,\s*message: "CAPEX created/)?.[0] || "";
+  assert.doesNotMatch(notificationContent, /CapexNumber|capexNumber/);
+  assert.doesNotMatch(notifier, /data\.moduleName|req\.body/);
+});
+
+test("CAPEX create and approve notification content uses item, quantity, department and organization", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "../../services/CapexService/CapexService.js"), "utf8");
+  const content = source.match(/const capexNotificationContent[\s\S]*?const notifyCapex/)?.[0] || "";
+  assert.match(content, /kind === "CREATE"/);
+  assert.match(content, /title: `CAPEX - \$\{String\(item[\s\S]*\(\$\{String\(qty[\s\S]* - \$\{String\(department[\s\S]* - \$\{organizationShortName\}`/);
+  assert.match(content, /message: String\(description \|\| ""\)\.trim\(\)/);
+  assert.match(content, /kind === "APPROVE"/);
+  assert.match(content, /title: `CAPEX - \$\{String\(item[\s\S]* - \$\{String\(department[\s\S]* - \$\{organizationShortName\}`/);
+  assert.match(content, /message: `Approved by \$\{actorName \|\| approverRole\}`/);
+  assert.match(content, /\["REJECT", "RETURN", "HOLD"\]\.includes\(kind\)/);
+  assert.match(content, /REJECT: "Rejected", RETURN: "Returned", HOLD: "Hold"/);
+  assert.match(content, /message: `\$\{actionLabel\} by \$\{actorName \|\| approverRole\}`/);
+  assert.doesNotMatch(content, /CapexNumber|capexNumber|approvedQuantity|remarks/i);
+});
+
+test("CAPEX notifications are triggered only after commit and failures are isolated", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "../../services/CapexService/CapexService.js"), "utf8");
+  assert.match(source, /const notifyCommittedCapex = \(event\)[\s\S]*Promise\.resolve\(\)[\s\S]*notifyCapex\(event\)[\s\S]*\.catch\(/);
+  assert.match(source, /await client\.query\("COMMIT"\);\s*transactionStarted = false;\s*const firstApprovalRole[\s\S]*notifyCommittedCapex\(/);
+  for (const kind of ["REJECT", "RETURN", "HOLD"]) {
+    assert.match(source, new RegExp(`await client\\.query\\("COMMIT"\\);[\\s\\S]{0,180}notifyApprovalCommitted\\(\\{[\\s\\S]{0,80}kind: "${kind}"`));
+  }
+  assert.equal((source.match(/await client\.query\("COMMIT"\);\s*transactionStarted = false;\s*notifyApprovalCommitted\(\{\s*kind: "APPROVE"/g) || []).length, 2);
+});
+
 test("CAPEX detail PDF uses its dedicated pdfmake layout and configured approval rows", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   pool.query = async (sql) => {

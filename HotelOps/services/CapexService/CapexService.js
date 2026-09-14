@@ -6,6 +6,104 @@ const { formatDate } = require("../../utils/dateFormatter");
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
 const PdfPrinter = require("pdfmake");
 const path = require("path");
+const CAPEX_NOTIFICATION_MODULE = "Capex";
+
+const notificationUserIds = (values) => [...new Set((Array.isArray(values) ? values : [values])
+  .filter((value) => value != null && /^[1-9]\d*$/.test(String(value).trim()))
+  .map((value) => String(value).trim()))].sort();
+
+// Resolve only active users mapped to the CAPEX record's organization. Roles
+// come from the effective approval configuration; direct IDs are used for the creator.
+const resolveCapexNotificationRecipients = async ({ organizationID, roles = [], directUserIds = [], excludeUserID = null, actorUserID = null }) => {
+  const normalizedRoles = [...new Set(roles.map((role) => String(role || "").trim().toUpperCase()).filter(Boolean))];
+  const normalizedUserIds = notificationUserIds(directUserIds);
+  const result = await pool.query(`
+    SELECT DISTINCT um.userid,
+      COALESCE(NULLIF(TRIM(om.shortname), ''), om.organizationname) AS organization_short_name,
+      COALESCE(NULLIF(TRIM(actor.fullname), ''), NULLIF(TRIM(actor.username), '')) AS actor_name
+    FROM user_master um
+    INNER JOIN user_org_mapping uom ON uom.userid = um.userid
+    INNER JOIN organization_master om ON om.organizationid = uom.organizationid
+    LEFT JOIN user_master actor ON actor.userid::text = $5::text
+    WHERE uom.organizationid = $1
+      AND uom.isactive = TRUE AND uom.isdeleted = FALSE
+      AND om.isactive = TRUE AND om.activationstatus = TRUE AND om.isdeleted = FALSE
+      AND um.isactive = TRUE AND um.isdeleted = FALSE AND um.islocked = FALSE
+      AND (UPPER(TRIM(um.usertype)) = ANY($2::text[]) OR um.userid::text = ANY($3::text[]))
+      AND ($4::text IS NULL OR um.userid::text <> $4::text)`,
+    [organizationID, normalizedRoles, normalizedUserIds,
+      excludeUserID == null ? null : String(excludeUserID),
+      actorUserID == null ? null : String(actorUserID)]);
+  return {
+    userIds: notificationUserIds(result.rows.map((row) => row.userid)),
+    organizationShortName: String(result.rows[0]?.organization_short_name || "").trim(),
+    actorName: String(result.rows[0]?.actor_name || "").trim(),
+  };
+};
+
+// Build only notification presentation text here; workflow and recipients stay
+// independent so content changes cannot alter CAPEX approval behavior.
+const capexNotificationContent = ({ kind, item, qty, department, description,
+  organizationShortName, actorName, approverRole, title, message }) => {
+  if (kind === "CREATE") {
+    return {
+      title: `CAPEX - ${String(item || "").trim()} (${String(qty ?? "").trim()}) - ${String(department || "").trim()} - ${organizationShortName}`,
+      message: String(description || "").trim(),
+    };
+  }
+  if (kind === "APPROVE") {
+    return {
+      title: `CAPEX - ${String(item || "").trim()} - ${String(department || "").trim()} - ${organizationShortName}`,
+      message: `Approved by ${actorName || approverRole}`,
+    };
+  }
+  if (["REJECT", "RETURN", "HOLD"].includes(kind)) {
+    const actionLabel = { REJECT: "Rejected", RETURN: "Returned", HOLD: "Hold" }[kind];
+    return {
+      title: `CAPEX - ${String(item || "").trim()} - ${String(department || "").trim()} - ${organizationShortName}`,
+      message: `${actionLabel} by ${actorName || approverRole}`,
+    };
+  }
+  return { title, message };
+};
+
+// CAPEX owns its recipient and content rules; the shared notification service
+// receives only the final generic command for persistence and Firebase delivery.
+const notifyCapex = async ({ organizationID, capexID, roles, directUserIds,
+  excludeUserID, actorUserID, kind, item, qty, department, description,
+  approverRole, title, message, action }) => {
+  const recipientContext = await resolveCapexNotificationRecipients({
+    organizationID, roles, directUserIds, excludeUserID, actorUserID,
+  });
+  const { userIds } = recipientContext;
+  if (!userIds.length) return;
+  const content = capexNotificationContent({
+    kind, item, qty, department, description, approverRole, title, message,
+    organizationShortName: recipientContext.organizationShortName,
+    actorName: recipientContext.actorName,
+  });
+
+  const { sendMessage } = require("../../producer/producer");
+  const QUEUE = require("../../config/queue");
+  const response = await sendMessage(QUEUE.NOTIFICATION.REQUEST, QUEUE.NOTIFICATION.RESPONSE, {
+    action: "CREATE_NOTIFICATION",
+    data: {
+      organizationId: Number(organizationID), title: content.title, message: content.message, type: "info",
+      moduleName: CAPEX_NOTIFICATION_MODULE, entityType: "Capex",
+      entityId: String(capexID), action, priority: "normal", userIds,
+    },
+  });
+  if (!response || response.success !== true) {
+    console.error("CAPEX notification request unsuccessful:", response?.message || "No response");
+  }
+};
+
+// Fire only after COMMIT. Notification failures must never fail or roll back CAPEX.
+const notifyCommittedCapex = (event) => {
+  Promise.resolve()
+    .then(() => notifyCapex(event))
+    .catch((error) => console.error("CAPEX notification failed:", error.message));
+};
 const CAPEX_DETAIL_PDF_FONTS = {
   Roboto: {
     normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
@@ -263,6 +361,20 @@ const createCapex = async (data) => {
 
     await client.query("COMMIT");
     transactionStarted = false;
+
+    const firstApprovalRole = String(approvals[0]?.ApprovalRole || "").trim().toUpperCase();
+    notifyCommittedCapex({
+      organizationID: data.OrganizationID,
+      capexID,
+      roles: firstApprovalRole ? [firstApprovalRole] : [],
+      directUserIds: [],
+      kind: "CREATE",
+      item: data.Item,
+      qty: data.Qty,
+      department: data.Department,
+      description: data.Description,
+      action: "CREATED",
+    });
 
     return {
       success: true,
@@ -1852,6 +1964,11 @@ const processCapexApproval = async (data) => {
         cm.CapexID,
         cm.CapexNumber,
         cm.OrganizationID,
+        cm.CreatedBy,
+        cm.Department,
+        cm.Item,
+        cm.Qty,
+        cm.Description,
         cm.IsVoid,
         cm.ModifiedDate
       FROM Capex_Master cm
@@ -2075,6 +2192,28 @@ const processCapexApproval = async (data) => {
     const currentRole = currentStage.role;
 
     const currentStatus = currentStage.status;
+
+    // Build one post-commit notification from the already locked CAPEX and
+    // effective workflow stages; no request-supplied organization is trusted.
+    const notifyApprovalCommitted = ({ kind, title, message, notificationAction,
+      roles = [], includeCreator = false, excludeActor = false }) => {
+      notifyCommittedCapex({
+        organizationID: capex.organizationid,
+        capexID: capex.capexid,
+        roles,
+        directUserIds: includeCreator ? [capex.createdby] : [],
+        excludeUserID: excludeActor ? data.UserID : null,
+        actorUserID: data.UserID,
+        kind,
+        item: capex.item,
+        qty: capex.qty,
+        department: capex.department,
+        approverRole,
+        title,
+        message,
+        action: notificationAction,
+      });
+    };
 
     // ============================================================
     // 15. FIND USER'S STAGE
@@ -2326,6 +2465,14 @@ const processCapexApproval = async (data) => {
 
         transactionStarted = false;
 
+        notifyApprovalCommitted({
+          kind: "APPROVE",
+          notificationAction: "APPROVED",
+          roles: [followingStage.role],
+          includeCreator: true,
+          excludeActor: true,
+        });
+
         return {
           success: true,
 
@@ -2366,6 +2513,12 @@ const processCapexApproval = async (data) => {
       await client.query("COMMIT");
 
       transactionStarted = false;
+
+      notifyApprovalCommitted({
+        kind: "APPROVE",
+        notificationAction: "APPROVED",
+        includeCreator: true,
+      });
 
       return {
         success: true,
@@ -2434,6 +2587,14 @@ const processCapexApproval = async (data) => {
 
       transactionStarted = false;
 
+      notifyApprovalCommitted({
+        kind: "REJECT",
+        notificationAction: "REJECTED",
+        roles: [approverRole],
+        includeCreator: true,
+        excludeActor: true,
+      });
+
       return {
         success: true,
 
@@ -2498,6 +2659,14 @@ const processCapexApproval = async (data) => {
 
       transactionStarted = false;
 
+      notifyApprovalCommitted({
+        kind: "RETURN",
+        notificationAction: "RETURNED",
+        roles: [approverRole],
+        includeCreator: true,
+        excludeActor: true,
+      });
+
       return {
         success: true,
 
@@ -2557,6 +2726,14 @@ const processCapexApproval = async (data) => {
 
       await client.query("COMMIT");
       transactionStarted = false;
+
+      notifyApprovalCommitted({
+        kind: "HOLD",
+        notificationAction: "HOLD",
+        roles: [currentRole],
+        includeCreator: true,
+        excludeActor: true,
+      });
 
       return {
         success: true,
