@@ -9,6 +9,7 @@ const { sendPushNotification } = require("../../utils/sendPushNotification");
 // Canonical notification module names are defined in one place. Add a new
 // normalized key here when another module needs casing/spacing normalization.
 const NOTIFICATION_MODULE_NAMES = Object.freeze({
+    capex: "Capex",
     guestglitch: "Guest Glitch",
     incidentreport: "Incident Report",
     opex: "Opex",
@@ -16,7 +17,7 @@ const NOTIFICATION_MODULE_NAMES = Object.freeze({
 
 // Modules using the shared Firebase dispatcher. Recipient selection remains in
 // each module service; this set only enables generic post-persistence delivery.
-const PUSH_NOTIFICATION_MODULES = new Set(["Guest Glitch", "Incident Report"]);
+const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Report"]);
 
 const normalizeNotificationModuleName = (moduleName) => {
     if (moduleName === undefined || moduleName === null) return moduleName;
