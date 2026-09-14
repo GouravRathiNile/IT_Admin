@@ -29,6 +29,16 @@ const {
   getAllMaintenance,
   getMaintenanceById,
   deleteMaintenance,
+  getTotalEquipmentReports,
+  getAllBreakdownsReport,
+  getDailyMaintenanceReports,
+  getMonthlyMaintenanceReports,
+  getScheduledMissingReports,
+  getTotalEquipmentReportsPdf,
+  getBreakdownReportPdf,
+  getDailyMaintenanceReportPdf,
+  getMonthlyMaintenanceReportPdf,
+  getScheduledMissingReportPdf,
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -66,5 +76,16 @@ router.post("/SaveMaintenance",authenticateToken,upload.array("Documents", 10),s
 router.delete("/DeleteMaintenance",authenticateToken,deleteMaintenance,);
 router.get("/MaintenanceList",authenticateToken,getAllMaintenance,);
 router.get("/GetMaintenanceById/:id",authenticateToken,getMaintenanceById,);
-
+// =============================================================Reports of Equipment
+router.get("/TotalEquipmentReports", authenticateToken, getTotalEquipmentReports);
+router.get("/BreakdownReports",authenticateToken,getAllBreakdownsReport,);
+router.get("/DailyMaintenanceReports",authenticateToken,getDailyMaintenanceReports,);
+router.get("/MonthlyMaintenanceReports",authenticateToken,getMonthlyMaintenanceReports,);
+router.get("/ScheduledMissingReports",authenticateToken,getScheduledMissingReports,);
+// =============================================================PDFs of Equipment
+router.get("/TotalEquipmentReportsPdf", authenticateToken, getTotalEquipmentReportsPdf);
+router.get("/BreakdownReportsPdf",authenticateToken,getBreakdownReportPdf,);
+router.get("/DailyMaintenanceReportsPdf",authenticateToken,getDailyMaintenanceReportPdf,);
+router.get("/MonthlyMaintenanceReportsPdf",authenticateToken,getMonthlyMaintenanceReportPdf,);
+router.get("/ScheduledMissingReportsPdf",authenticateToken,getScheduledMissingReportPdf,);
 module.exports = router;
