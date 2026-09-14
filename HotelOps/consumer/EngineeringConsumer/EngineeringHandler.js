@@ -58,6 +58,24 @@ const EngineeringHandler = async (message) => {
 
       case "DELETE_ENGINEERING_MAINTENANCE":
         return await EngineeringService.deleteMaintenance(message.data);
+      // ===================================================Maintenance Details
+      case "CREATE_ENGINEERING_AMC":
+        return await EngineeringService.createAMC(message.data);
+
+      case "UPDATE_ENGINEERING_AMC":
+        return await EngineeringService.updateAMC(message.data);
+
+      case "DELETE_ENGINEERING_AMC":
+        return await EngineeringService.deleteAMC(message.data);
+
+      case "PROCESS_ENGINEERING_AMC_APPROVAL":
+        return await EngineeringService.processAMCApproval(message.data);
+
+      case "CREATE_ENGINEERING_AMC_APPROVAL_CONFIG":
+        return await EngineeringService.createAMCApprovalConfig(message.data);
+
+      case "DELETE_ENGINEERING_AMC_APPROVAL_CONFIG":
+        return await EngineeringService.deleteAMCApprovalConfig(message.data);
 
       default:
         return {
