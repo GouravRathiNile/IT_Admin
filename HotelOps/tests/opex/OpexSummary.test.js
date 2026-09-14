@@ -7,6 +7,91 @@ const { pool } = require("../../db");
 const OpexService = require("../../services/OpexService/OpexService");
 const OpexController = require("../../controllers/OpexController/OpexController");
 
+const opexServiceSource = fs.readFileSync(
+  path.join(__dirname, "../../services/OpexService/OpexService.js"), "utf8",
+);
+
+test("OPEX notifications use canonical payloads and exact action content", () => {
+  const content = opexServiceSource.match(/const opexNotificationContent[\s\S]*?const notifyOpex/)?.[0] || "";
+  const notifier = opexServiceSource.match(/const notifyOpex[\s\S]*?const notifyCommittedOpex/)?.[0] || "";
+  assert.match(opexServiceSource, /const OPEX_NOTIFICATION_MODULE = "Opex"/);
+  assert.match(content, /`OPEX - \$\{String\(item[\s\S]*\(\$\{String\(qty[\s\S]*\$\{organizationShortName\}`/);
+  assert.match(content, /APPROVE: "Approved", REJECT: "Rejected", RETURN: "Returned", HOLD: "Hold"/);
+  assert.match(notifier, /moduleName: OPEX_NOTIFICATION_MODULE, entityType: "Opex"/);
+  assert.match(notifier, /type: "info"/);
+  assert.match(notifier, /priority: "normal"/);
+  assert.doesNotMatch(content, /OpexNumber|OPEX number|remarks|approvedQuantity/i);
+  for (const action of ["CREATED", "APPROVED", "REJECTED", "RETURNED", "HOLD"]) {
+    assert.match(opexServiceSource, new RegExp(`(?:action|notificationAction): "${action}"`));
+  }
+});
+
+test("OPEX notification recipients follow effective organization and department roles", () => {
+  const resolver = opexServiceSource.match(/const resolveOpexNotificationRecipients[\s\S]*?const opexNotificationContent/)?.[0] || "";
+  assert.match(resolver, /SELECT DISTINCT um\.userid/);
+  assert.match(resolver, /dm\.organizationid = \$1/);
+  assert.match(resolver, /departmentname[\s\S]*UPPER\(TRIM\(\$6\)\)/);
+  assert.match(resolver, /'FC' = ANY[\s\S]*departmentname[\s\S]*'FINANCE'/);
+  assert.match(resolver, /'GM' = ANY[\s\S]*gm_uom\.organizationid = \$1/);
+  assert.match(resolver, /'CEO' = ANY[\s\S]*ceo_uom\.organizationid = \$1/);
+  assert.match(resolver, /'RD-FC' = ANY[\s\S]*rdfc_uom\.organizationid = \$7/);
+  assert.match(resolver, /CENTRAL_RDFC_ORGANIZATION_ID/);
+  assert.match(resolver, /\$4::text IS NULL OR um\.userid::text <> \$4::text/);
+  assert.match(resolver, /userIds: notificationUserIds\(result\.rows\.map/);
+});
+
+test("Finance OPEX first-stage HOD resolves the mapped Finance HOD", () => {
+  const resolver = opexServiceSource.match(/const resolveOpexNotificationRecipients[\s\S]*?const opexNotificationContent/)?.[0] || "";
+  const hodBranch = resolver.match(/OR \('HOD' = ANY[\s\S]*?OR \('FC' = ANY/)?.[0] || "";
+  assert.match(hodBranch, /UPPER\(TRIM\(COALESCE\(dm\.departmentname, ''\)\)\) = UPPER\(TRIM\(\$6\)\)/);
+  assert.match(hodBranch, /hod_uom\.organizationid = \$1/);
+  assert.doesNotMatch(hodBranch, /<> 'FINANCE'|!= 'FINANCE'/);
+  assert.doesNotMatch(hodBranch, /dm\.organizationid = \$1/);
+  assert.match(opexServiceSource, /department: data\.Department, roles: firstApprovalRole \? \[firstApprovalRole\] : \[\]/);
+});
+
+test("OPEX create and approval notifications use configured stages and action recipients", () => {
+  const create = opexServiceSource.match(/const createOpex = async[\s\S]*?\/\/ =+ Read Query/)?.[0] || "";
+  const approval = opexServiceSource.match(/const processOpexApproval = async[\s\S]*?\/\/ =+ Summary/)?.[0] || "";
+  assert.match(create, /const firstApprovalRole = String\(approvals\[0\]\?\.ApprovalRole/);
+  assert.match(create, /roles: firstApprovalRole \? \[firstApprovalRole\] : \[\]/);
+  assert.match(approval, /roles: \[followingStage\.role\], includeCreator: true, excludeActor: true/);
+  assert.match(approval, /kind: "APPROVE"[\s\S]*includeCreator: true, excludeActor: true/);
+  for (const kind of ["REJECT", "RETURN"]) {
+    assert.match(approval, new RegExp(`kind: "${kind}"[\\s\\S]*roles: \\[approverRole\\][\\s\\S]*includeCreator: true, excludeActor: true`));
+  }
+  assert.match(approval, /kind: "HOLD"[\s\S]*roles: \[currentRole\][\s\S]*includeCreator: true, excludeActor: true/);
+});
+
+for (const event of [
+  { action: "REJECT", kind: "REJECT", notificationAction: "REJECTED", role: "approverRole", message: "Rejected" },
+  { action: "RETURN", kind: "RETURN", notificationAction: "RETURNED", role: "approverRole", message: "Returned" },
+  { action: "HOLD", kind: "HOLD", notificationAction: "HOLD", role: "currentRole", message: "Hold" },
+]) {
+  test(`OPEX ${event.action} notifies creator and other applicable role users after commit`, () => {
+    const start = opexServiceSource.indexOf(`if (action === "${event.action}")`);
+    const nextAction = { REJECT: "RETURN", RETURN: "HOLD", HOLD: null }[event.action];
+    const end = nextAction
+      ? opexServiceSource.indexOf(`if (action === "${nextAction}")`, start + 1)
+      : opexServiceSource.indexOf('return fail("Unable to process Opex approval.', start + 1);
+    const actionBlock = opexServiceSource.slice(start, end);
+    assert.ok(start >= 0, `${event.action} action block must exist`);
+    assert.match(actionBlock, /await client\.query\("COMMIT"\);[\s\S]*transactionStarted = false;[\s\S]*notifyApprovalCommitted/);
+    assert.match(actionBlock, new RegExp(`kind: "${event.kind}"`));
+    assert.match(actionBlock, new RegExp(`notificationAction: "${event.notificationAction}"`));
+    assert.match(actionBlock, new RegExp(`roles: \\[${event.role}\\]`));
+    assert.match(actionBlock, /includeCreator: true, excludeActor: true/);
+    assert.match(opexServiceSource, new RegExp(`${event.kind}: "${event.message}"`));
+  });
+}
+
+test("OPEX notifications are post-commit and failure-isolated", () => {
+  assert.match(opexServiceSource, /const notifyCommittedOpex = \(event\)[\s\S]*Promise\.resolve\(\)[\s\S]*notifyOpex\(event\)[\s\S]*\.catch\(/);
+  assert.match(opexServiceSource, /await client\.query\("COMMIT"\);\s*transactionStarted = false;\s*const firstApprovalRole[\s\S]*notifyCommittedOpex\(/);
+  assert.equal((opexServiceSource.match(/await client\.query\("COMMIT"\);\s*transactionStarted = false;\s*notifyApprovalCommitted/g) || []).length, 5);
+  assert.doesNotMatch(opexServiceSource, /ROLLBACK[\s\S]{0,120}notifyCommittedOpex/);
+});
+
 const summaryRow = {
   totalopex: "6",
   totalamount: "2100",

@@ -27,7 +27,7 @@ test("notification module names are normalized centrally before persistence and 
   assert.doesNotMatch(create, /data\.type \|\| "info",\s*data\.moduleName,/);
   assert.match(source, /normalizeNotificationModuleName\(data\.moduleName\)/);
   assert.match(source, /normalizeNotificationModuleName\(moduleName\)/);
-  assert.match(source, /new Set\(\["Capex", "Guest Glitch", "Incident Report"\]\)/);
+  assert.match(source, /new Set\(\["Capex", "Guest Glitch", "Incident Report", "Opex"\]\)/);
   assert.match(source, /PUSH_NOTIFICATION_MODULES\.has\(notification\.module_name\)/);
 });
 

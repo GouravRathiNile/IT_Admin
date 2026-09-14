@@ -17,7 +17,7 @@ const NOTIFICATION_MODULE_NAMES = Object.freeze({
 
 // Modules using the shared Firebase dispatcher. Recipient selection remains in
 // each module service; this set only enables generic post-persistence delivery.
-const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Report"]);
+const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Report", "Opex"]);
 
 const normalizeNotificationModuleName = (moduleName) => {
     if (moduleName === undefined || moduleName === null) return moduleName;

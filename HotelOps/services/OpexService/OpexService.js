@@ -7,6 +7,11 @@ const { formatDate } = require("../../utils/dateFormatter");
 const PdfPrinter = require("pdfmake");
 const path = require("path");
 const { generatePdf } = require("../../utils/pdfHelper");
+const OPEX_NOTIFICATION_MODULE = "Opex";
+
+const notificationUserIds = (values) => [...new Set((Array.isArray(values) ? values : [values])
+  .filter((value) => value != null && /^[1-9]\d*$/.test(String(value).trim()))
+  .map((value) => String(value).trim()))].sort();
 
 // ==============================================================Default roles
 const DEFAULT_APPROVALS = Object.freeze([
@@ -18,6 +23,107 @@ const DEFAULT_APPROVALS = Object.freeze([
 ]);
 const APPROVAL_ROLES = new Set(["HOD", "FC", "GM", "RD-FC", "CEO"]);
 const CENTRAL_RDFC_ORGANIZATION_ID = 10;
+
+// Resolve recipients with the same effective-role rules used by OPEX approval:
+// property/department HOD, property FC/GM/CEO, and central-org Finance HOD for RD-FC.
+const resolveOpexNotificationRecipients = async ({ organizationID, department, roles = [],
+  directUserIds = [], excludeUserID = null, actorUserID = null }) => {
+  const normalizedRoles = [...new Set(roles.map((role) => String(role || "").trim().toUpperCase())
+    .filter((role) => APPROVAL_ROLES.has(role)))];
+  const normalizedUserIds = notificationUserIds(directUserIds);
+  const result = await pool.query(`
+    SELECT DISTINCT um.userid,
+      COALESCE(NULLIF(TRIM(om.shortname), ''), om.organizationname) AS organization_short_name,
+      COALESCE(NULLIF(TRIM(actor.fullname), ''), NULLIF(TRIM(actor.username), '')) AS actor_name
+    FROM user_master um
+    INNER JOIN organization_master om ON om.organizationid = $1
+    LEFT JOIN department_master dm ON dm.departmentid = um.departmentid
+    LEFT JOIN user_master actor ON actor.userid::text = $5::text
+    WHERE om.isactive = TRUE AND om.activationstatus = TRUE AND om.isdeleted = FALSE
+      AND um.isactive = TRUE AND um.isdeleted = FALSE AND um.islocked = FALSE
+      AND ($4::text IS NULL OR um.userid::text <> $4::text)
+      AND (
+        (um.userid::text = ANY($3::text[]) AND EXISTS (
+          SELECT 1 FROM user_org_mapping direct_uom
+          WHERE direct_uom.userid = um.userid AND direct_uom.organizationid = $1
+            AND direct_uom.isactive = TRUE AND direct_uom.isdeleted = FALSE))
+        OR ('HOD' = ANY($2::text[]) AND UPPER(TRIM(um.usertype)) = 'HOD'
+          AND UPPER(TRIM(COALESCE(dm.departmentname, ''))) = UPPER(TRIM($6))
+          AND dm.isdeleted = FALSE
+          AND EXISTS (SELECT 1 FROM user_org_mapping hod_uom
+            WHERE hod_uom.userid = um.userid AND hod_uom.organizationid = $1
+              AND hod_uom.isactive = TRUE AND hod_uom.isdeleted = FALSE))
+        OR ('FC' = ANY($2::text[]) AND UPPER(TRIM(um.usertype)) = 'HOD'
+          AND UPPER(TRIM(COALESCE(dm.departmentname, ''))) = 'FINANCE'
+          AND dm.organizationid = $1 AND dm.isdeleted = FALSE
+          AND EXISTS (SELECT 1 FROM user_org_mapping fc_uom
+            WHERE fc_uom.userid = um.userid AND fc_uom.organizationid = $1
+              AND fc_uom.isactive = TRUE AND fc_uom.isdeleted = FALSE)
+          AND NOT EXISTS (SELECT 1 FROM user_org_mapping central_fc_uom
+            WHERE central_fc_uom.userid = um.userid AND central_fc_uom.organizationid = $7
+              AND central_fc_uom.isactive = TRUE AND central_fc_uom.isdeleted = FALSE))
+        OR ('GM' = ANY($2::text[]) AND UPPER(TRIM(um.usertype)) = 'GM'
+          AND EXISTS (SELECT 1 FROM user_org_mapping gm_uom
+            WHERE gm_uom.userid = um.userid AND gm_uom.organizationid = $1
+              AND gm_uom.isactive = TRUE AND gm_uom.isdeleted = FALSE))
+        OR ('CEO' = ANY($2::text[]) AND UPPER(TRIM(um.usertype)) = 'CEO'
+          AND EXISTS (SELECT 1 FROM user_org_mapping ceo_uom
+            WHERE ceo_uom.userid = um.userid AND ceo_uom.organizationid = $1
+              AND ceo_uom.isactive = TRUE AND ceo_uom.isdeleted = FALSE))
+        OR ('RD-FC' = ANY($2::text[]) AND UPPER(TRIM(um.usertype)) = 'HOD'
+          AND UPPER(TRIM(COALESCE(dm.departmentname, ''))) = 'FINANCE'
+          AND EXISTS (SELECT 1 FROM user_org_mapping rdfc_uom
+            WHERE rdfc_uom.userid = um.userid AND rdfc_uom.organizationid = $7
+              AND rdfc_uom.isactive = TRUE AND rdfc_uom.isdeleted = FALSE))
+      )`,
+    [organizationID, normalizedRoles, normalizedUserIds,
+      excludeUserID == null ? null : String(excludeUserID),
+      actorUserID == null ? null : String(actorUserID), String(department || ""),
+      CENTRAL_RDFC_ORGANIZATION_ID]);
+  return {
+    userIds: notificationUserIds(result.rows.map((row) => row.userid)),
+    organizationShortName: String(result.rows[0]?.organization_short_name || "").trim(),
+    actorName: String(result.rows[0]?.actor_name || "").trim(),
+  };
+};
+
+// Presentation is separate from recipient selection so text changes cannot alter workflow.
+const opexNotificationContent = ({ kind, item, qty, department, description,
+  organizationShortName, actorName, approverRole }) => {
+  const title = kind === "CREATE"
+    ? `OPEX - ${String(item || "").trim()} (${String(qty ?? "").trim()}) - ${String(department || "").trim()} - ${organizationShortName}`
+    : `OPEX - ${String(item || "").trim()} - ${String(department || "").trim()} - ${organizationShortName}`;
+  if (kind === "CREATE") return { title, message: String(description || "").trim() };
+  const actionLabel = { APPROVE: "Approved", REJECT: "Rejected", RETURN: "Returned", HOLD: "Hold" }[kind];
+  return { title, message: `${actionLabel} by ${actorName || approverRole}` };
+};
+
+// OPEX owns recipient/content rules; the shared service persists and pushes the final command.
+const notifyOpex = async ({ organizationID, opexID, department, roles, directUserIds,
+  excludeUserID, actorUserID, kind, item, qty, description, approverRole, action }) => {
+  const context = await resolveOpexNotificationRecipients({ organizationID, department,
+    roles, directUserIds, excludeUserID, actorUserID });
+  if (!context.userIds.length) return;
+  const content = opexNotificationContent({ kind, item, qty, department, description,
+    approverRole, organizationShortName: context.organizationShortName, actorName: context.actorName });
+  const { sendMessage } = require("../../producer/producer");
+  const QUEUE = require("../../config/queue");
+  const response = await sendMessage(QUEUE.NOTIFICATION.REQUEST, QUEUE.NOTIFICATION.RESPONSE, {
+    action: "CREATE_NOTIFICATION",
+    data: { organizationId: Number(organizationID), title: content.title, message: content.message,
+      type: "info", moduleName: OPEX_NOTIFICATION_MODULE, entityType: "Opex",
+      entityId: String(opexID), action, priority: "normal", userIds: context.userIds },
+  });
+  if (!response || response.success !== true) {
+    console.error("OPEX notification request unsuccessful:", response?.message || "No response");
+  }
+};
+
+// Notification failure is isolated from an OPEX transaction that already committed.
+const notifyCommittedOpex = (event) => {
+  Promise.resolve().then(() => notifyOpex(event))
+    .catch((error) => console.error("OPEX notification failed:", error.message));
+};
 
 // ============================================================ Shared Response Helpers(Create Helpers)
 const fail = (message, statusCode = 400) => ({
@@ -405,6 +511,12 @@ const createOpex = async (data) => {
     // ========================================================
     await client.query("COMMIT");
     transactionStarted = false;
+
+    const firstApprovalRole = String(approvals[0]?.ApprovalRole || "").trim().toUpperCase();
+    notifyCommittedOpex({ organizationID: data.OrganizationID, opexID: OpexID,
+      department: data.Department, roles: firstApprovalRole ? [firstApprovalRole] : [],
+      directUserIds: [], kind: "CREATE", item: data.Item, qty: data.Qty,
+      description: data.Description, action: "CREATED" });
 
     return {
       success: true,
@@ -1907,6 +2019,11 @@ const processOpexApproval = async (data) => {
         cm.OpexID,
         cm.OpexNumber,
         cm.OrganizationID,
+        cm.CreatedBy,
+        cm.Department,
+        cm.Item,
+        cm.Qty,
+        cm.Description,
         cm.IsVoid,
         cm.ModifiedDate
       FROM Opex_Master cm
@@ -2160,6 +2277,17 @@ CEORemarks,
     const currentRole = currentStage.role;
 
     const currentStatus = currentStage.status;
+
+    // Build one notification from the locked OPEX row and effective configured stage.
+    const notifyApprovalCommitted = ({ kind, notificationAction, roles = [],
+      includeCreator = false, excludeActor = false }) => notifyCommittedOpex({
+      organizationID: Opex.organizationid, opexID: Opex.opexid,
+      department: Opex.department, roles,
+      directUserIds: includeCreator ? [Opex.createdby] : [],
+      excludeUserID: excludeActor ? data.UserID : null, actorUserID: data.UserID,
+      kind, item: Opex.item, qty: Opex.qty, description: Opex.description,
+      approverRole, action: notificationAction,
+    });
 
     // ============================================================
     // 15. FIND USER'S STAGE
@@ -2453,6 +2581,9 @@ CEORemarks,
 
         transactionStarted = false;
 
+        notifyApprovalCommitted({ kind: "APPROVE", notificationAction: "APPROVED",
+          roles: [followingStage.role], includeCreator: true, excludeActor: true });
+
         return {
           success: true,
 
@@ -2493,6 +2624,9 @@ CEORemarks,
       await client.query("COMMIT");
 
       transactionStarted = false;
+
+      notifyApprovalCommitted({ kind: "APPROVE", notificationAction: "APPROVED",
+        includeCreator: true, excludeActor: true });
 
       return {
         success: true,
@@ -2561,6 +2695,9 @@ CEORemarks,
 
       transactionStarted = false;
 
+      notifyApprovalCommitted({ kind: "REJECT", notificationAction: "REJECTED",
+        roles: [approverRole], includeCreator: true, excludeActor: true });
+
       return {
         success: true,
 
@@ -2625,6 +2762,9 @@ CEORemarks,
 
       transactionStarted = false;
 
+      notifyApprovalCommitted({ kind: "RETURN", notificationAction: "RETURNED",
+        roles: [approverRole], includeCreator: true, excludeActor: true });
+
       return {
         success: true,
 
@@ -2684,6 +2824,9 @@ CEORemarks,
 
       await client.query("COMMIT");
       transactionStarted = false;
+
+      notifyApprovalCommitted({ kind: "HOLD", notificationAction: "HOLD",
+        roles: [currentRole], includeCreator: true, excludeActor: true });
 
       return {
         success: true,
