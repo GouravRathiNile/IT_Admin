@@ -10444,6 +10444,9 @@ const mapAMC = (row) => ({
   OrganizationID:
     Number(row.organizationid),
 
+  OrganizationShortName:
+    row.OrganizationShortName ?? row.organizationshortname ?? null,
+
   EquipmentID:
     Number(row.equipmentid),
 
@@ -10633,12 +10636,7 @@ const attachAMCRelatedData = async (
           row.fcstatus || "Pending",
 
         StatusDateTime:
-          row.fcstatusdatetime || null,
-
-        StatusApprovedBy:
-          row.fcstatusapprovedby !== null
-            ? Number(row.fcstatusapprovedby)
-            : null,
+          formatDate(row.fcstatusdatetime) || null,
 
         Remarks:
           row.fcremarks || null,
@@ -10649,12 +10647,9 @@ const attachAMCRelatedData = async (
           row.gmstatus || "Pending",
 
         StatusDateTime:
-          row.gmstatusdatetime || null,
+          formatDate(row.gmstatusdatetime) || null,
 
-        StatusApprovedBy:
-          row.gmstatusapprovedby !== null
-            ? Number(row.gmstatusapprovedby)
-            : null,
+      
 
         Remarks:
           row.gmremarks || null,
@@ -10665,12 +10660,9 @@ const attachAMCRelatedData = async (
           row.rdstatus || "Pending",
 
         StatusDateTime:
-          row.rdstatusdatetime || null,
+          formatDate(row.rdstatusdatetime) || null,
 
-        StatusApprovedBy:
-          row.rdstatusapprovedby !== null
-            ? Number(row.rdstatusapprovedby)
-            : null,
+       
 
         Remarks:
           row.rdremarks || null,
@@ -10681,12 +10673,9 @@ const attachAMCRelatedData = async (
           row.ceostatus || "Pending",
 
         StatusDateTime:
-          row.ceostatusdatetime || null,
+          formatDate(row.ceostatusdatetime) || null,
 
-        StatusApprovedBy:
-          row.ceostatusapprovedby !== null
-            ? Number(row.ceostatusapprovedby)
-            : null,
+      
 
         Remarks:
           row.ceoremarks || null,
@@ -10713,9 +10702,7 @@ const attachAMCRelatedData = async (
             approvalData.StatusDateTime ||
             null,
 
-          StatusApprovedBy:
-            approvalData.StatusApprovedBy ??
-            null,
+        
 
           Remarks:
             approvalData.Remarks ||
@@ -10772,7 +10759,7 @@ const attachAMCRelatedData = async (
           : null,
 
       CreatedDate:
-        row.createddate,
+        formatDate(row.createddate),
     });
   }
 
@@ -10923,7 +10910,9 @@ const getAllAMC = async (data) => {
       INNER JOIN Engineering_Equipment_Entry_Master e
         ON e.EquipmentID = am.EquipmentID
        AND e.IsDeleted = FALSE
-
+  INNER JOIN Organization_Master om
+    ON om.OrganizationID = am.OrganizationID
+   AND om.IsDeleted = FALSE
       LEFT JOIN Engineering_AMC_Approval aa
         ON aa.AMCID = am.AMCID
        AND aa.IsDeleted = FALSE
@@ -11526,6 +11515,7 @@ const getAllAMC = async (data) => {
         SELECT
           am.AMCID,
           am.OrganizationID,
+           om.ShortName AS "OrganizationShortName",
           am.EquipmentID,
 
           am.AMCStartDate,
@@ -11651,6 +11641,27 @@ const getAllAMC = async (data) => {
         OrganizationID,
       );
 
+    // Omit detail-only fields from the AMC list response.
+    for (const record of records) {
+      for (const field of [
+        "VendorName",
+        "VendorEmailAddress",
+        "VendorMobileNumber",
+        "VendorSecondMobileNumber",
+        "VendorLandlineNumber",
+        "VendorAddress",
+        "VendorCity",
+        "VendorState",
+        "VendorPincode",
+        "ScheduleOfServicing",
+        "ScheduleDay",
+        "ResponsiblePerson",
+        "FinalStatusDateTime",
+      ]) {
+        delete record[field];
+      }
+    }
+
     // ============================================================
     // Pagination
     // ============================================================
@@ -11714,7 +11725,7 @@ const getAMCById = async (data) => {
 
     if (
       !Number.isSafeInteger(AMCID) ||
-      AMCID <= 0
+      AMCID < 0
     ) {
       return fail(
         "Valid AMCID is required.",
@@ -11723,7 +11734,277 @@ const getAMCById = async (data) => {
     }
 
     // ============================================================
-    // Query
+    // Validate Equipment ID
+    // ============================================================
+
+    const EquipmentID =
+      Number(data.EquipmentID);
+
+    if (
+      !Number.isSafeInteger(EquipmentID) ||
+      EquipmentID <= 0
+    ) {
+      return fail(
+        "Valid EquipmentID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // AMCID = 0
+    // New AMC
+    // Equipment data only
+    // ============================================================
+
+    if (AMCID === 0) {
+      const equipmentResult =
+        await pool.query(
+          `
+          SELECT
+            e.EquipmentID,
+            e.OrganizationID,
+            om.ShortName AS OrganizationShortName,
+            d.DepartmentName,
+
+            e.DepartmentID,
+            e.Description,
+            e.SerialNumber,
+            e.TypeOfMachine,
+            e.Capacity,
+            e.ModelNumber,
+            e.Make,
+            e.Area,
+            e.CommissioningDate,
+
+            e.WarrantyStartDate,
+            e.WarrantyEndDate,
+            e.WarrantyStatus,
+
+            e.AMCType AS EquipmentAMCType,
+            e.AMCStartDate AS EquipmentAMCStartDate,
+            e.AMCEndDate AS EquipmentAMCEndDate,
+            e.AMCStatus AS EquipmentAMCStatus,
+            e.AMCYearlyExpense,
+
+            e.ScheduleOfServicing,
+            e.ScheduleDay,
+            e.ResponsiblePerson
+
+          FROM Engineering_Equipment_Entry_Master e
+          LEFT JOIN Organization_Master om
+            ON om.OrganizationID = e.OrganizationID
+           AND om.IsDeleted = FALSE
+          LEFT JOIN department_master d
+            ON d.DepartmentID = e.DepartmentID
+           AND d.OrganizationID = e.OrganizationID
+           AND d.IsDeleted = FALSE
+
+          WHERE e.EquipmentID = $1
+            AND e.IsDeleted = FALSE
+
+          LIMIT 1;
+          `,
+          [EquipmentID],
+        );
+
+      if (
+        equipmentResult.rows.length === 0
+      ) {
+        return fail(
+          "Equipment record not found.",
+          404,
+        );
+      }
+
+      const row =
+        equipmentResult.rows[0];
+
+      // ============================================================
+      // Response for new AMC
+      // AMC fields null
+      // Equipment fields actual
+      // ============================================================
+
+      const AMC = {
+        AMCID: 0,
+
+        OrganizationID:
+          Number(row.organizationid),
+
+        OrganizationShortName: row.organizationshortname ?? null,
+        DepartmentName: row.departmentname ?? null,
+
+        EquipmentID:
+          Number(row.equipmentid),
+
+        // ==========================================================
+        // AMC Fields
+        // ==========================================================
+
+        AMCStartDate:
+          null,
+
+        AMCEndDate:
+          null,
+
+        AMCType:
+          null,
+
+        AMCAmount:
+          null,
+
+        // ==========================================================
+        // Vendor Fields
+        // ==========================================================
+
+        VendorName:
+          null,
+
+        VendorEmailAddress:
+          null,
+
+        VendorMobileNumber:
+          null,
+
+        VendorSecondMobileNumber:
+          null,
+
+        VendorLandlineNumber:
+          null,
+
+        VendorAddress:
+          null,
+
+        VendorCity:
+          null,
+
+        VendorState:
+          null,
+
+        VendorPincode:
+          null,
+
+        // ==========================================================
+        // Equipment Fields
+        // ==========================================================
+
+        DepartmentID:
+          row.departmentid !== null
+            ? Number(
+                row.departmentid,
+              )
+            : null,
+
+        Description:
+          row.description,
+
+        SerialNumber:
+          row.serialnumber,
+
+        TypeOfMachine:
+          row.typeofmachine,
+
+        Capacity:
+          row.capacity,
+
+        ModelNumber:
+          row.modelnumber,
+
+        Make:
+          row.make,
+
+        Area:
+          row.area,
+
+        CommissioningDate:
+          formatDate(
+            row.commissioningdate,
+          ),
+
+        WarrantyStartDate:
+          formatDate(
+            row.warrantystartdate,
+          ),
+
+        WarrantyEndDate:
+          formatDate(
+            row.warrantyenddate,
+          ),
+
+        WarrantyStatus:
+          row.warrantystatus,
+
+        EquipmentAMCType:
+          row.equipmentamctype,
+
+        EquipmentAMCStartDate:
+          formatDate(
+            row.equipmentamcstartdate,
+          ),
+
+        EquipmentAMCEndDate:
+          formatDate(
+            row.equipmentamcenddate,
+          ),
+
+        EquipmentAMCStatus:
+          row.equipmentamcstatus,
+
+        AMCYearlyExpense:
+          row.amcyearlyexpense !== null
+            ? Number(
+                row.amcyearlyexpense,
+              )
+            : null,
+
+        ScheduleOfServicing:
+          row.scheduleofservicing,
+
+        ScheduleDay:
+          row.scheduleday,
+
+        ResponsiblePerson:
+          row.responsibleperson !== null
+            ? Number(
+                row.responsibleperson,
+              )
+            : null,
+
+        // ==========================================================
+        // Approval Fields
+        // ==========================================================
+
+        CurrentApprovalRole:
+          null,
+
+        CurrentStatus:
+          null,
+
+        FinalStatus:
+          null,
+
+        Approvals:
+          [],
+
+        Documents:
+          [],
+
+        CreatedDate:
+          null,
+
+        ModifiedDate:
+          null,
+      };
+
+      return ok(
+        "Equipment data fetched successfully.",
+        AMC,
+      );
+    }
+
+    // ============================================================
+    // AMCID > 0
+    // Normal AMC flow
     // ============================================================
 
     const result = await pool.query(
@@ -11731,6 +12012,8 @@ const getAMCById = async (data) => {
       SELECT
         am.AMCID,
         am.OrganizationID,
+        om.ShortName AS OrganizationShortName,
+        d.DepartmentName,
         am.EquipmentID,
 
         am.AMCStartDate,
@@ -11827,7 +12110,9 @@ const getAMCById = async (data) => {
           ) = 'APPROVED'
           THEN NULL
 
-          ELSE current_stage.ApprovalRole
+          ELSE
+            current_stage.ApprovalRole
+
         END AS CurrentApprovalRole,
 
         -- ========================================================
@@ -11850,17 +12135,30 @@ const getAMCById = async (data) => {
             aa.FinalStatus,
             'Pending'
           )
+
         END AS CurrentStatus
 
       FROM Engineering_AMC_Master am
 
       INNER JOIN Engineering_Equipment_Entry_Master e
-        ON e.EquipmentID = am.EquipmentID
-       AND e.IsDeleted = FALSE
+        ON e.EquipmentID =
+           am.EquipmentID
+       AND e.IsDeleted =
+           FALSE
+
+      LEFT JOIN Organization_Master om
+        ON om.OrganizationID = am.OrganizationID
+       AND om.IsDeleted = FALSE
+      LEFT JOIN department_master d
+        ON d.DepartmentID = e.DepartmentID
+       AND d.OrganizationID = e.OrganizationID
+       AND d.IsDeleted = FALSE
 
       LEFT JOIN Engineering_AMC_Approval aa
-        ON aa.AMCID = am.AMCID
-       AND aa.IsDeleted = FALSE
+        ON aa.AMCID =
+           am.AMCID
+       AND aa.IsDeleted =
+           FALSE
 
       -- ==========================================================
       -- Current Approval Stage
@@ -11896,18 +12194,18 @@ const getAMCById = async (data) => {
                 'Pending'
               )
 
-            ELSE 'Pending'
+            ELSE
+              'Pending'
+
           END AS Status
 
         FROM
         (
-          -- ======================================================
-          -- Organization Approval Config
-          -- ======================================================
-
           SELECT
             UPPER(
-              TRIM(config.ApprovalRole)
+              TRIM(
+                config.ApprovalRole
+              )
             ) AS ApprovalRole,
 
             config.ApprovalOrder,
@@ -11918,13 +12216,10 @@ const getAMCById = async (data) => {
           WHERE config.OrganizationID =
                 am.OrganizationID
 
-            AND config.IsDeleted = FALSE
+            AND config.IsDeleted =
+                FALSE
 
           UNION ALL
-
-          -- ======================================================
-          -- Default FC -> GM -> RD -> CEO
-          -- ======================================================
 
           SELECT
             default_flow.ApprovalRole,
@@ -11938,6 +12233,7 @@ const getAMCById = async (data) => {
               ('GM', 2, 2),
               ('RD', 3, 3),
               ('CEO', 4, 4)
+
           ) AS default_flow(
             ApprovalRole,
             ApprovalOrder,
@@ -11953,7 +12249,8 @@ const getAMCById = async (data) => {
             WHERE config.OrganizationID =
                   am.OrganizationID
 
-              AND config.IsDeleted = FALSE
+              AND config.IsDeleted =
+                  FALSE
           )
 
         ) approval_flow
@@ -11985,7 +12282,8 @@ const getAMCById = async (data) => {
                   'Pending'
                 )
 
-              ELSE 'Pending'
+              ELSE
+                'Pending'
             END
           )
         ) <> 'APPROVED'
@@ -11999,31 +12297,48 @@ const getAMCById = async (data) => {
       ) current_stage ON TRUE
 
       WHERE am.AMCID = $1
+        AND am.EquipmentID = $2
         AND am.IsDeleted = FALSE
 
       LIMIT 1;
       `,
-      [AMCID],
+      [
+        AMCID,
+        EquipmentID,
+      ],
     );
 
     // ============================================================
     // Not Found
     // ============================================================
 
-    if (result.rows.length === 0) {
+    if (
+      result.rows.length === 0
+    ) {
       return fail(
         "AMC record not found.",
         404,
       );
     }
 
-    const row = result.rows[0];
-    const OrganizationID = Number(row.organizationid);
-    const approvalRole = resolveAMCApprovalRole({
-      OrganizationID,
-      UserType: data.UserType,
-      DepartmentName: data.DepartmentName,
-    });
+    const row =
+      result.rows[0];
+
+    const OrganizationID =
+      Number(
+        row.organizationid,
+      );
+
+    const approvalRole =
+      resolveAMCApprovalRole({
+        OrganizationID,
+
+        UserType:
+          data.UserType,
+
+        DepartmentName:
+          data.DepartmentName,
+      });
 
     // ============================================================
     // Approval Access Check
@@ -12053,26 +12368,26 @@ const getAMCById = async (data) => {
     };
 
     // ============================================================
-    // If logged-in user is an approver:
-    //
-    // Allow when:
-    // 1. AMC is currently at user's stage
-    // OR
-    // 2. User has already acted on AMC
+    // Approver access
     // ============================================================
 
     if (approvalRole) {
       const ownStatus = String(
-        roleStatusMap[approvalRole] || "Pending",
+        roleStatusMap[
+          approvalRole
+        ] || "Pending",
       )
         .trim()
         .toUpperCase();
 
-      const hasAlreadyActed = [
-        "APPROVED",
-        "REJECTED",
-        "RETURNED",
-      ].includes(ownStatus);
+      const hasAlreadyActed =
+        [
+          "APPROVED",
+          "REJECTED",
+          "RETURNED",
+        ].includes(
+          ownStatus,
+        );
 
       const isCurrentStage =
         currentApprovalRole ===
@@ -12104,12 +12419,13 @@ const getAMCById = async (data) => {
 
     // ============================================================
     // Extra Equipment Detail Fields
-    // mapAMC does not currently map these fields
     // ============================================================
 
     AMC.DepartmentID =
       row.departmentid !== null
-        ? Number(row.departmentid)
+        ? Number(
+            row.departmentid,
+          )
         : null;
 
     AMC.EquipmentAMCType =
@@ -12135,26 +12451,11 @@ const getAMCById = async (data) => {
           )
         : null;
 
-    // ============================================================
-    // Logged-In User Approval Information
-    // Useful for frontend Approve / Reject / Return buttons
-    // ============================================================
-
-    AMC.LoggedInApprovalRole =
-      approvalRole;
-
-    AMC.CanTakeApprovalAction =
-      Boolean(
-        approvalRole &&
-        currentApprovalRole ===
-          approvalRole &&
-        String(
-          row.currentstatus || "",
-        )
-          .trim()
-          .toUpperCase() ===
-          "PENDING",
-      );
+    AMC.OrganizationShortName = row.organizationshortname ?? null;
+    AMC.DepartmentName = row.departmentname ?? null;
+    delete AMC.FinalStatusDateTime;
+    delete AMC.LoggedInApprovalRole;
+    delete AMC.CanTakeApprovalAction;
 
     // ============================================================
     // Response
@@ -12171,7 +12472,9 @@ const getAMCById = async (data) => {
     );
 
     const retryResponse =
-      retryableDatabaseResponse(error);
+      retryableDatabaseResponse(
+        error,
+      );
 
     if (retryResponse) {
       return retryResponse;
@@ -13481,14 +13784,7 @@ const createAMCApprovalConfig = async (data) => {
     const existingConfigs =
       existingResult.rows;
 
-    console.log(
-      "EXISTING AMC CONFIGS =>",
-      JSON.stringify(
-        existingConfigs,
-        null,
-        2,
-      ),
-    );
+    
 
     // ============================================================
     // MAP EXISTING CONFIG BY LEVEL
