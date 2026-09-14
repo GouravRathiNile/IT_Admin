@@ -2037,6 +2037,9 @@ exports.getAMCById = async (req, res) => {
         AMCID:
           req.params.id,
 
+        EquipmentID:
+          req.query.EquipmentID,
+
         // Trusted JWT fields
         UserID:
           req.user?.UserID,
