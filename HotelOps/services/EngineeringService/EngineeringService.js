@@ -9928,6 +9928,4007 @@ const generateScheduledMissingReportPdf = async (data) => {
     };
   }
 };
+// ============================================================================================AMC of Equipment
+// ========================Default AMC Approval Levels Helper
+const DEFAULT_AMC_APPROVALS = Object.freeze([
+  { LevelNo: 1, ApprovalRole: "FC" },
+  { LevelNo: 2, ApprovalRole: "GM" },
+  { LevelNo: 3, ApprovalRole: "RD" },
+  { LevelNo: 4, ApprovalRole: "CEO" },
+]);
+const AMC_APPROVAL_ROLES = new Set([
+  "FC",
+  "GM",
+  "RD",
+  "CEO",
+]);
+// ============================================================Create AMC
+const createAMC = async (data) => {
+  let client;
+  let transactionStarted = false;
+
+  const documents = Array.isArray(data.Documents)
+    ? data.Documents
+    : [];
+
+  try {
+    client = await pool.connect();
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    // ============================================================
+    // 1. Validate Organization + Equipment
+    // ============================================================
+
+    const equipmentResult = await client.query(
+      `
+      SELECT
+        EquipmentID,
+        OrganizationID
+      FROM Engineering_Equipment_Entry_Master
+      WHERE EquipmentID = $1
+        AND OrganizationID = $2
+        AND IsDeleted = FALSE
+      LIMIT 1;
+      `,
+      [
+        data.EquipmentID,
+        data.OrganizationID,
+      ],
+    );
+
+    if (equipmentResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+
+      return fail(
+        "Equipment not found for the selected organization.",
+        404,
+      );
+    }
+
+    // ============================================================
+    // 2. Validate AMC Dates
+    // ============================================================
+
+    if (
+      data.AMCStartDate &&
+      data.AMCEndDate &&
+      data.AMCStartDate > data.AMCEndDate
+    ) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+
+      return fail(
+        "AMCStartDate cannot be greater than AMCEndDate.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // 3. Create AMC Master
+    // ============================================================
+
+    const masterResult = await client.query(
+      `
+      INSERT INTO Engineering_AMC_Master
+      (
+        OrganizationID,
+        EquipmentID,
+
+        AMCStartDate,
+        AMCEndDate,
+        AMCType,
+        AMCAmount,
+
+        VendorName,
+        VendorEmailAddress,
+        VendorMobileNumber,
+        VendorSecondMobileNumber,
+        VendorLandlineNumber,
+        VendorAddress,
+        VendorCity,
+        VendorState,
+        VendorPincode,
+
+        IsDeleted,
+
+        CreatedBy,
+        CreatedDate
+      )
+      VALUES
+      (
+        $1,
+        $2,
+
+        $3,
+        $4,
+        $5,
+        $6,
+
+        $7,
+        $8,
+        $9,
+        $10,
+        $11,
+        $12,
+        $13,
+        $14,
+        $15,
+
+        FALSE,
+
+        $16,
+        CURRENT_TIMESTAMP
+      )
+      RETURNING AMCID;
+      `,
+      [
+        data.OrganizationID,
+        data.EquipmentID,
+
+        data.AMCStartDate || null,
+        data.AMCEndDate || null,
+        data.AMCType || null,
+        data.AMCAmount ?? null,
+
+        data.VendorName || null,
+        data.VendorEmailAddress || null,
+        data.VendorMobileNumber || null,
+        data.VendorSecondMobileNumber || null,
+        data.VendorLandlineNumber || null,
+        data.VendorAddress || null,
+        data.VendorCity || null,
+        data.VendorState || null,
+        data.VendorPincode || null,
+
+        data.UserID,
+      ],
+    );
+
+    const AMCID = Number(
+      masterResult.rows[0].amcid,
+    );
+
+    // ============================================================
+    // 4. Insert AMC Documents
+    // ============================================================
+
+    for (const document of documents) {
+      await client.query(
+        `
+        INSERT INTO Engineering_AMC_Documents
+        (
+          AMCID,
+          OrganizationID,
+
+          FileName,
+          FilePath,
+          FileType,
+          FileSize,
+
+          IsDeleted,
+
+          CreatedBy,
+          CreatedDate
+        )
+        VALUES
+        (
+          $1,
+          $2,
+
+          $3,
+          $4,
+          $5,
+          $6,
+
+          FALSE,
+
+          $7,
+          CURRENT_TIMESTAMP
+        );
+        `,
+        [
+          AMCID,
+          data.OrganizationID,
+
+          document.FileName || null,
+          document.FilePath || null,
+          document.FileType || null,
+          document.FileSize ?? null,
+
+          data.UserID,
+        ],
+      );
+    }
+
+    // ============================================================
+    // 5. Validate AMC Approval Configuration
+    //
+    // If organization-specific config exists:
+    // only FC, GM, RD, CEO are allowed.
+    //
+    // If no config exists:
+    // service will later use default:
+    // FC -> GM -> RD -> CEO
+    // ============================================================
+
+    const approvalConfigResult = await client.query(
+      `
+      SELECT
+        ApprovalLevel,
+        ApprovalRole,
+        ApprovalOrder,
+        IsMandatory
+      FROM Engineering_AMC_Approval_Config
+      WHERE OrganizationID = $1
+        AND IsDeleted = FALSE
+      ORDER BY
+        ApprovalOrder ASC,
+        ApprovalLevel ASC,
+        AMCApprovalConfigID ASC;
+      `,
+      [data.OrganizationID],
+    );
+
+    const validApprovalRoles = new Set([
+      "FC",
+      "GM",
+      "RD",
+      "CEO",
+    ]);
+
+    for (const row of approvalConfigResult.rows) {
+      const role = String(
+        row.approvalrole || "",
+      )
+        .trim()
+        .toUpperCase();
+
+      if (!validApprovalRoles.has(role)) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+
+        return fail(
+          "AMC approval configuration contains an invalid approval role.",
+          400,
+        );
+      }
+    }
+
+    // ============================================================
+    // 6. Create AMC Approval Row
+    // ============================================================
+
+    await client.query(
+      `
+      INSERT INTO Engineering_AMC_Approval
+      (
+        AMCID,
+
+        FCStatus,
+        GMStatus,
+        RDStatus,
+        CEOStatus,
+
+        FinalStatus,
+
+        IsDeleted,
+
+        CreatedBy,
+        CreatedDate
+      )
+      VALUES
+      (
+        $1,
+
+        'Pending',
+        'Pending',
+        'Pending',
+        'Pending',
+
+        'Pending',
+
+        FALSE,
+
+        $2,
+        CURRENT_TIMESTAMP
+      );
+      `,
+      [
+        AMCID,
+        data.UserID,
+      ],
+    );
+
+    // ============================================================
+    // 7. Commit
+    // ============================================================
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+
+    return {
+      success: true,
+      message: "AMC created successfully."
+    };
+  } catch (error) {
+    if (client && transactionStarted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        console.error(
+          "Create AMC Rollback Error:",
+          rollbackError.message,
+        );
+      }
+    }
+
+    console.error(
+      "Create AMC Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    if (error.code === "23503") {
+      return fail(
+        "Invalid AMC organization, equipment, or related data.",
+        400,
+      );
+    }
+
+    if (error.code === "23505") {
+      return fail(
+        "AMC record already exists.",
+        409,
+      );
+    }
+
+    if (error.code === "22P02") {
+      return fail(
+        "Invalid AMC data.",
+        400,
+      );
+    }
+
+    return fail(
+      "Unable to create AMC at this time.",
+      500,
+    );
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+};
+// ============================================================AMC List
+//================Resolve Logged-In User AMC Approval Role Helper
+const resolveAMCApprovalRole = ({
+  OrganizationID,
+  UserType,
+  DepartmentName,
+}) => {
+  const organizationID = Number(OrganizationID);
+
+  const userType = String(UserType || "")
+    .trim()
+    .toUpperCase();
+
+  const departmentName = String(DepartmentName || "")
+    .trim()
+    .toUpperCase();
+
+  // ============================================================
+  // RD
+  // OrganizationID = 10
+  // UserType = HOD
+  // Department = Finance
+  //
+  // IMPORTANT:
+  // RD must be checked before FC
+  // ============================================================
+
+  if (
+    organizationID === 10 &&
+    userType === "HOD" &&
+    departmentName === "FINANCE"
+  ) {
+    return "RD";
+  }
+
+  // ============================================================
+  // FC
+  // UserType = HOD
+  // Department = Finance
+  // ============================================================
+
+  if (
+    userType === "HOD" &&
+    departmentName === "FINANCE"
+  ) {
+    return "FC";
+  }
+
+  // ============================================================
+  // GM
+  // ============================================================
+
+  if (userType === "GM") {
+    return "GM";
+  }
+
+  // ============================================================
+  // CEO
+  // ============================================================
+
+  if (userType === "CEO") {
+    return "CEO";
+  }
+
+  return null;
+};
+// ===============Get AMC Approval Flow Helper
+const getAMCApprovalFlow = async (
+  OrganizationID,
+  db = pool,
+) => {
+  const result = await db.query(
+    `
+    SELECT
+      AMCApprovalConfigID,
+      ApprovalLevel,
+      ApprovalRole,
+      ApprovalOrder,
+      IsMandatory
+    FROM Engineering_AMC_Approval_Config
+    WHERE OrganizationID = $1
+      AND IsDeleted = FALSE
+    ORDER BY
+      ApprovalOrder ASC,
+      ApprovalLevel ASC,
+      AMCApprovalConfigID ASC;
+    `,
+    [OrganizationID],
+  );
+
+  if (result.rows.length > 0) {
+    return result.rows.map((row) => ({
+      AMCApprovalConfigID:
+        Number(row.amcapprovalconfigid),
+
+      LevelNo:
+        Number(row.approvallevel),
+
+      ApprovalRole:
+        String(row.approvalrole || "")
+          .trim()
+          .toUpperCase(),
+
+      ApprovalOrder:
+        Number(row.approvalorder),
+
+      IsMandatory:
+        Boolean(row.ismandatory),
+    }));
+  }
+
+  return DEFAULT_AMC_APPROVALS.map(
+    (item, index) => ({
+      AMCApprovalConfigID: null,
+
+      LevelNo:
+        item.LevelNo,
+
+      ApprovalRole:
+        item.ApprovalRole,
+
+      ApprovalOrder:
+        index + 1,
+
+      IsMandatory: true,
+    }),
+  );
+};
+// ================AMC Row Mapper Helper
+const mapAMC = (row) => ({
+  AMCID:
+    Number(row.amcid),
+
+  OrganizationID:
+    Number(row.organizationid),
+
+  EquipmentID:
+    Number(row.equipmentid),
+
+  // ============================================================
+  // AMC
+  // ============================================================
+
+  AMCStartDate:
+    formatDate(row.amcstartdate),
+
+  AMCEndDate:
+    formatDate(row.amcenddate),
+
+  AMCType:
+    row.amctype,
+
+  AMCAmount:
+    row.amcamount !== null
+      ? Number(row.amcamount)
+      : null,
+
+  // ============================================================
+  // Vendor
+  // ============================================================
+
+  VendorName:
+    row.vendorname,
+
+  VendorEmailAddress:
+    row.vendoremailaddress,
+
+  VendorMobileNumber:
+    row.vendormobilenumber,
+
+  VendorSecondMobileNumber:
+    row.vendorsecondmobilenumber,
+
+  VendorLandlineNumber:
+    row.vendorlandlinenumber,
+
+  VendorAddress:
+    row.vendoraddress,
+
+  VendorCity:
+    row.vendorcity,
+
+  VendorState:
+    row.vendorstate,
+
+  VendorPincode:
+    row.vendorpincode,
+
+  // ============================================================
+  // Equipment
+  // ============================================================
+
+  Description:
+    row.description,
+
+  SerialNumber:
+    row.serialnumber,
+
+  TypeOfMachine:
+    row.typeofmachine,
+
+  Capacity:
+    row.capacity,
+
+  ModelNumber:
+    row.modelnumber,
+
+  Make:
+    row.make,
+
+  Area:
+    row.area,
+
+  CommissioningDate:
+    formatDate(row.commissioningdate),
+
+  WarrantyStartDate:
+    formatDate(row.warrantystartdate),
+
+  WarrantyEndDate:
+    formatDate(row.warrantyenddate),
+
+  WarrantyStatus:
+    row.warrantystatus,
+
+  ScheduleOfServicing:
+    row.scheduleofservicing,
+
+  ScheduleDay:
+    row.scheduleday,
+
+  ResponsiblePerson:
+    row.responsibleperson !== null
+      ? Number(row.responsibleperson)
+      : null,
+
+  // ============================================================
+  // Approval
+  // ============================================================
+
+  CurrentApprovalRole:
+    row.currentapprovalrole || null,
+
+  CurrentStatus:
+    row.currentstatus || "Pending",
+
+  FinalStatus:
+    row.finalstatus || "Pending",
+
+  FinalStatusDateTime:
+    row.finalstatusdatetime || null,
+
+  Approvals: [],
+  Documents: [],
+
+  // ============================================================
+  // Audit
+  // ============================================================
+
+
+  CreatedDate:
+    formatDate(row.createddate),
+
+ 
+});
+//=================Attach AMC Documents + Approval Array Helper
+const attachAMCRelatedData = async (
+  rows,
+  OrganizationID,
+) => {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return [];
+  }
+
+  const AMCIDs = rows.map(
+    (row) => Number(row.amcid),
+  );
+
+  // ============================================================
+  // Documents
+  // ============================================================
+
+  const documentsResult = await pool.query(
+    `
+    SELECT
+      AMCDocumentID,
+      AMCID,
+      OrganizationID,
+      FileName,
+      FilePath,
+      FileType,
+      FileSize,
+      CreatedDate
+    FROM Engineering_AMC_Documents
+    WHERE AMCID = ANY($1::bigint[])
+      AND IsDeleted = FALSE
+    ORDER BY
+      AMCID ASC,
+      AMCDocumentID ASC;
+    `,
+    [AMCIDs],
+  );
+
+  // ============================================================
+  // Approval Flow
+  // ============================================================
+
+  const approvalFlow =
+    await getAMCApprovalFlow(
+      OrganizationID,
+    );
+
+  // ============================================================
+  // Map AMC Rows
+  // ============================================================
+
+  const mapped = rows.map((row) => {
+    const item = mapAMC(row);
+
+    const statusMap = {
+      FC: {
+        Status:
+          row.fcstatus || "Pending",
+
+        StatusDateTime:
+          row.fcstatusdatetime || null,
+
+        StatusApprovedBy:
+          row.fcstatusapprovedby !== null
+            ? Number(row.fcstatusapprovedby)
+            : null,
+
+        Remarks:
+          row.fcremarks || null,
+      },
+
+      GM: {
+        Status:
+          row.gmstatus || "Pending",
+
+        StatusDateTime:
+          row.gmstatusdatetime || null,
+
+        StatusApprovedBy:
+          row.gmstatusapprovedby !== null
+            ? Number(row.gmstatusapprovedby)
+            : null,
+
+        Remarks:
+          row.gmremarks || null,
+      },
+
+      RD: {
+        Status:
+          row.rdstatus || "Pending",
+
+        StatusDateTime:
+          row.rdstatusdatetime || null,
+
+        StatusApprovedBy:
+          row.rdstatusapprovedby !== null
+            ? Number(row.rdstatusapprovedby)
+            : null,
+
+        Remarks:
+          row.rdremarks || null,
+      },
+
+      CEO: {
+        Status:
+          row.ceostatus || "Pending",
+
+        StatusDateTime:
+          row.ceostatusdatetime || null,
+
+        StatusApprovedBy:
+          row.ceostatusapprovedby !== null
+            ? Number(row.ceostatusapprovedby)
+            : null,
+
+        Remarks:
+          row.ceoremarks || null,
+      },
+    };
+
+    item.Approvals = approvalFlow.map(
+      (approval) => {
+        const approvalData =
+          statusMap[approval.ApprovalRole] || {};
+
+        return {
+          LevelNo:
+            approval.LevelNo,
+
+          ApprovalRole:
+            approval.ApprovalRole,
+
+          Status:
+            approvalData.Status ||
+            "Pending",
+
+          StatusDateTime:
+            approvalData.StatusDateTime ||
+            null,
+
+          StatusApprovedBy:
+            approvalData.StatusApprovedBy ??
+            null,
+
+          Remarks:
+            approvalData.Remarks ||
+            null,
+        };
+      },
+    );
+
+    return item;
+  });
+
+  const byID = new Map(
+    mapped.map((item) => [
+      item.AMCID,
+      item,
+    ]),
+  );
+
+  // ============================================================
+  // Attach Documents
+  // ============================================================
+
+  for (const row of documentsResult.rows) {
+    const item = byID.get(
+      Number(row.amcid),
+    );
+
+    if (!item) {
+      continue;
+    }
+
+    item.Documents.push({
+      AMCDocumentID:
+        Number(row.amcdocumentid),
+
+      AMCID:
+        Number(row.amcid),
+
+      OrganizationID:
+        Number(row.organizationid),
+
+      FileName:
+        row.filename,
+
+      FilePath:
+        row.filepath,
+
+      FileType:
+        row.filetype,
+
+      FileSize:
+        row.filesize !== null
+          ? Number(row.filesize)
+          : null,
+
+      CreatedDate:
+        row.createddate,
+    });
+  }
+
+  return mapped;
+};
+// ===================Get All AMC Function
+const getAllAMC = async (data) => {
+  try {
+    // ============================================================
+    // Organization
+    // ============================================================
+
+    const OrganizationID =
+      Number(data.OrganizationID);
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "OrganizationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+
+    const page =
+      Number(data.page) || 1;
+
+    const PageSize =
+      Number(data.PageSize) || 10;
+
+    if (
+      !Number.isInteger(page) ||
+      page <= 0
+    ) {
+      return fail(
+        "page must be a positive integer.",
+        400,
+      );
+    }
+
+    if (
+      !Number.isInteger(PageSize) ||
+      PageSize <= 0 ||
+      PageSize > 100
+    ) {
+      return fail(
+        "PageSize must be between 1 and 100.",
+        400,
+      );
+    }
+
+    const offset =
+      (page - 1) * PageSize;
+
+    // ============================================================
+    // Equipment
+    // ============================================================
+
+    let EquipmentID = null;
+
+    if (
+      data.EquipmentID !== undefined &&
+      data.EquipmentID !== null &&
+      String(data.EquipmentID).trim() !== ""
+    ) {
+      EquipmentID =
+        Number(data.EquipmentID);
+
+      if (
+        !Number.isSafeInteger(EquipmentID) ||
+        EquipmentID <= 0
+      ) {
+        return fail(
+          "EquipmentID must be a positive integer.",
+          400,
+        );
+      }
+    }
+
+    // ============================================================
+    // Status
+    // ============================================================
+
+    const Status =
+      data.Status !== undefined &&
+      data.Status !== null &&
+      String(data.Status).trim() !== ""
+        ? String(data.Status)
+            .trim()
+            .toUpperCase()
+        : null;
+
+    const validStatuses = [
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "RETURNED",
+    ];
+
+    if (
+      Status &&
+      !validStatuses.includes(Status)
+    ) {
+      return fail(
+        "Status must be Pending, Approved, Rejected, or Returned.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Search
+    // ============================================================
+
+    const Search =
+      data.Search !== undefined &&
+      data.Search !== null &&
+      String(data.Search).trim() !== ""
+        ? String(data.Search).trim()
+        : null;
+
+    // ============================================================
+    // Logged-In User Approval Role
+    // ============================================================
+
+    const approvalRole =
+      resolveAMCApprovalRole({
+        OrganizationID,
+
+        UserType:
+          data.UserType,
+
+        DepartmentName:
+          data.DepartmentName,
+      });
+
+    // ============================================================
+    // Base From Query
+    // ============================================================
+
+    const baseFrom = `
+      FROM Engineering_AMC_Master am
+
+      INNER JOIN Engineering_Equipment_Entry_Master e
+        ON e.EquipmentID = am.EquipmentID
+       AND e.IsDeleted = FALSE
+
+      LEFT JOIN Engineering_AMC_Approval aa
+        ON aa.AMCID = am.AMCID
+       AND aa.IsDeleted = FALSE
+
+      LEFT JOIN LATERAL
+      (
+        SELECT
+          approval_flow.ApprovalRole,
+
+          CASE
+            WHEN approval_flow.ApprovalRole = 'FC'
+              THEN COALESCE(
+                aa.FCStatus,
+                'Pending'
+              )
+
+            WHEN approval_flow.ApprovalRole = 'GM'
+              THEN COALESCE(
+                aa.GMStatus,
+                'Pending'
+              )
+
+            WHEN approval_flow.ApprovalRole = 'RD'
+              THEN COALESCE(
+                aa.RDStatus,
+                'Pending'
+              )
+
+            WHEN approval_flow.ApprovalRole = 'CEO'
+              THEN COALESCE(
+                aa.CEOStatus,
+                'Pending'
+              )
+
+            ELSE 'Pending'
+          END AS Status
+
+        FROM
+        (
+          SELECT
+            UPPER(
+              TRIM(config.ApprovalRole)
+            ) AS ApprovalRole,
+
+            config.ApprovalOrder,
+
+            config.ApprovalLevel
+
+          FROM Engineering_AMC_Approval_Config config
+
+          WHERE config.OrganizationID =
+                am.OrganizationID
+
+            AND config.IsDeleted = FALSE
+
+          UNION ALL
+
+          SELECT
+            default_flow.ApprovalRole,
+            default_flow.ApprovalOrder,
+            default_flow.ApprovalLevel
+
+          FROM
+          (
+            VALUES
+              ('FC', 1, 1),
+              ('GM', 2, 2),
+              ('RD', 3, 3),
+              ('CEO', 4, 4)
+          ) AS default_flow(
+            ApprovalRole,
+            ApprovalOrder,
+            ApprovalLevel
+          )
+
+          WHERE NOT EXISTS
+          (
+            SELECT 1
+
+            FROM Engineering_AMC_Approval_Config config
+
+            WHERE config.OrganizationID =
+                  am.OrganizationID
+
+              AND config.IsDeleted = FALSE
+          )
+        ) approval_flow
+
+        WHERE UPPER(
+          TRIM(
+            CASE
+              WHEN approval_flow.ApprovalRole = 'FC'
+                THEN COALESCE(
+                  aa.FCStatus,
+                  'Pending'
+                )
+
+              WHEN approval_flow.ApprovalRole = 'GM'
+                THEN COALESCE(
+                  aa.GMStatus,
+                  'Pending'
+                )
+
+              WHEN approval_flow.ApprovalRole = 'RD'
+                THEN COALESCE(
+                  aa.RDStatus,
+                  'Pending'
+                )
+
+              WHEN approval_flow.ApprovalRole = 'CEO'
+                THEN COALESCE(
+                  aa.CEOStatus,
+                  'Pending'
+                )
+
+              ELSE 'Pending'
+            END
+          )
+        ) <> 'APPROVED'
+
+        ORDER BY
+          approval_flow.ApprovalOrder ASC,
+          approval_flow.ApprovalLevel ASC
+
+        LIMIT 1
+      ) current_stage ON TRUE
+    `;
+
+    // ============================================================
+    // Common WHERE
+    // Same filters will be used in list + count
+    // ============================================================
+
+    let whereClause = `
+      WHERE am.IsDeleted = FALSE
+        AND am.OrganizationID = $1
+    `;
+
+    const params = [
+      OrganizationID,
+    ];
+
+    // ============================================================
+    // Equipment Filter
+    // ============================================================
+
+    if (EquipmentID) {
+      params.push(EquipmentID);
+
+      whereClause += `
+        AND am.EquipmentID =
+            $${params.length}
+      `;
+    }
+
+    // ============================================================
+    // Search
+    // ============================================================
+
+    if (Search) {
+      params.push(Search);
+
+      const searchParameter =
+        `$${params.length}`;
+
+      whereClause += `
+        AND
+        (
+          COALESCE(
+            am.VendorName,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+
+          OR COALESCE(
+            am.VendorEmailAddress,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+
+          OR COALESCE(
+            am.VendorMobileNumber,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+
+          OR COALESCE(
+            am.AMCType,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+
+          OR COALESCE(
+            e.Description,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+
+          OR COALESCE(
+            e.SerialNumber,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+
+          OR COALESCE(
+            e.Make,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+
+          OR COALESCE(
+            e.ModelNumber,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+
+          OR COALESCE(
+            e.Area,
+            ''
+          ) ILIKE '%' || ${searchParameter} || '%'
+        )
+      `;
+    }
+
+    // ============================================================
+    // Approval Access
+    // ============================================================
+
+    const roleStatusColumns = {
+      FC: "aa.FCStatus",
+      GM: "aa.GMStatus",
+      RD: "aa.RDStatus",
+      CEO: "aa.CEOStatus",
+    };
+
+    const roleStatusColumn =
+      approvalRole
+        ? roleStatusColumns[approvalRole]
+        : null;
+
+    // ============================================================
+    // APPROVER
+    // ============================================================
+
+    if (
+      approvalRole &&
+      roleStatusColumn
+    ) {
+      // ==========================================================
+      // Pending
+      //
+      // Approver ko Pending me sirf wahi AMC dikhega
+      // jiska current stage uska role hai.
+      // ==========================================================
+
+      if (Status === "PENDING") {
+        params.push(approvalRole);
+
+        whereClause += `
+          AND UPPER(
+            COALESCE(
+              current_stage.ApprovalRole,
+              ''
+            )
+          ) = $${params.length}
+
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                current_stage.Status,
+                'Pending'
+              )
+            )
+          ) = 'PENDING'
+        `;
+      }
+
+      // ==========================================================
+      // Approved / Rejected / Returned
+      //
+      // Apne role ka historical status
+      // ==========================================================
+
+      else if (
+        Status === "APPROVED" ||
+        Status === "REJECTED" ||
+        Status === "RETURNED"
+      ) {
+        params.push(Status);
+
+        whereClause += `
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                ${roleStatusColumn},
+                ''
+              )
+            )
+          ) = $${params.length}
+        `;
+      }
+
+      // ==========================================================
+      // No Status
+      //
+      // Show:
+      // 1. Currently pending for logged-in approver
+      // OR
+      // 2. Logged-in approver already acted
+      // ==========================================================
+
+      else {
+        params.push(approvalRole);
+
+        whereClause += `
+          AND
+          (
+            (
+              UPPER(
+                COALESCE(
+                  current_stage.ApprovalRole,
+                  ''
+                )
+              ) = $${params.length}
+
+              AND UPPER(
+                TRIM(
+                  COALESCE(
+                    current_stage.Status,
+                    'Pending'
+                  )
+                )
+              ) = 'PENDING'
+            )
+
+            OR
+
+            UPPER(
+              TRIM(
+                COALESCE(
+                  ${roleStatusColumn},
+                  ''
+                )
+              )
+            ) IN (
+              'APPROVED',
+              'REJECTED',
+              'RETURNED'
+            )
+          )
+        `;
+      }
+    }
+
+    // ============================================================
+    // NON APPROVER / NORMAL USER
+    // ============================================================
+
+    else if (Status) {
+      // ==========================================================
+      // Approved
+      // ==========================================================
+
+      if (Status === "APPROVED") {
+        whereClause += `
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                aa.FinalStatus,
+                'Pending'
+              )
+            )
+          ) = 'APPROVED'
+        `;
+      }
+
+      // ==========================================================
+      // Rejected
+      // ==========================================================
+
+      else if (Status === "REJECTED") {
+        whereClause += `
+          AND
+          (
+            UPPER(
+              TRIM(
+                COALESCE(
+                  aa.FCStatus,
+                  ''
+                )
+              )
+            ) = 'REJECTED'
+
+            OR UPPER(
+              TRIM(
+                COALESCE(
+                  aa.GMStatus,
+                  ''
+                )
+              )
+            ) = 'REJECTED'
+
+            OR UPPER(
+              TRIM(
+                COALESCE(
+                  aa.RDStatus,
+                  ''
+                )
+              )
+            ) = 'REJECTED'
+
+            OR UPPER(
+              TRIM(
+                COALESCE(
+                  aa.CEOStatus,
+                  ''
+                )
+              )
+            ) = 'REJECTED'
+
+            OR UPPER(
+              TRIM(
+                COALESCE(
+                  aa.FinalStatus,
+                  ''
+                )
+              )
+            ) = 'REJECTED'
+          )
+        `;
+      }
+
+      // ==========================================================
+      // Returned
+      // ==========================================================
+
+      else if (Status === "RETURNED") {
+        whereClause += `
+          AND
+          (
+            UPPER(
+              TRIM(
+                COALESCE(
+                  aa.FCStatus,
+                  ''
+                )
+              )
+            ) = 'RETURNED'
+
+            OR UPPER(
+              TRIM(
+                COALESCE(
+                  aa.GMStatus,
+                  ''
+                )
+              )
+            ) = 'RETURNED'
+
+            OR UPPER(
+              TRIM(
+                COALESCE(
+                  aa.RDStatus,
+                  ''
+                )
+              )
+            ) = 'RETURNED'
+
+            OR UPPER(
+              TRIM(
+                COALESCE(
+                  aa.CEOStatus,
+                  ''
+                )
+              )
+            ) = 'RETURNED'
+
+            OR UPPER(
+              TRIM(
+                COALESCE(
+                  aa.FinalStatus,
+                  ''
+                )
+              )
+            ) = 'RETURNED'
+          )
+        `;
+      }
+
+      // ==========================================================
+      // Pending
+      // ==========================================================
+
+      else if (Status === "PENDING") {
+        whereClause += `
+          AND current_stage.ApprovalRole IS NOT NULL
+
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                current_stage.Status,
+                'Pending'
+              )
+            )
+          ) = 'PENDING'
+
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                aa.FinalStatus,
+                'Pending'
+              )
+            )
+          ) <> 'APPROVED'
+
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                aa.FCStatus,
+                ''
+              )
+            )
+          ) NOT IN (
+            'REJECTED',
+            'RETURNED'
+          )
+
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                aa.GMStatus,
+                ''
+              )
+            )
+          ) NOT IN (
+            'REJECTED',
+            'RETURNED'
+          )
+
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                aa.RDStatus,
+                ''
+              )
+            )
+          ) NOT IN (
+            'REJECTED',
+            'RETURNED'
+          )
+
+          AND UPPER(
+            TRIM(
+              COALESCE(
+                aa.CEOStatus,
+                ''
+              )
+            )
+          ) NOT IN (
+            'REJECTED',
+            'RETURNED'
+          )
+        `;
+      }
+    }
+
+    // ============================================================
+    // Count Query
+    // ============================================================
+
+    const countResult =
+      await pool.query(
+        `
+        SELECT
+          COUNT(*)::bigint AS TotalCount
+
+        ${baseFrom}
+
+        ${whereClause};
+        `,
+        params,
+      );
+
+    const TotalCount =
+      Number(
+        countResult.rows[0]
+          ?.totalcount || 0,
+      );
+
+    // ============================================================
+    // List Query
+    // ============================================================
+
+    const listParams = [
+      ...params,
+      PageSize,
+      offset,
+    ];
+
+    const limitIndex =
+      params.length + 1;
+
+    const offsetIndex =
+      params.length + 2;
+
+    const result =
+      await pool.query(
+        `
+        SELECT
+          am.AMCID,
+          am.OrganizationID,
+          am.EquipmentID,
+
+          am.AMCStartDate,
+          am.AMCEndDate,
+          am.AMCType,
+          am.AMCAmount,
+
+          am.VendorName,
+          am.VendorEmailAddress,
+          am.VendorMobileNumber,
+          am.VendorSecondMobileNumber,
+          am.VendorLandlineNumber,
+          am.VendorAddress,
+          am.VendorCity,
+          am.VendorState,
+          am.VendorPincode,
+
+          am.CreatedBy,
+          am.CreatedDate,
+          am.ModifiedBy,
+          am.ModifiedDate,
+
+          e.Description,
+          e.SerialNumber,
+          e.TypeOfMachine,
+          e.Capacity,
+          e.ModelNumber,
+          e.Make,
+          e.Area,
+
+          e.CommissioningDate,
+
+          e.WarrantyStartDate,
+          e.WarrantyEndDate,
+          e.WarrantyStatus,
+
+          e.ScheduleOfServicing,
+          e.ScheduleDay,
+
+          e.ResponsiblePerson,
+
+          aa.FCStatus,
+          aa.FCStatusDateTime,
+          aa.FCStatusApprovedBy,
+          aa.FCRemarks,
+
+          aa.GMStatus,
+          aa.GMStatusDateTime,
+          aa.GMStatusApprovedBy,
+          aa.GMRemarks,
+
+          aa.RDStatus,
+          aa.RDStatusDateTime,
+          aa.RDStatusApprovedBy,
+          aa.RDRemarks,
+
+          aa.CEOStatus,
+          aa.CEOStatusDateTime,
+          aa.CEOStatusApprovedBy,
+          aa.CEORemarks,
+
+          COALESCE(
+            aa.FinalStatus,
+            'Pending'
+          ) AS FinalStatus,
+
+          aa.FinalStatusDateTime,
+
+          CASE
+            WHEN UPPER(
+              TRIM(
+                COALESCE(
+                  aa.FinalStatus,
+                  'Pending'
+                )
+              )
+            ) = 'APPROVED'
+            THEN NULL
+
+            ELSE
+              current_stage.ApprovalRole
+          END AS CurrentApprovalRole,
+
+          CASE
+            WHEN UPPER(
+              TRIM(
+                COALESCE(
+                  aa.FinalStatus,
+                  'Pending'
+                )
+              )
+            ) = 'APPROVED'
+            THEN 'Approved'
+
+            ELSE COALESCE(
+              current_stage.Status,
+              aa.FinalStatus,
+              'Pending'
+            )
+          END AS CurrentStatus
+
+        ${baseFrom}
+
+        ${whereClause}
+
+        ORDER BY
+          am.CreatedDate DESC,
+          am.AMCID DESC
+
+        LIMIT $${limitIndex}
+        OFFSET $${offsetIndex};
+        `,
+        listParams,
+      );
+
+    // ============================================================
+    // Attach Documents + Approvals
+    // ============================================================
+
+    const records =
+      await attachAMCRelatedData(
+        result.rows,
+        OrganizationID,
+      );
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+
+    const TotalPages =
+      TotalCount > 0
+        ? Math.ceil(
+            TotalCount / PageSize,
+          )
+        : 0;
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "AMC records fetched successfully.",
+      {
+        TotalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize,
+
+        TotalPages,
+
+        data:
+          records,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Get All AMC Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to fetch AMC records at this time.",
+    );
+  }
+};
+// ============================================================Get AMC by ID
+const getAMCById = async (data) => {
+  try {
+    // ============================================================
+    // Validate AMC ID
+    // ============================================================
+
+    const AMCID = Number(data.AMCID);
+
+    if (
+      !Number.isSafeInteger(AMCID) ||
+      AMCID <= 0
+    ) {
+      return fail(
+        "Valid AMCID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Query
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        am.AMCID,
+        am.OrganizationID,
+        am.EquipmentID,
+
+        am.AMCStartDate,
+        am.AMCEndDate,
+        am.AMCType,
+        am.AMCAmount,
+
+        am.VendorName,
+        am.VendorEmailAddress,
+        am.VendorMobileNumber,
+        am.VendorSecondMobileNumber,
+        am.VendorLandlineNumber,
+        am.VendorAddress,
+        am.VendorCity,
+        am.VendorState,
+        am.VendorPincode,
+
+        am.CreatedBy,
+        am.CreatedDate,
+        am.ModifiedBy,
+        am.ModifiedDate,
+
+        -- ========================================================
+        -- Equipment
+        -- ========================================================
+
+        e.DepartmentID,
+        e.Description,
+        e.SerialNumber,
+        e.TypeOfMachine,
+        e.Capacity,
+        e.ModelNumber,
+        e.Make,
+        e.Area,
+        e.CommissioningDate,
+
+        e.WarrantyStartDate,
+        e.WarrantyEndDate,
+        e.WarrantyStatus,
+
+        e.AMCType AS EquipmentAMCType,
+        e.AMCStartDate AS EquipmentAMCStartDate,
+        e.AMCEndDate AS EquipmentAMCEndDate,
+        e.AMCStatus AS EquipmentAMCStatus,
+        e.AMCYearlyExpense,
+
+        e.ScheduleOfServicing,
+        e.ScheduleDay,
+        e.ResponsiblePerson,
+
+        -- ========================================================
+        -- Approval
+        -- ========================================================
+
+        aa.FCStatus,
+        aa.FCStatusDateTime,
+        aa.FCStatusApprovedBy,
+        aa.FCRemarks,
+
+        aa.GMStatus,
+        aa.GMStatusDateTime,
+        aa.GMStatusApprovedBy,
+        aa.GMRemarks,
+
+        aa.RDStatus,
+        aa.RDStatusDateTime,
+        aa.RDStatusApprovedBy,
+        aa.RDRemarks,
+
+        aa.CEOStatus,
+        aa.CEOStatusDateTime,
+        aa.CEOStatusApprovedBy,
+        aa.CEORemarks,
+
+        COALESCE(
+          aa.FinalStatus,
+          'Pending'
+        ) AS FinalStatus,
+
+        aa.FinalStatusDateTime,
+
+        -- ========================================================
+        -- Current Approval Role
+        -- ========================================================
+
+        CASE
+          WHEN UPPER(
+            TRIM(
+              COALESCE(
+                aa.FinalStatus,
+                'Pending'
+              )
+            )
+          ) = 'APPROVED'
+          THEN NULL
+
+          ELSE current_stage.ApprovalRole
+        END AS CurrentApprovalRole,
+
+        -- ========================================================
+        -- Current Status
+        -- ========================================================
+
+        CASE
+          WHEN UPPER(
+            TRIM(
+              COALESCE(
+                aa.FinalStatus,
+                'Pending'
+              )
+            )
+          ) = 'APPROVED'
+          THEN 'Approved'
+
+          ELSE COALESCE(
+            current_stage.Status,
+            aa.FinalStatus,
+            'Pending'
+          )
+        END AS CurrentStatus
+
+      FROM Engineering_AMC_Master am
+
+      INNER JOIN Engineering_Equipment_Entry_Master e
+        ON e.EquipmentID = am.EquipmentID
+       AND e.IsDeleted = FALSE
+
+      LEFT JOIN Engineering_AMC_Approval aa
+        ON aa.AMCID = am.AMCID
+       AND aa.IsDeleted = FALSE
+
+      -- ==========================================================
+      -- Current Approval Stage
+      -- ==========================================================
+
+      LEFT JOIN LATERAL
+      (
+        SELECT
+          approval_flow.ApprovalRole,
+
+          CASE
+            WHEN approval_flow.ApprovalRole = 'FC'
+              THEN COALESCE(
+                aa.FCStatus,
+                'Pending'
+              )
+
+            WHEN approval_flow.ApprovalRole = 'GM'
+              THEN COALESCE(
+                aa.GMStatus,
+                'Pending'
+              )
+
+            WHEN approval_flow.ApprovalRole = 'RD'
+              THEN COALESCE(
+                aa.RDStatus,
+                'Pending'
+              )
+
+            WHEN approval_flow.ApprovalRole = 'CEO'
+              THEN COALESCE(
+                aa.CEOStatus,
+                'Pending'
+              )
+
+            ELSE 'Pending'
+          END AS Status
+
+        FROM
+        (
+          -- ======================================================
+          -- Organization Approval Config
+          -- ======================================================
+
+          SELECT
+            UPPER(
+              TRIM(config.ApprovalRole)
+            ) AS ApprovalRole,
+
+            config.ApprovalOrder,
+            config.ApprovalLevel
+
+          FROM Engineering_AMC_Approval_Config config
+
+          WHERE config.OrganizationID =
+                am.OrganizationID
+
+            AND config.IsDeleted = FALSE
+
+          UNION ALL
+
+          -- ======================================================
+          -- Default FC -> GM -> RD -> CEO
+          -- ======================================================
+
+          SELECT
+            default_flow.ApprovalRole,
+            default_flow.ApprovalOrder,
+            default_flow.ApprovalLevel
+
+          FROM
+          (
+            VALUES
+              ('FC', 1, 1),
+              ('GM', 2, 2),
+              ('RD', 3, 3),
+              ('CEO', 4, 4)
+          ) AS default_flow(
+            ApprovalRole,
+            ApprovalOrder,
+            ApprovalLevel
+          )
+
+          WHERE NOT EXISTS
+          (
+            SELECT 1
+
+            FROM Engineering_AMC_Approval_Config config
+
+            WHERE config.OrganizationID =
+                  am.OrganizationID
+
+              AND config.IsDeleted = FALSE
+          )
+
+        ) approval_flow
+
+        WHERE UPPER(
+          TRIM(
+            CASE
+              WHEN approval_flow.ApprovalRole = 'FC'
+                THEN COALESCE(
+                  aa.FCStatus,
+                  'Pending'
+                )
+
+              WHEN approval_flow.ApprovalRole = 'GM'
+                THEN COALESCE(
+                  aa.GMStatus,
+                  'Pending'
+                )
+
+              WHEN approval_flow.ApprovalRole = 'RD'
+                THEN COALESCE(
+                  aa.RDStatus,
+                  'Pending'
+                )
+
+              WHEN approval_flow.ApprovalRole = 'CEO'
+                THEN COALESCE(
+                  aa.CEOStatus,
+                  'Pending'
+                )
+
+              ELSE 'Pending'
+            END
+          )
+        ) <> 'APPROVED'
+
+        ORDER BY
+          approval_flow.ApprovalOrder ASC,
+          approval_flow.ApprovalLevel ASC
+
+        LIMIT 1
+
+      ) current_stage ON TRUE
+
+      WHERE am.AMCID = $1
+        AND am.IsDeleted = FALSE
+
+      LIMIT 1;
+      `,
+      [AMCID],
+    );
+
+    // ============================================================
+    // Not Found
+    // ============================================================
+
+    if (result.rows.length === 0) {
+      return fail(
+        "AMC record not found.",
+        404,
+      );
+    }
+
+    const row = result.rows[0];
+    const OrganizationID = Number(row.organizationid);
+    const approvalRole = resolveAMCApprovalRole({
+      OrganizationID,
+      UserType: data.UserType,
+      DepartmentName: data.DepartmentName,
+    });
+
+    // ============================================================
+    // Approval Access Check
+    // ============================================================
+
+    const currentApprovalRole =
+      row.currentapprovalrole
+        ? String(
+            row.currentapprovalrole,
+          )
+            .trim()
+            .toUpperCase()
+        : null;
+
+    const roleStatusMap = {
+      FC:
+        row.fcstatus,
+
+      GM:
+        row.gmstatus,
+
+      RD:
+        row.rdstatus,
+
+      CEO:
+        row.ceostatus,
+    };
+
+    // ============================================================
+    // If logged-in user is an approver:
+    //
+    // Allow when:
+    // 1. AMC is currently at user's stage
+    // OR
+    // 2. User has already acted on AMC
+    // ============================================================
+
+    if (approvalRole) {
+      const ownStatus = String(
+        roleStatusMap[approvalRole] || "Pending",
+      )
+        .trim()
+        .toUpperCase();
+
+      const hasAlreadyActed = [
+        "APPROVED",
+        "REJECTED",
+        "RETURNED",
+      ].includes(ownStatus);
+
+      const isCurrentStage =
+        currentApprovalRole ===
+        approvalRole;
+
+      if (
+        !isCurrentStage &&
+        !hasAlreadyActed
+      ) {
+        return fail(
+          "You are not authorized to view this AMC at the current approval stage.",
+          403,
+        );
+      }
+    }
+
+    // ============================================================
+    // Attach Documents + Approvals
+    // ============================================================
+
+    const records =
+      await attachAMCRelatedData(
+        result.rows,
+        OrganizationID,
+      );
+
+    const AMC =
+      records[0];
+
+    // ============================================================
+    // Extra Equipment Detail Fields
+    // mapAMC does not currently map these fields
+    // ============================================================
+
+    AMC.DepartmentID =
+      row.departmentid !== null
+        ? Number(row.departmentid)
+        : null;
+
+    AMC.EquipmentAMCType =
+      row.equipmentamctype;
+
+    AMC.EquipmentAMCStartDate =
+      formatDate(
+        row.equipmentamcstartdate,
+      );
+
+    AMC.EquipmentAMCEndDate =
+      formatDate(
+        row.equipmentamcenddate,
+      );
+
+    AMC.EquipmentAMCStatus =
+      row.equipmentamcstatus;
+
+    AMC.AMCYearlyExpense =
+      row.amcyearlyexpense !== null
+        ? Number(
+            row.amcyearlyexpense,
+          )
+        : null;
+
+    // ============================================================
+    // Logged-In User Approval Information
+    // Useful for frontend Approve / Reject / Return buttons
+    // ============================================================
+
+    AMC.LoggedInApprovalRole =
+      approvalRole;
+
+    AMC.CanTakeApprovalAction =
+      Boolean(
+        approvalRole &&
+        currentApprovalRole ===
+          approvalRole &&
+        String(
+          row.currentstatus || "",
+        )
+          .trim()
+          .toUpperCase() ===
+          "PENDING",
+      );
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "AMC record fetched successfully.",
+      AMC,
+    );
+  } catch (error) {
+    console.error(
+      "Get AMC By ID Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to fetch AMC record at this time.",
+    );
+  }
+};
+// ============================================================Update AMC
+const updateAMC = async (data) => {
+  const client = await pool.connect();
+
+  try {
+    const AMCID = Number(data.AMCID);
+    const OrganizationID = Number(data.OrganizationID);
+    const UserID = Number(data.UserID);
+
+    if (!Number.isSafeInteger(AMCID) || AMCID <= 0) {
+      return fail("Valid AMCID is required.", 400);
+    }
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail("OrganizationID is required.", 400);
+    }
+
+    if (!Number.isSafeInteger(UserID) || UserID <= 0) {
+      return fail("Valid UserID is required.", 400);
+    }
+
+    const Changes =
+      data.Changes &&
+      typeof data.Changes === "object" &&
+      !Array.isArray(data.Changes)
+        ? data.Changes
+        : {};
+
+    const Documents = Array.isArray(data.Documents)
+      ? data.Documents
+      : [];
+
+    const DeleteDocumentIDs = Array.isArray(
+      data.DeleteDocumentIDs,
+    )
+      ? data.DeleteDocumentIDs
+      : [];
+
+    await client.query("BEGIN");
+
+    // ============================================================
+    // Lock Existing AMC
+    // ============================================================
+
+    const existingResult = await client.query(
+      `
+      SELECT
+        AMCID,
+        OrganizationID,
+        EquipmentID,
+        AMCStartDate,
+        AMCEndDate,
+        AMCType,
+        AMCAmount,
+
+        VendorName,
+        VendorEmailAddress,
+        VendorMobileNumber,
+        VendorSecondMobileNumber,
+        VendorLandlineNumber,
+        VendorAddress,
+        VendorCity,
+        VendorState,
+        VendorPincode
+
+      FROM Engineering_AMC_Master
+
+      WHERE AMCID = $1
+        AND OrganizationID = $2
+        AND IsDeleted = FALSE
+
+      FOR UPDATE;
+      `,
+      [AMCID, OrganizationID],
+    );
+
+    if (existingResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "AMC record not found.",
+        404,
+      );
+    }
+
+    const existing =
+      existingResult.rows[0];
+
+    // ============================================================
+    // Allowed Update Fields
+    // ============================================================
+
+    const allowedFields = new Set([
+      "EquipmentID",
+      "AMCStartDate",
+      "AMCEndDate",
+      "AMCType",
+      "AMCAmount",
+
+      "VendorName",
+      "VendorEmailAddress",
+      "VendorMobileNumber",
+      "VendorSecondMobileNumber",
+      "VendorLandlineNumber",
+      "VendorAddress",
+      "VendorCity",
+      "VendorState",
+      "VendorPincode",
+    ]);
+
+    const cleanChanges = {};
+
+    for (const [key, value] of Object.entries(
+      Changes,
+    )) {
+      if (!allowedFields.has(key)) {
+        continue;
+      }
+
+      cleanChanges[key] = value;
+    }
+
+    // ============================================================
+    // Equipment Validation
+    // ============================================================
+
+    const finalEquipmentID =
+      cleanChanges.EquipmentID !== undefined
+        ? Number(cleanChanges.EquipmentID)
+        : Number(existing.equipmentid);
+
+    if (
+      !Number.isSafeInteger(finalEquipmentID) ||
+      finalEquipmentID <= 0
+    ) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "Valid EquipmentID is required.",
+        400,
+      );
+    }
+
+    const equipmentResult = await client.query(
+      `
+      SELECT EquipmentID
+      FROM Engineering_Equipment_Entry_Master
+      WHERE EquipmentID = $1
+        AND OrganizationID = $2
+        AND IsDeleted = FALSE
+      LIMIT 1;
+      `,
+      [
+        finalEquipmentID,
+        OrganizationID,
+      ],
+    );
+
+    if (equipmentResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "Equipment not found for selected organization.",
+        404,
+      );
+    }
+
+    // ============================================================
+    // Date Validation
+    // ============================================================
+
+    const finalAMCStartDate =
+      cleanChanges.AMCStartDate !== undefined
+        ? cleanChanges.AMCStartDate || null
+        : existing.amcstartdate;
+
+    const finalAMCEndDate =
+      cleanChanges.AMCEndDate !== undefined
+        ? cleanChanges.AMCEndDate || null
+        : existing.amcenddate;
+
+    if (
+      finalAMCStartDate &&
+      finalAMCEndDate &&
+      new Date(finalAMCStartDate) >
+        new Date(finalAMCEndDate)
+    ) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "AMCStartDate cannot be greater than AMCEndDate.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Normalize Fields
+    // ============================================================
+
+    if (
+      cleanChanges.AMCAmount !== undefined
+    ) {
+      if (
+        cleanChanges.AMCAmount === "" ||
+        cleanChanges.AMCAmount === null
+      ) {
+        cleanChanges.AMCAmount = null;
+      } else {
+        const amount = Number(
+          cleanChanges.AMCAmount,
+        );
+
+        if (
+          !Number.isFinite(amount) ||
+          amount < 0
+        ) {
+          await client.query("ROLLBACK");
+
+          return fail(
+            "AMCAmount must be a valid non-negative number.",
+            400,
+          );
+        }
+
+        cleanChanges.AMCAmount = amount;
+      }
+    }
+
+    if (
+      cleanChanges.EquipmentID !== undefined
+    ) {
+      cleanChanges.EquipmentID =
+        finalEquipmentID;
+    }
+
+    if (
+      cleanChanges.AMCStartDate !== undefined
+    ) {
+      cleanChanges.AMCStartDate =
+        cleanChanges.AMCStartDate || null;
+    }
+
+    if (
+      cleanChanges.AMCEndDate !== undefined
+    ) {
+      cleanChanges.AMCEndDate =
+        cleanChanges.AMCEndDate || null;
+    }
+
+    // ============================================================
+    // Update AMC Master
+    // ============================================================
+
+    const updateFields = [];
+    const updateValues = [];
+
+    for (const [field, value] of Object.entries(
+      cleanChanges,
+    )) {
+      updateValues.push(value);
+
+      updateFields.push(
+        `${field} = $${updateValues.length}`,
+      );
+    }
+
+    if (updateFields.length > 0) {
+      updateValues.push(UserID);
+
+      updateFields.push(
+        `ModifiedBy = $${updateValues.length}`,
+      );
+
+      updateFields.push(
+        `ModifiedDate = CURRENT_TIMESTAMP`,
+      );
+
+      updateValues.push(AMCID);
+
+      const amcIDIndex =
+        updateValues.length;
+
+      updateValues.push(OrganizationID);
+
+      const organizationIndex =
+        updateValues.length;
+
+      await client.query(
+        `
+        UPDATE Engineering_AMC_Master
+        SET
+          ${updateFields.join(", ")}
+
+        WHERE AMCID = $${amcIDIndex}
+          AND OrganizationID = $${organizationIndex}
+          AND IsDeleted = FALSE;
+        `,
+        updateValues,
+      );
+    }
+
+    // ============================================================
+    // Delete Selected Documents
+    // ============================================================
+
+    const validDeleteDocumentIDs =
+      DeleteDocumentIDs
+        .map(Number)
+        .filter(
+          (id) =>
+            Number.isSafeInteger(id) &&
+            id > 0,
+        );
+
+    if (
+      validDeleteDocumentIDs.length > 0
+    ) {
+      await client.query(
+        `
+        UPDATE Engineering_AMC_Documents
+        SET
+          IsDeleted = TRUE,
+          DeletedBy = $1,
+          DeletedDate = CURRENT_TIMESTAMP
+        WHERE AMCID = $2
+          AND OrganizationID = $3
+          AND AMCDocumentID =
+              ANY($4::bigint[])
+          AND IsDeleted = FALSE;
+        `,
+        [
+          UserID,
+          AMCID,
+          OrganizationID,
+          validDeleteDocumentIDs,
+        ],
+      );
+    }
+
+    // ============================================================
+    // Insert New Documents
+    // ============================================================
+
+    for (const document of Documents) {
+      if (
+        !document ||
+        !document.FileName ||
+        !document.FilePath
+      ) {
+        continue;
+      }
+
+      await client.query(
+        `
+        INSERT INTO Engineering_AMC_Documents
+        (
+          AMCID,
+          OrganizationID,
+          FileName,
+          FilePath,
+          FileType,
+          FileSize,
+          CreatedBy
+        )
+        VALUES
+        (
+          $1, $2, $3, $4, $5, $6, $7
+        );
+        `,
+        [
+          AMCID,
+          OrganizationID,
+          document.FileName,
+          document.FilePath,
+          document.FileType || null,
+          document.FileSize !== undefined &&
+          document.FileSize !== null
+            ? Number(document.FileSize)
+            : null,
+          UserID,
+        ],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    return ok(
+      "AMC updated successfully.",
+     
+    );
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {}
+
+    console.error(
+      "Update AMC Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to update AMC at this time.",
+    );
+  } finally {
+    client.release();
+  }
+};
+// ============================================================Delete AMC
+const deleteAMC = async (data) => {
+  const client = await pool.connect();
+
+  try {
+    const AMCID = Number(data.AMCID);
+    const UserID = Number(data.UserID);
+
+    if (
+      !Number.isSafeInteger(AMCID) ||
+      AMCID <= 0
+    ) {
+      return fail("Valid AMCID is required.", 400);
+    }
+
+    if (
+      !Number.isSafeInteger(UserID) ||
+      UserID <= 0
+    ) {
+      return fail("Valid UserID is required.", 400);
+    }
+
+    await client.query("BEGIN");
+
+    // ============================================================
+    // Get AMC + OrganizationID
+    // ============================================================
+
+    const existingResult = await client.query(
+      `
+      SELECT
+        AMCID,
+        OrganizationID
+      FROM Engineering_AMC_Master
+      WHERE AMCID = $1
+        AND IsDeleted = FALSE
+      FOR UPDATE;
+      `,
+      [AMCID],
+    );
+
+    if (existingResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return fail("AMC record not found.", 404);
+    }
+
+    const OrganizationID = Number(
+      existingResult.rows[0].organizationid,
+    );
+
+    // ============================================================
+    // Delete AMC Master
+    // ============================================================
+
+    await client.query(
+      `
+      UPDATE Engineering_AMC_Master
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+      WHERE AMCID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [UserID, AMCID],
+    );
+
+    // ============================================================
+    // Delete Documents
+    // ============================================================
+
+    await client.query(
+      `
+      UPDATE Engineering_AMC_Documents
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+      WHERE AMCID = $2
+        AND OrganizationID = $3
+        AND IsDeleted = FALSE;
+      `,
+      [
+        UserID,
+        AMCID,
+        OrganizationID,
+      ],
+    );
+
+    // ============================================================
+    // Delete Approval
+    // ============================================================
+
+    await client.query(
+      `
+      UPDATE Engineering_AMC_Approval
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+      WHERE AMCID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [UserID, AMCID],
+    );
+
+    await client.query("COMMIT");
+
+    return ok(
+      "AMC deleted successfully.",
+      {
+        AMCID,
+      },
+    );
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {}
+
+    console.error(
+      "Delete AMC Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to delete AMC at this time.",
+    );
+  } finally {
+    client.release();
+  }
+};
+// ============================================================Approve AMC
+const processAMCApproval = async (data) => {
+  const client = await pool.connect();
+
+  try {
+    const AMCID = Number(data.AMCID);
+    const UserID = Number(data.UserID);
+
+    const Action = String(data.Action || "")
+      .trim()
+      .toUpperCase();
+
+    const Remarks =
+      data.Remarks !== undefined &&
+      data.Remarks !== null
+        ? String(data.Remarks).trim()
+        : null;
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(AMCID) ||
+      AMCID <= 0
+    ) {
+      return fail(
+        "Valid AMCID is required.",
+        400,
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(UserID) ||
+      UserID <= 0
+    ) {
+      return fail(
+        "Valid UserID is required.",
+        400,
+      );
+    }
+
+    const validActions = [
+      "APPROVE",
+      "REJECT",
+      "RETURN",
+    ];
+
+    if (!validActions.includes(Action)) {
+      return fail(
+        "Action must be APPROVE, REJECT, or RETURN.",
+        400,
+      );
+    }
+
+    if (
+      ["REJECT", "RETURN"].includes(Action) &&
+      !Remarks
+    ) {
+      return fail(
+        `Remarks are required for ${Action}.`,
+        400,
+      );
+    }
+
+    await client.query("BEGIN");
+
+    // ============================================================
+    // Get AMC + lock
+    // ============================================================
+
+    const amcResult = await client.query(
+      `
+      SELECT
+        AMCID,
+        OrganizationID,
+        EquipmentID
+      FROM Engineering_AMC_Master
+      WHERE AMCID = $1
+        AND IsDeleted = FALSE
+      FOR UPDATE;
+      `,
+      [AMCID],
+    );
+
+    if (amcResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "AMC record not found.",
+        404,
+      );
+    }
+
+    const OrganizationID = Number(
+      amcResult.rows[0].organizationid,
+    );
+
+    // ============================================================
+    // Resolve logged-in user's AMC approval role
+    // ============================================================
+
+    const approvalRole =
+      resolveAMCApprovalRole({
+        OrganizationID,
+        UserType: data.UserType,
+        DepartmentName:
+          data.DepartmentName,
+      });
+
+    if (!approvalRole) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "You are not authorized to approve AMC.",
+        403,
+      );
+    }
+
+    // ============================================================
+    // Get approval row + lock
+    // ============================================================
+
+    const approvalResult =
+      await client.query(
+        `
+        SELECT
+          AMCApprovalID,
+          AMCID,
+
+          FCStatus,
+          FCStatusDateTime,
+          FCStatusApprovedBy,
+          FCRemarks,
+
+          GMStatus,
+          GMStatusDateTime,
+          GMStatusApprovedBy,
+          GMRemarks,
+
+          RDStatus,
+          RDStatusDateTime,
+          RDStatusApprovedBy,
+          RDRemarks,
+
+          CEOStatus,
+          CEOStatusDateTime,
+          CEOStatusApprovedBy,
+          CEORemarks,
+
+          FinalStatus,
+          FinalStatusDateTime
+
+        FROM Engineering_AMC_Approval
+
+        WHERE AMCID = $1
+          AND IsDeleted = FALSE
+
+        FOR UPDATE;
+        `,
+        [AMCID],
+      );
+
+    if (approvalResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "AMC approval record not found.",
+        404,
+      );
+    }
+
+    const approval =
+      approvalResult.rows[0];
+
+    // ============================================================
+    // Already Final Approved
+    // ============================================================
+
+    if (
+      String(
+        approval.finalstatus || "",
+      )
+        .trim()
+        .toUpperCase() === "APPROVED"
+    ) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "AMC is already fully approved.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Get Organization Approval Flow
+    // Config exists -> config
+    // otherwise DEFAULT_AMC_APPROVALS
+    // ============================================================
+
+    const approvalFlow =
+      await getAMCApprovalFlow(
+        OrganizationID,
+        client,
+      );
+
+    if (!approvalFlow.length) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "AMC approval flow is not configured.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Status helper
+    // ============================================================
+
+    const getRoleStatus = (role) => {
+      switch (
+        String(role || "")
+          .trim()
+          .toUpperCase()
+      ) {
+        case "FC":
+          return approval.fcstatus || "Pending";
+
+        case "GM":
+          return approval.gmstatus || "Pending";
+
+        case "RD":
+          return approval.rdstatus || "Pending";
+
+        case "CEO":
+          return approval.ceostatus || "Pending";
+
+        default:
+          return "Pending";
+      }
+    };
+
+    // ============================================================
+    // Find current approval stage
+    //
+    // First role which is NOT Approved
+    // ============================================================
+
+    const currentStage =
+      approvalFlow.find((item) => {
+        const status = String(
+          getRoleStatus(
+            item.ApprovalRole,
+          ),
+        )
+          .trim()
+          .toUpperCase();
+
+        return status !== "APPROVED";
+      });
+
+    if (!currentStage) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "No pending approval stage found.",
+        400,
+      );
+    }
+
+    const currentApprovalRole =
+      String(
+        currentStage.ApprovalRole || "",
+      )
+        .trim()
+        .toUpperCase();
+
+    // ============================================================
+    // Only current stage can take action
+    // ============================================================
+
+    if (
+      currentApprovalRole !==
+      approvalRole
+    ) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        `AMC is currently pending for ${currentApprovalRole} approval.`,
+        403,
+      );
+    }
+
+    // ============================================================
+    // Current role status should be Pending
+    // ============================================================
+
+    const currentRoleStatus =
+      String(
+        getRoleStatus(
+          approvalRole,
+        ),
+      )
+        .trim()
+        .toUpperCase();
+
+    if (
+      currentRoleStatus !== "PENDING"
+    ) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        `${approvalRole} has already taken action on this AMC.`,
+        400,
+      );
+    }
+
+    // ============================================================
+    // Database column map
+    // Safe fixed mapping
+    // ============================================================
+
+    const roleColumns = {
+      FC: {
+        Status: "FCStatus",
+        DateTime:
+          "FCStatusDateTime",
+        ApprovedBy:
+          "FCStatusApprovedBy",
+        Remarks:
+          "FCRemarks",
+      },
+
+      GM: {
+        Status: "GMStatus",
+        DateTime:
+          "GMStatusDateTime",
+        ApprovedBy:
+          "GMStatusApprovedBy",
+        Remarks:
+          "GMRemarks",
+      },
+
+      RD: {
+        Status: "RDStatus",
+        DateTime:
+          "RDStatusDateTime",
+        ApprovedBy:
+          "RDStatusApprovedBy",
+        Remarks:
+          "RDRemarks",
+      },
+
+      CEO: {
+        Status: "CEOStatus",
+        DateTime:
+          "CEOStatusDateTime",
+        ApprovedBy:
+          "CEOStatusApprovedBy",
+        Remarks:
+          "CEORemarks",
+      },
+    };
+
+    const columns =
+      roleColumns[approvalRole];
+
+    if (!columns) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "Invalid AMC approval role.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Convert Action -> Stored Status
+    // ============================================================
+
+    const statusMap = {
+      APPROVE: "Approved",
+      REJECT: "Rejected",
+      RETURN: "Returned",
+    };
+
+    const newStatus =
+      statusMap[Action];
+
+    // ============================================================
+    // Find whether current stage is final stage
+    // ============================================================
+
+    const currentIndex =
+      approvalFlow.findIndex(
+        (item) =>
+          String(
+            item.ApprovalRole || "",
+          )
+            .trim()
+            .toUpperCase() ===
+          approvalRole,
+      );
+
+    const isFinalStage =
+      currentIndex ===
+      approvalFlow.length - 1;
+
+    // ============================================================
+    // APPROVE
+    // ============================================================
+
+    if (Action === "APPROVE") {
+      // Final approver approved
+      if (isFinalStage) {
+        await client.query(
+          `
+          UPDATE Engineering_AMC_Approval
+          SET
+            ${columns.Status} = $1,
+            ${columns.DateTime} =
+              CURRENT_TIMESTAMP,
+            ${columns.ApprovedBy} = $2,
+            ${columns.Remarks} = $3,
+
+            FinalStatus = 'Approved',
+            FinalStatusDateTime =
+              CURRENT_TIMESTAMP,
+
+            ModifiedBy = $2,
+            ModifiedDate =
+              CURRENT_TIMESTAMP
+
+          WHERE AMCID = $4
+            AND IsDeleted = FALSE;
+          `,
+          [
+            newStatus,
+            UserID,
+            Remarks,
+            AMCID,
+          ],
+        );
+      }
+
+      // Intermediate approval
+      else {
+        await client.query(
+          `
+          UPDATE Engineering_AMC_Approval
+          SET
+            ${columns.Status} = $1,
+            ${columns.DateTime} =
+              CURRENT_TIMESTAMP,
+            ${columns.ApprovedBy} = $2,
+            ${columns.Remarks} = $3,
+
+            FinalStatus = 'Pending',
+            FinalStatusDateTime = NULL,
+
+            ModifiedBy = $2,
+            ModifiedDate =
+              CURRENT_TIMESTAMP
+
+          WHERE AMCID = $4
+            AND IsDeleted = FALSE;
+          `,
+          [
+            newStatus,
+            UserID,
+            Remarks,
+            AMCID,
+          ],
+        );
+      }
+    }
+
+    // ============================================================
+    // REJECT
+    // ============================================================
+
+    else if (Action === "REJECT") {
+      await client.query(
+        `
+        UPDATE Engineering_AMC_Approval
+        SET
+          ${columns.Status} = 'Rejected',
+          ${columns.DateTime} =
+            CURRENT_TIMESTAMP,
+          ${columns.ApprovedBy} = $1,
+          ${columns.Remarks} = $2,
+
+          FinalStatus = 'Rejected',
+          FinalStatusDateTime =
+            CURRENT_TIMESTAMP,
+
+          ModifiedBy = $1,
+          ModifiedDate =
+            CURRENT_TIMESTAMP
+
+        WHERE AMCID = $3
+          AND IsDeleted = FALSE;
+        `,
+        [
+          UserID,
+          Remarks,
+          AMCID,
+        ],
+      );
+    }
+
+    // ============================================================
+    // RETURN
+    // ============================================================
+
+    else if (Action === "RETURN") {
+      await client.query(
+        `
+        UPDATE Engineering_AMC_Approval
+        SET
+          ${columns.Status} = 'Returned',
+          ${columns.DateTime} =
+            CURRENT_TIMESTAMP,
+          ${columns.ApprovedBy} = $1,
+          ${columns.Remarks} = $2,
+
+          FinalStatus = 'Returned',
+          FinalStatusDateTime =
+            CURRENT_TIMESTAMP,
+
+          ModifiedBy = $1,
+          ModifiedDate =
+            CURRENT_TIMESTAMP
+
+        WHERE AMCID = $3
+          AND IsDeleted = FALSE;
+        `,
+        [
+          UserID,
+          Remarks,
+          AMCID,
+        ],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    return ok(
+      `AMC ${newStatus.toLowerCase()} successfully.`
+    );
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {}
+
+    console.error(
+      "AMC Approval Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to process AMC approval at this time.",
+    );
+  } finally {
+    client.release();
+  }
+};
+// ============================================================Create AMC Approval Config
+const createAMCApprovalConfig = async (data) => {
+  let client;
+  let transactionStarted = false;
+
+  try {
+    
+
+    const OrganizationID = Number(data.OrganizationID);
+
+    const approvals = Array.isArray(data.Approvals)
+      ? data.Approvals
+      : [];
+
+    // ============================================================
+    // VALIDATION
+    // ============================================================
+
+    if (
+      !Number.isInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "OrganizationID is required.",
+        400,
+      );
+    }
+
+    if (approvals.length === 0) {
+      return fail(
+        "At least one approval configuration is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // NORMALIZE
+    // ============================================================
+
+    const normalizedApprovals = approvals.map(
+      (approval) => ({
+        ApprovalLevel: Number(
+          approval.ApprovalLevel,
+        ),
+
+        ApprovalRole: String(
+          approval.ApprovalRole || "",
+        )
+          .trim()
+          .toUpperCase(),
+
+        ApprovalOrder: Number(
+          approval.ApprovalOrder,
+        ),
+
+        // Backend se automatic TRUE
+        IsMandatory: true,
+      }),
+    );
+
+    // ============================================================
+    // DUPLICATE CHECK
+    // ============================================================
+
+    const levels = new Set();
+    const roles = new Set();
+    const orders = new Set();
+
+    for (const approval of normalizedApprovals) {
+      const {
+        ApprovalLevel,
+        ApprovalRole,
+        ApprovalOrder,
+      } = approval;
+
+      if (
+        !Number.isInteger(ApprovalLevel) ||
+        ApprovalLevel < 1
+      ) {
+        return fail(
+          "ApprovalLevel must be a positive integer.",
+          400,
+        );
+      }
+
+      if (
+        !Number.isInteger(ApprovalOrder) ||
+        ApprovalOrder < 1
+      ) {
+        return fail(
+          "ApprovalOrder must be a positive integer.",
+          400,
+        );
+      }
+
+      if (
+        !AMC_APPROVAL_ROLES.has(
+          ApprovalRole,
+        )
+      ) {
+        return fail(
+          "ApprovalRole must be FC, GM, RD, or CEO.",
+          400,
+        );
+      }
+
+      if (levels.has(ApprovalLevel)) {
+        return fail(
+          `Approval level ${ApprovalLevel} is duplicated in request.`,
+          409,
+        );
+      }
+
+      if (roles.has(ApprovalRole)) {
+        return fail(
+          `${ApprovalRole} approval stage is duplicated in request.`,
+          409,
+        );
+      }
+
+      if (orders.has(ApprovalOrder)) {
+        return fail(
+          `Approval order ${ApprovalOrder} is duplicated in request.`,
+          409,
+        );
+      }
+
+      levels.add(ApprovalLevel);
+      roles.add(ApprovalRole);
+      orders.add(ApprovalOrder);
+    }
+
+    // ============================================================
+    // TRANSACTION
+    // ============================================================
+
+    client = await pool.connect();
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    // ============================================================
+    // GET EXISTING CONFIG
+    // Active + Soft Deleted
+    // ============================================================
+
+    const existingResult = await client.query(
+      `
+      SELECT
+        AMCApprovalConfigID AS "AMCApprovalConfigID",
+        OrganizationID AS "OrganizationID",
+        ApprovalLevel AS "ApprovalLevel",
+        ApprovalRole AS "ApprovalRole",
+        ApprovalOrder AS "ApprovalOrder",
+        IsMandatory AS "IsMandatory",
+        IsDeleted AS "IsDeleted"
+      FROM Engineering_AMC_Approval_Config
+      WHERE OrganizationID = $1
+      ORDER BY
+        ApprovalLevel ASC,
+        AMCApprovalConfigID ASC
+      FOR UPDATE;
+      `,
+      [OrganizationID],
+    );
+
+    const existingConfigs =
+      existingResult.rows;
+
+    console.log(
+      "EXISTING AMC CONFIGS =>",
+      JSON.stringify(
+        existingConfigs,
+        null,
+        2,
+      ),
+    );
+
+    // ============================================================
+    // MAP EXISTING CONFIG BY LEVEL
+    // ============================================================
+
+    const existingByLevel =
+      new Map();
+
+    for (const row of existingConfigs) {
+      existingByLevel.set(
+        Number(row.ApprovalLevel),
+        row,
+      );
+    }
+
+    const processedLevels =
+      new Set();
+
+    const inserted = [];
+    const updated = [];
+    const restored = [];
+    const deleted = [];
+
+    // ============================================================
+    // INSERT / UPDATE / RESTORE
+    // ============================================================
+
+    for (
+      const approval of normalizedApprovals
+    ) {
+      const {
+        ApprovalLevel,
+        ApprovalRole,
+        ApprovalOrder,
+        IsMandatory,
+      } = approval;
+
+      const existing =
+        existingByLevel.get(
+          ApprovalLevel,
+        );
+
+      // ==========================================================
+      // EXISTING RECORD
+      // ==========================================================
+
+      if (existing) {
+        const ConfigID = Number(
+          existing.AMCApprovalConfigID,
+        );
+
+        if (
+          !Number.isInteger(ConfigID)
+        ) {
+          throw new Error(
+            `Invalid AMCApprovalConfigID: ${existing.AMCApprovalConfigID}`,
+          );
+        }
+
+        // ========================================================
+        // RESTORE SOFT DELETED RECORD
+        // ========================================================
+
+        if (
+          existing.IsDeleted === true
+        ) {
+          await client.query(
+            `
+            UPDATE Engineering_AMC_Approval_Config
+            SET
+              ApprovalRole = $1,
+              ApprovalOrder = $2,
+              IsMandatory = $3,
+              IsDeleted = FALSE,
+
+              ModifiedBy = $4,
+              ModifiedDate = CURRENT_TIMESTAMP,
+
+              DeletedBy = NULL,
+              DeletedDate = NULL
+
+            WHERE AMCApprovalConfigID = $5
+              AND OrganizationID = $6;
+            `,
+            [
+              ApprovalRole,
+              ApprovalOrder,
+              IsMandatory,
+              data.UserID,
+              ConfigID,
+              OrganizationID,
+            ],
+          );
+
+          restored.push(ConfigID);
+        }
+
+        // ========================================================
+        // NORMAL UPDATE
+        // ========================================================
+
+        else {
+          await client.query(
+            `
+            UPDATE Engineering_AMC_Approval_Config
+            SET
+              ApprovalRole = $1,
+              ApprovalOrder = $2,
+              IsMandatory = $3,
+              ModifiedBy = $4,
+              ModifiedDate = CURRENT_TIMESTAMP
+            WHERE AMCApprovalConfigID = $5
+              AND OrganizationID = $6
+              AND IsDeleted = FALSE;
+            `,
+            [
+              ApprovalRole,
+              ApprovalOrder,
+              IsMandatory,
+              data.UserID,
+              ConfigID,
+              OrganizationID,
+            ],
+          );
+
+          updated.push(ConfigID);
+        }
+      }
+
+      // ==========================================================
+      // NEW INSERT
+      // ==========================================================
+
+      else {
+        const result =
+          await client.query(
+            `
+            INSERT INTO Engineering_AMC_Approval_Config
+            (
+              OrganizationID,
+              ApprovalLevel,
+              ApprovalRole,
+              ApprovalOrder,
+              IsMandatory,
+              IsDeleted,
+              CreatedBy,
+              CreatedDate
+            )
+            VALUES
+            (
+              $1,
+              $2,
+              $3,
+              $4,
+              TRUE,
+              FALSE,
+              $5,
+              CURRENT_TIMESTAMP
+            )
+            RETURNING
+              AMCApprovalConfigID AS "AMCApprovalConfigID";
+            `,
+            [
+              OrganizationID,
+              ApprovalLevel,
+              ApprovalRole,
+              ApprovalOrder,
+              data.UserID,
+            ],
+          );
+
+        const ConfigID = Number(
+          result.rows[0]
+            .AMCApprovalConfigID,
+        );
+
+        inserted.push(ConfigID);
+      }
+
+      processedLevels.add(
+        ApprovalLevel,
+      );
+    }
+
+    // ============================================================
+    // SOFT DELETE
+    // DB ME HAI BUT REQUEST ME NAHI HAI
+    // ============================================================
+
+    for (
+      const existing of existingConfigs
+    ) {
+      const level = Number(
+        existing.ApprovalLevel,
+      );
+
+      if (
+        existing.IsDeleted === false &&
+        !processedLevels.has(level)
+      ) {
+        const ConfigID = Number(
+          existing.AMCApprovalConfigID,
+        );
+
+        if (
+          !Number.isInteger(ConfigID)
+        ) {
+          throw new Error(
+            `Invalid AMCApprovalConfigID: ${existing.AMCApprovalConfigID}`,
+          );
+        }
+
+        await client.query(
+          `
+          UPDATE Engineering_AMC_Approval_Config
+          SET
+            IsDeleted = TRUE,
+            DeletedBy = $1,
+            DeletedDate = CURRENT_TIMESTAMP,
+            ModifiedBy = $1,
+            ModifiedDate = CURRENT_TIMESTAMP
+          WHERE AMCApprovalConfigID = $2
+            AND OrganizationID = $3
+            AND IsDeleted = FALSE;
+          `,
+          [
+            data.UserID,
+            ConfigID,
+            OrganizationID,
+          ],
+        );
+
+        deleted.push(ConfigID);
+      }
+    }
+
+    // ============================================================
+    // COMMIT
+    // ============================================================
+
+    await client.query("COMMIT");
+
+    transactionStarted = false;
+
+    return {
+      success: true,
+      message:
+        "AMC approval configuration saved successfully.",
+    };
+  } catch (error) {
+    if (
+      client &&
+      transactionStarted
+    ) {
+      await client.query(
+        "ROLLBACK",
+      );
+    }
+
+    console.error(
+      "Save AMC Approval Config Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(
+        error,
+      );
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    if (error.code === "23505") {
+      return fail(
+        "AMC approval configuration already exists.",
+        409,
+      );
+    }
+
+    if (error.code === "23503") {
+      return fail(
+        "Invalid organization or user.",
+        400,
+      );
+    }
+
+    return fail(
+      "Unable to save AMC approval configuration at this time.",
+      500,
+    );
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+};
+// ============================================================AMC Approval Config List
+const getAllAMCApprovalConfig = async (data) => {
+  try {
+    const OrganizationID = Number(
+      data.OrganizationID,
+    );
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        AMCApprovalConfigID,
+        ApprovalLevel,
+        ApprovalRole,
+        ApprovalOrder,
+        IsMandatory,
+        CreatedDate
+      FROM Engineering_AMC_Approval_Config
+      WHERE OrganizationID = $1
+        AND IsDeleted = FALSE
+      ORDER BY
+        ApprovalOrder ASC,
+        ApprovalLevel ASC;
+      `,
+      [OrganizationID],
+    );
+
+    const CreatedDate =
+      result.rows.length > 0
+        ? formatDate(result.rows[0].createddate)
+        : null;
+
+    const approvals = result.rows.map((row) => ({
+      AMCApprovalConfigID:
+        row.amcapprovalconfigid,
+      ApprovalLevel:
+        row.approvallevel,
+      ApprovalRole:
+        row.approvalrole,
+      ApprovalOrder:
+        row.approvalorder,
+      IsMandatory:
+        row.ismandatory,
+    }));
+
+    return ok(
+      "AMC approval config fetched successfully.",
+      {
+        OrganizationID,
+        CreatedDate,
+        Count: approvals.length,
+        data: approvals,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Get AMC Approval Config Error:",
+      error.message,
+    );
+
+    return databaseFailure(
+      "Unable to fetch AMC approval config.",
+    );
+  }
+};
+// ============================================================Delete AMC Approval Config
+const deleteAMCApprovalConfig = async (data) => {
+  try {
+    const AMCApprovalConfigID = Number(
+      data.AMCApprovalConfigID,
+    );
+
+    const UserID = Number(data.UserID);
+
+    if (
+      !Number.isSafeInteger(
+        AMCApprovalConfigID,
+      ) ||
+      AMCApprovalConfigID <= 0
+    ) {
+      return fail(
+        "Valid AMCApprovalConfigID is required.",
+        400,
+      );
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE Engineering_AMC_Approval_Config
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+      WHERE AMCApprovalConfigID = $2
+        AND IsDeleted = FALSE
+      RETURNING AMCApprovalConfigID;
+      `,
+      [
+        UserID,
+        AMCApprovalConfigID,
+      ],
+    );
+
+    if (result.rows.length === 0) {
+      return fail(
+        "AMC approval config not found.",
+        404,
+      );
+    }
+
+    return ok(
+      "AMC approval config deleted successfully.",
+      {
+        AMCApprovalConfigID,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Delete AMC Approval Config Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to delete AMC approval config.",
+    );
+  }
+};
 // ============================================================EXPORTS
 module.exports = {
   createEquipment,
@@ -9969,4 +13970,13 @@ module.exports = {
   generateDailyMaintenanceReportPdf,
   generateMonthlyMaintenanceReportPdf,
   generateScheduledMissingReportPdf,
+  createAMC,
+  getAllAMC,
+  getAMCById,
+  updateAMC,
+  deleteAMC,
+  processAMCApproval,
+   createAMCApprovalConfig,
+  getAllAMCApprovalConfig,
+  deleteAMCApprovalConfig,
 };

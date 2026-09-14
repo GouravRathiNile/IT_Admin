@@ -39,6 +39,16 @@ const {
   getDailyMaintenanceReportPdf,
   getMonthlyMaintenanceReportPdf,
   getScheduledMissingReportPdf,
+  createAMC,
+  getAllAMC,
+  getAMCById,
+  updateAMC,
+  deleteAMC,
+  processAMCApproval,
+  createAMCApprovalConfig,
+  getAllAMCApprovalConfig,
+  updateAMCApprovalConfig,
+  deleteAMCApprovalConfig,
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -88,4 +98,14 @@ router.get("/BreakdownReportsPdf",authenticateToken,getBreakdownReportPdf,);
 router.get("/DailyMaintenanceReportsPdf",authenticateToken,getDailyMaintenanceReportPdf,);
 router.get("/MonthlyMaintenanceReportsPdf",authenticateToken,getMonthlyMaintenanceReportPdf,);
 router.get("/ScheduledMissingReportsPdf",authenticateToken,getScheduledMissingReportPdf,);
+// =============================================================AMC of Equipment
+router.post("/CreateAMC",authenticateToken,upload.array("Documents"),createAMC,);
+router.get("/AMCList",authenticateToken,getAllAMC,);
+router.get("/GetAMCById/:id",authenticateToken,getAMCById,);
+router.put("/UpdateAMC",authenticateToken,upload.array("Documents"),updateAMC,);
+router.delete("/DeleteAMC",authenticateToken,deleteAMC,);
+router.put("/ApproveAMC",authenticateToken,processAMCApproval,);
+router.post("/CreateAMCApprovalConfig",authenticateToken,createAMCApprovalConfig,);
+router.get("/AMCApprovalConfigList",authenticateToken,getAllAMCApprovalConfig,);
+router.delete("/DeleteAMCApprovalConfig",authenticateToken,deleteAMCApprovalConfig,);
 module.exports = router;

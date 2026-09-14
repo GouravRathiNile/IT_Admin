@@ -1763,3 +1763,471 @@ exports.getScheduledMissingReportPdf = async (
     );
   }
 };
+// ============================================================================================AMC of Equipment
+// ============================================================Create AMC
+exports.createAMC = async (req, res) => {
+  try {
+    const body = req.body || {};
+
+    // ============================================================
+    // OrganizationID
+    // ============================================================
+
+    const OrganizationID = Number(body.OrganizationID);
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      throw new AppError(
+        "Organization ID is required and must be a positive integer",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    // ============================================================
+    // EquipmentID
+    // ============================================================
+
+    const EquipmentID = Number(body.EquipmentID);
+
+    if (
+      !Number.isSafeInteger(EquipmentID) ||
+      EquipmentID <= 0
+    ) {
+      throw new AppError(
+        "Equipment ID is required and must be a positive integer",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    // ============================================================
+    // Date Helper
+    // ============================================================
+
+    const normalizeDate = (value, fieldName) => {
+      const normalized = String(value ?? "").trim();
+
+      if (!normalized) {
+        return null;
+      }
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+        throw new AppError(
+          `${fieldName} must be in YYYY-MM-DD format`,
+          STATUS_CODES.BAD_REQUEST,
+        );
+      }
+
+      const parsed = new Date(
+        `${normalized}T00:00:00.000Z`,
+      );
+
+      if (
+        Number.isNaN(parsed.getTime()) ||
+        parsed.toISOString().slice(0, 10) !== normalized
+      ) {
+        throw new AppError(
+          `${fieldName} must be a valid date`,
+          STATUS_CODES.BAD_REQUEST,
+        );
+      }
+
+      return normalized;
+    };
+
+    const AMCStartDate = normalizeDate(
+      body.AMCStartDate,
+      "AMCStartDate",
+    );
+
+    const AMCEndDate = normalizeDate(
+      body.AMCEndDate,
+      "AMCEndDate",
+    );
+
+    if (
+      AMCStartDate &&
+      AMCEndDate &&
+      AMCStartDate > AMCEndDate
+    ) {
+      throw new AppError(
+        "AMCStartDate cannot be greater than AMCEndDate",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    // ============================================================
+    // AMC Amount
+    // ============================================================
+
+    let AMCAmount = null;
+
+    if (
+      body.AMCAmount !== undefined &&
+      body.AMCAmount !== null &&
+      String(body.AMCAmount).trim() !== ""
+    ) {
+      AMCAmount = Number(body.AMCAmount);
+
+      if (
+        !Number.isFinite(AMCAmount) ||
+        AMCAmount < 0
+      ) {
+        throw new AppError(
+          "AMCAmount must be a valid non-negative number",
+          STATUS_CODES.BAD_REQUEST,
+        );
+      }
+    }
+
+    // ============================================================
+    // Text Helper
+    // ============================================================
+
+    const textOrNull = (value) => {
+      if (
+        value === undefined ||
+        value === null
+      ) {
+        return null;
+      }
+
+      const normalized = String(value).trim();
+
+      return normalized || null;
+    };
+
+    // ============================================================
+    // Upload Documents To Azure
+    // ============================================================
+
+    const Documents = [];
+
+    for (const file of req.files || []) {
+      const filePath = await uploadToAzure(file);
+
+      Documents.push({
+        FileName: file.originalname,
+        FilePath: filePath,
+        FileType: file.mimetype,
+        FileSize: file.size,
+      });
+    }
+
+    // ============================================================
+    // RabbitMQ Payload
+    //
+    // UserID body se nahi bhejna.
+    // sendQueueResponse req.user se verified UserID inject karega.
+    // ============================================================
+
+    const data = {
+      OrganizationID,
+      EquipmentID,
+
+      AMCStartDate,
+      AMCEndDate,
+
+      AMCType: textOrNull(body.AMCType),
+
+      AMCAmount,
+
+      VendorName:
+        textOrNull(body.VendorName),
+
+      VendorEmailAddress:
+        textOrNull(body.VendorEmailAddress),
+
+      VendorMobileNumber:
+        textOrNull(body.VendorMobileNumber),
+
+      VendorSecondMobileNumber:
+        textOrNull(
+          body.VendorSecondMobileNumber,
+        ),
+
+      VendorLandlineNumber:
+        textOrNull(
+          body.VendorLandlineNumber,
+        ),
+
+      VendorAddress:
+        textOrNull(body.VendorAddress),
+
+      VendorCity:
+        textOrNull(body.VendorCity),
+
+      VendorState:
+        textOrNull(body.VendorState),
+
+      VendorPincode:
+        textOrNull(body.VendorPincode),
+
+      Documents,
+    };
+
+    // ============================================================
+    // RabbitMQ
+    // Controller -> Consumer -> Service
+    // ============================================================
+
+    return await sendQueueResponse(
+      req,
+      res,
+      "CREATE_ENGINEERING_AMC",
+      data,
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================AMC List
+ exports.getAllAMC = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getAllAMC({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        EquipmentID:
+          req.query.EquipmentID,
+
+        Status:
+          req.query.Status,
+
+        Search:
+          req.query.Search,
+
+        page:
+          req.query.page,
+
+        PageSize:
+          req.query.PageSize,
+
+        // ======================================================
+        // Trusted JWT Fields
+        // ======================================================
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Get AMC by ID
+exports.getAMCById = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getAMCById({
+        AMCID:
+          req.params.id,
+
+        // Trusted JWT fields
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Update AMC
+exports.updateAMC = async (req, res) => {
+  try {
+    const Changes =
+      req.body.Changes
+        ? typeof req.body.Changes === "string"
+          ? JSON.parse(req.body.Changes)
+          : req.body.Changes
+        : {};
+
+    const DeleteDocumentIDs =
+      req.body.DeleteDocumentIDs
+        ? typeof req.body.DeleteDocumentIDs === "string"
+          ? JSON.parse(
+              req.body.DeleteDocumentIDs,
+            )
+          : req.body.DeleteDocumentIDs
+        : [];
+
+    // ============================================================
+    // Yahan req.files ko existing Engineering Azure upload
+    // helper se upload karke Documents array banao.
+    // ============================================================
+
+    const Documents =
+      req.uploadedDocuments || [];
+
+    return sendQueueResponse(
+      req,
+      res,
+      "UPDATE_ENGINEERING_AMC",
+      {
+        AMCID:
+          req.body.AMCID,
+
+        OrganizationID:
+          req.body.OrganizationID,
+
+        Changes,
+
+        DeleteDocumentIDs,
+
+        Documents,
+      },
+    );
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Delete AMC
+exports.deleteAMC = async (req, res) => {
+  try {
+    return sendQueueResponse(
+      req,
+      res,
+      "DELETE_ENGINEERING_AMC",
+      {
+        AMCID: req.body.AMCID,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Approve AMC
+exports.processAMCApproval = async (
+  req,
+  res,
+) => {
+  try {
+    return sendQueueResponse(
+      req,
+      res,
+      "PROCESS_ENGINEERING_AMC_APPROVAL",
+      {
+        AMCID:
+          req.body.AMCID,
+
+        Action:
+          req.body.Action,
+
+        Remarks:
+          req.body.Remarks,
+
+        // Trusted JWT values
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      },
+    );
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Create AMC Approval Config
+exports.createAMCApprovalConfig = async (
+  req,
+  res,
+) => {
+  try {
+    return sendQueueResponse(
+      req,
+      res,
+      "CREATE_ENGINEERING_AMC_APPROVAL_CONFIG",
+      {
+        OrganizationID:
+          req.body.OrganizationID,
+
+        Approvals:
+          req.body.Approvals,
+      },
+    );
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================AMC Approval Config List
+exports.getAllAMCApprovalConfig = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService.getAllAMCApprovalConfig(
+        {
+          OrganizationID:
+            req.query.OrganizationID,
+        },
+      );
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================Delete AMC Approval Config
+exports.deleteAMCApprovalConfig = async (
+  req,
+  res,
+) => {
+  try {
+    return sendQueueResponse(
+      req,
+      res,
+      "DELETE_ENGINEERING_AMC_APPROVAL_CONFIG",
+      {
+        AMCApprovalConfigID:
+          req.body.AMCApprovalConfigID,
+      },
+    );
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
