@@ -48,7 +48,11 @@ const {
   createAMCApprovalConfig,
   getAllAMCApprovalConfig,
   deleteAMCApprovalConfig,
-  generateEquipmentQRCode
+  generateEquipmentQRCode,
+  getEngineeringDashboardSummary,
+  getEngineeringMaintenanceChart,
+  getEngineeringMaintenanceDistribution,
+  getEngineeringBreakdownChart
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -109,4 +113,9 @@ router.post("/CreateAMCApprovalConfig",authenticateToken,createAMCApprovalConfig
 router.get("/AMCApprovalConfigList",authenticateToken,getAllAMCApprovalConfig,);
 router.delete("/DeleteAMCApprovalConfig",authenticateToken,deleteAMCApprovalConfig,);
 router.get("/EquipmentQRCode",authenticateToken,generateEquipmentQRCode,);
+// =============================================================AMC of Equipment
+router.get("/DashboardSummary",authenticateToken,getEngineeringDashboardSummary,);
+router.get("/DashboardMaintenanceChart",authenticateToken,getEngineeringMaintenanceChart,);
+router.get("/DashboardMaintenanceDistribution",authenticateToken,getEngineeringMaintenanceDistribution,);
+router.get("/DashboardBreakdownChart",authenticateToken,getEngineeringBreakdownChart,);
 module.exports = router;

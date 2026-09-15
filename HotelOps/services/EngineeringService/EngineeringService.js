@@ -14682,7 +14682,754 @@ const generateEquipmentQRCode = async (data) => {
     );
   }
 };
+// ============================================================================================OR Code of Equipment Entries
+// ============================================================Engineering Dashboard Summary
+const getEngineeringDashboardSummary = async (data) => {
+  try {
+    const OrganizationID = Number(data.OrganizationID);
 
+    const FromDate =
+      data.FromDate && String(data.FromDate).trim()
+        ? String(data.FromDate).trim()
+        : null;
+
+    const ToDate =
+      data.ToDate && String(data.ToDate).trim()
+        ? String(data.ToDate).trim()
+        : null;
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      return fail(
+        "FromDate cannot be greater than ToDate.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Dashboard Summary
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+
+        -- ========================================================
+        -- Total Equipment
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+          FROM Engineering_Equipment_Entry_Master e
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+        ) AS "TotalEquipment",
+
+        -- ========================================================
+        -- Under Warranty
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+          FROM Engineering_Equipment_Entry_Master e
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+            AND LOWER(TRIM(COALESCE(e.WarrantyStatus, ''))) =
+                'under warranty'
+        ) AS "UnderWarranty",
+
+        -- ========================================================
+        -- Under AMC
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+          FROM Engineering_Equipment_Entry_Master e
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+            AND LOWER(TRIM(COALESCE(e.AMCStatus, ''))) =
+                'under amc'
+        ) AS "UnderAMC",
+
+        -- ========================================================
+        -- Breakdown Count
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+          FROM Engineering_Breakdown_Entry b
+          WHERE b.OrganizationID = $1
+            AND b.IsDeleted = FALSE
+
+            AND (
+              $2::date IS NULL
+              OR b.BreakdownDate >= $2::date
+            )
+
+            AND (
+              $3::date IS NULL
+              OR b.BreakdownDate <= $3::date
+            )
+        ) AS "BreakdownCount",
+
+        -- ========================================================
+        -- Breakdown Amount
+        -- ========================================================
+
+        (
+          SELECT COALESCE(
+            SUM(b.Amount),
+            0
+          )::numeric(18,2)
+
+          FROM Engineering_Breakdown_Entry b
+
+          WHERE b.OrganizationID = $1
+            AND b.IsDeleted = FALSE
+
+            AND (
+              $2::date IS NULL
+              OR b.BreakdownDate >= $2::date
+            )
+
+            AND (
+              $3::date IS NULL
+              OR b.BreakdownDate <= $3::date
+            )
+        ) AS "BreakdownAmount",
+
+        -- ========================================================
+        -- Total Maintenance
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Maintenance_Details m
+
+          WHERE m.OrganizationID = $1
+            AND m.IsDeleted = FALSE
+
+            AND (
+              $2::date IS NULL
+              OR m.MaintenanceDate >= $2::date
+            )
+
+            AND (
+              $3::date IS NULL
+              OR m.MaintenanceDate <= $3::date
+            )
+        ) AS "TotalMaintenance",
+
+        -- ========================================================
+        -- Pending Maintenance
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Maintenance_Details m
+
+          WHERE m.OrganizationID = $1
+            AND m.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(m.Status, '')
+              )
+            ) = 'pending'
+
+            AND (
+              $2::date IS NULL
+              OR m.MaintenanceDate >= $2::date
+            )
+
+            AND (
+              $3::date IS NULL
+              OR m.MaintenanceDate <= $3::date
+            )
+        ) AS "PendingMaintenance";
+      `,
+      [
+        OrganizationID,
+        FromDate,
+        ToDate,
+      ],
+    );
+
+    const row = result.rows[0];
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "Engineering dashboard summary fetched successfully.",
+      {
+        TotalEquipment:
+          Number(row.TotalEquipment || 0),
+
+        UnderWarranty:
+          Number(row.UnderWarranty || 0),
+
+        UnderAMC:
+          Number(row.UnderAMC || 0),
+
+        Breakdown: {
+          Count:
+            Number(row.BreakdownCount || 0),
+
+          Amount:
+            Number(row.BreakdownAmount || 0),
+        },
+
+        TotalMaintenance:
+          Number(row.TotalMaintenance || 0),
+
+        PendingMaintenance:
+          Number(row.PendingMaintenance || 0),
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Engineering Dashboard Summary Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to fetch engineering dashboard summary.",
+    );
+  }
+};
+// ============================================================Maintenance Trend Chart
+const getEngineeringMaintenanceChart = async (data) => {
+  try {
+    const OrganizationID = Number(data.OrganizationID);
+
+    const FromDate =
+      data.FromDate && String(data.FromDate).trim()
+        ? String(data.FromDate).trim()
+        : null;
+
+    const ToDate =
+      data.ToDate && String(data.ToDate).trim()
+        ? String(data.ToDate).trim()
+        : null;
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    if (!FromDate || !ToDate) {
+      return fail(
+        "FromDate and ToDate are required.",
+        400,
+      );
+    }
+
+    if (FromDate > ToDate) {
+      return fail(
+        "FromDate cannot be greater than ToDate.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Maintenance Trend
+    //
+    // generate_series is used so dates having zero maintenance
+    // are also returned to frontend.
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      WITH date_series AS
+      (
+        SELECT
+          generate_series(
+            $2::date,
+            $3::date,
+            INTERVAL '1 day'
+          )::date AS "TrendDate"
+      ),
+
+      maintenance_data AS
+      (
+        SELECT
+          m.MaintenanceDate::date AS "MaintenanceDate",
+
+          COUNT(*)::bigint AS "TotalMaintenance",
+
+          COUNT(*) FILTER (
+            WHERE LOWER(
+              TRIM(
+                COALESCE(m.Status, '')
+              )
+            ) = 'pending'
+          )::bigint AS "PendingMaintenance"
+
+        FROM Engineering_Maintenance_Details m
+
+        WHERE m.OrganizationID = $1
+          AND m.IsDeleted = FALSE
+          AND m.MaintenanceDate >= $2::date
+          AND m.MaintenanceDate <= $3::date
+
+        GROUP BY
+          m.MaintenanceDate::date
+      )
+
+      SELECT
+        ds."TrendDate" AS "Date",
+
+        COALESCE(
+          md."TotalMaintenance",
+          0
+        )::bigint AS "TotalMaintenance",
+
+        COALESCE(
+          md."PendingMaintenance",
+          0
+        )::bigint AS "PendingMaintenance"
+
+      FROM date_series ds
+
+      LEFT JOIN maintenance_data md
+        ON md."MaintenanceDate" =
+           ds."TrendDate"
+
+      ORDER BY
+        ds."TrendDate" ASC;
+      `,
+      [
+        OrganizationID,
+        FromDate,
+        ToDate,
+      ],
+    );
+
+    // ============================================================
+    // Response Mapping
+    // ============================================================
+
+    const trendData = result.rows.map(
+      (row) => ({
+        Date:
+          formatDate(row.Date),
+
+        TotalMaintenance:
+          Number(
+            row.TotalMaintenance || 0,
+          ),
+
+        PendingMaintenance:
+          Number(
+            row.PendingMaintenance || 0,
+          ),
+      }),
+    );
+
+    return ok(
+      "Engineering maintenance trend fetched successfully.",
+      {
+        OrganizationID,
+        FromDate,
+        ToDate,
+        data: trendData,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Engineering Maintenance Trend Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to fetch engineering maintenance trend.",
+    );
+  }
+};
+// ============================================================Maintenance Distribution
+const getEngineeringMaintenanceDistribution = async (data) => {
+  try {
+    const OrganizationID = Number(data.OrganizationID);
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Maintenance Distribution
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+
+        -- ========================================================
+        -- Total Equipment
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+        ) AS "TotalEquipment",
+
+        -- ========================================================
+        -- Under AMC
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCStatus, '')
+              )
+            ) = 'under amc'
+        ) AS "UnderAMC",
+
+        -- ========================================================
+        -- Under Warranty
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.WarrantyStatus, '')
+              )
+            ) = 'under warranty'
+        ) AS "UnderWarranty",
+
+        -- ========================================================
+        -- Maintenance
+        -- Unique Equipment having Maintenance
+        -- ========================================================
+
+        (
+          SELECT COUNT(
+            DISTINCT m.EquipmentID
+          )::bigint
+
+          FROM Engineering_Maintenance_Details m
+
+          INNER JOIN Engineering_Equipment_Entry_Master e
+            ON e.EquipmentID = m.EquipmentID
+           AND e.OrganizationID = m.OrganizationID
+           AND e.IsDeleted = FALSE
+
+          WHERE m.OrganizationID = $1
+            AND m.IsDeleted = FALSE
+        ) AS "Maintenance";
+      `,
+      [OrganizationID],
+    );
+
+    const row = result.rows[0];
+
+    // ============================================================
+    // Counts
+    // ============================================================
+
+    const TotalEquipment =
+      Number(row.TotalEquipment || 0);
+
+    const UnderAMC =
+      Number(row.UnderAMC || 0);
+
+    const UnderWarranty =
+      Number(row.UnderWarranty || 0);
+
+    const Maintenance =
+      Number(row.Maintenance || 0);
+
+    // ============================================================
+    // Percentage Helper
+    // Percentage against Total Equipment
+    // ============================================================
+
+    const getPercentage = (count) => {
+      if (TotalEquipment === 0) {
+        return 0;
+      }
+
+      return Number(
+        (
+          (count / TotalEquipment) *
+          100
+        ).toFixed(2),
+      );
+    };
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "Engineering maintenance distribution fetched successfully.",
+      {
+        TotalEquipment,
+
+        data: [
+          {
+            Type: "Under AMC",
+            Count: UnderAMC,
+            Percentage:
+              getPercentage(UnderAMC),
+          },
+
+          {
+            Type: "Under Warranty",
+            Count: UnderWarranty,
+            Percentage:
+              getPercentage(UnderWarranty),
+          },
+
+          {
+            Type: "Maintenance",
+            Count: Maintenance,
+            Percentage:
+              getPercentage(Maintenance),
+          },
+        ],
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Engineering Maintenance Distribution Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to fetch engineering maintenance distribution.",
+    );
+  }
+};
+// ============================================================Breakdown Trend Chart
+const getEngineeringBreakdownChart = async (data) => {
+  try {
+    const OrganizationID = Number(data.OrganizationID);
+
+    const FromDate =
+      data.FromDate && String(data.FromDate).trim()
+        ? String(data.FromDate).trim()
+        : null;
+
+    const ToDate =
+      data.ToDate && String(data.ToDate).trim()
+        ? String(data.ToDate).trim()
+        : null;
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    if (!FromDate || !ToDate) {
+      return fail(
+        "FromDate and ToDate are required.",
+        400,
+      );
+    }
+
+    if (FromDate > ToDate) {
+      return fail(
+        "FromDate cannot be greater than ToDate.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Breakdown Trend
+    //
+    // generate_series ensures that dates with no breakdown
+    // are also returned with count 0.
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      WITH date_series AS
+      (
+        SELECT
+          generate_series(
+            $2::date,
+            $3::date,
+            INTERVAL '1 day'
+          )::date AS "TrendDate"
+      ),
+
+      breakdown_data AS
+      (
+        SELECT
+          b.BreakdownDate::date AS "BreakdownDate",
+
+          COUNT(*)::bigint AS "BreakdownCount"
+
+        FROM Engineering_Breakdown_Entry b
+
+        WHERE b.OrganizationID = $1
+          AND b.IsDeleted = FALSE
+          AND b.BreakdownDate >= $2::date
+          AND b.BreakdownDate <= $3::date
+
+        GROUP BY
+          b.BreakdownDate::date
+      )
+
+      SELECT
+        ds."TrendDate" AS "Date",
+
+        COALESCE(
+          bd."BreakdownCount",
+          0
+        )::bigint AS "BreakdownCount"
+
+      FROM date_series ds
+
+      LEFT JOIN breakdown_data bd
+        ON bd."BreakdownDate" =
+           ds."TrendDate"
+
+      ORDER BY
+        ds."TrendDate" ASC;
+      `,
+      [
+        OrganizationID,
+        FromDate,
+        ToDate,
+      ],
+    );
+
+    // ============================================================
+    // Response Mapping
+    // ============================================================
+
+    const trendData = result.rows.map(
+      (row) => ({
+        Date:
+          formatDate(row.Date),
+
+        BreakdownCount:
+          Number(
+            row.BreakdownCount || 0,
+          ),
+      }),
+    );
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "Engineering breakdown trend fetched successfully.",
+      {
+        OrganizationID,
+        FromDate,
+        ToDate,
+        data: trendData,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Engineering Breakdown Trend Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to fetch engineering breakdown trend.",
+    );
+  }
+};
 // ============================================================EXPORTS
 module.exports = {
   createEquipment,
@@ -14730,8 +15477,12 @@ module.exports = {
   updateAMC,
   deleteAMC,
   processAMCApproval,
-   createAMCApprovalConfig,
+  createAMCApprovalConfig,
   getAllAMCApprovalConfig,
   deleteAMCApprovalConfig,
   generateEquipmentQRCode,
+  getEngineeringDashboardSummary,
+  getEngineeringMaintenanceChart,
+  getEngineeringMaintenanceDistribution,
+  getEngineeringBreakdownChart
 };
