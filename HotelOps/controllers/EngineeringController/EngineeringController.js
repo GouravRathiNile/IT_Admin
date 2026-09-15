@@ -8,6 +8,7 @@ const handleError = require("../../utils/errorHandler");
 //==================================================Azur
 const uploadToAzure = require("../../AzurConfigration/Engineering/AzureUpload");
 const uploadMaintenanceToAzure = require("../../AzurConfigration/Engineering/AzureMaintenanceUpload");
+const uploadAMCToAzure = require("../../AzurConfigration/Engineering/AzureAMCUpload");
 // =========================================================Get Data From service
 const EngineeringService = require("../../services/EngineeringService/EngineeringService",);
 
@@ -1905,7 +1906,7 @@ exports.createAMC = async (req, res) => {
     const Documents = [];
 
     for (const file of req.files || []) {
-      const filePath = await uploadToAzure(file);
+      const filePath = await uploadAMCToAzure(file);
 
       Documents.push({
         FileName: file.originalname,
@@ -2264,6 +2265,161 @@ exports.generateEquipmentQRCode = async (req, res) => {
       res.set("Content-Disposition", 'inline; filename="equipment-' + Number(req.query.EquipmentID) + '-qr.png"');
       return res.type("png").send(Buffer.from(base64, "base64"));
     }
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================================================Dashboard Equipment
+// ============================================================Engineering Dashboard Summary
+exports.getEngineeringDashboardSummary = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService.getEngineeringDashboardSummary({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        FromDate:
+          req.query.FromDate,
+
+        ToDate:
+          req.query.ToDate,
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Maintenance Trend Chart
+exports.getEngineeringMaintenanceChart = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService.getEngineeringMaintenanceChart({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        FromDate:
+          req.query.FromDate,
+
+        ToDate:
+          req.query.ToDate,
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Maintenance Distribution
+exports.getEngineeringMaintenanceDistribution = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService.getEngineeringMaintenanceDistribution({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    return res
+      .status(result.statusCode || 200)
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Breakdown Trend Chart
+exports.getEngineeringBreakdownChart = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await EngineeringService.getEngineeringBreakdownChart({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        FromDate:
+          req.query.FromDate,
+
+        ToDate:
+          req.query.ToDate,
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
 
     return res
       .status(result.statusCode || 200)
