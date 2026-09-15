@@ -5,6 +5,8 @@ const {
 } = require("../../utils/retryableDatabaseError");
 
 const { sendPushNotification } = require("../../utils/sendPushNotification");
+const { sendNotificationEmail } = require("../../utils/emailService");
+const generateOrganizationLogoUrl = require("../../AzurConfigration/ITAdmin/OrganizationMaster/AzureGetData");
 
 // Canonical notification module names are defined in one place. Add a new
 // normalized key here when another module needs casing/spacing normalization.
@@ -18,6 +20,10 @@ const NOTIFICATION_MODULE_NAMES = Object.freeze({
 // Modules using the shared Firebase dispatcher. Recipient selection remains in
 // each module service; this set only enables generic post-persistence delivery.
 const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Report", "Opex"]);
+
+// Email rollout is intentionally limited to CAPEX. Other modules keep their
+// existing notification delivery until they are explicitly enabled here.
+const EMAIL_NOTIFICATION_MODULES = new Set(["Capex"]);
 
 const normalizeNotificationModuleName = (moduleName) => {
     if (moduleName === undefined || moduleName === null) return moduleName;
@@ -54,6 +60,67 @@ const pushNotificationToRecipients = async (notification, userIds) => {
         }
     } catch (error) {
         console.error("Notification device lookup failed:", error.code || "lookup failed");
+    }
+};
+
+// Resolve email addresses from the already-finalized notification recipients.
+// The case-insensitive map prevents one mailbox receiving duplicate messages.
+const emailNotificationToRecipients = async (notification, userIds) => {
+    try {
+        const [recipients, organizationResult] = await Promise.all([
+          pool.query(`
+            SELECT um.userid, TRIM(um.email) AS email
+            FROM user_master um
+            WHERE um.userid::text = ANY($1::text[])
+              AND um.isactive = TRUE AND um.isdeleted = FALSE AND um.islocked = FALSE
+              AND NULLIF(TRIM(um.email), '') IS NOT NULL`,
+            [userIds]),
+          pool.query(`
+            SELECT om.organizationname, om.shortname, logo.logoname
+            FROM organization_master om
+            LEFT JOIN LATERAL (
+              SELECT oml.logoname
+              FROM organization_master_logo oml
+              WHERE oml.organizationid = om.organizationid AND oml.isdeleted = FALSE
+              ORDER BY oml.logoid
+              LIMIT 1
+            ) logo ON TRUE
+            WHERE om.organizationid = $1 AND om.isactive = TRUE
+              AND om.activationstatus = TRUE AND om.isdeleted = FALSE
+            LIMIT 1`, [notification.organization_id]),
+        ]);
+        const uniqueEmails = new Map();
+        for (const row of recipients.rows) {
+            const email = String(row.email || "").trim();
+            if (email) uniqueEmails.set(email.toLowerCase(), email);
+        }
+
+        const organization = organizationResult.rows[0] || {};
+        let logoUrl = process.env.NILE_OFFICIAL_LOGO_URL || null;
+        if (organization.logoname) {
+            try {
+                logoUrl = generateOrganizationLogoUrl(organization.logoname);
+            } catch (error) {
+                console.error("Notification organization logo URL failed:", error.message);
+            }
+        }
+        const emailNotification = {
+            ...notification,
+            organization_name: organization.organizationname || organization.shortname || "HotelOps",
+            organization_short_name: organization.shortname || organization.organizationname || "HotelOps",
+            logo_url: logoUrl,
+        };
+
+        await Promise.all([...uniqueEmails.values()].map(async (email) => {
+            try {
+                await sendNotificationEmail(email, emailNotification);
+            } catch (error) {
+                // A failed mailbox must not block delivery to other recipients.
+                console.error("Notification email delivery failed:", error.message);
+            }
+        }));
+    } catch (error) {
+        console.error("Notification email recipient lookup failed:", error.message);
     }
 };
 
@@ -215,6 +282,9 @@ const createNotification = async (data) => {
 
 
         const notification = notificationResult.rows[0];
+        // Email metadata is intentionally transient and never changes the
+        // persisted notification/API response contract.
+        notification.email_data = data.emailData || null;
 
 
         // ======================================================
@@ -270,6 +340,13 @@ const createNotification = async (data) => {
             // Do not hold the transaction connection or delay the RabbitMQ reply for Firebase.
             Promise.resolve().then(() => pushNotificationToRecipients(notification, userIds))
                 .catch(() => console.error("Notification push dispatch failed"));
+        }
+
+        if (EMAIL_NOTIFICATION_MODULES.has(notification.module_name)) {
+            // Email starts only after persistence commits and runs independently
+            // from Firebase so neither delivery channel can block the other.
+            Promise.resolve().then(() => emailNotificationToRecipients(notification, userIds))
+                .catch((error) => console.error("Notification email dispatch failed:", error.message));
         }
 
 

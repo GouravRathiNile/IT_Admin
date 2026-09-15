@@ -31,6 +31,32 @@ test("notification module names are normalized centrally before persistence and 
   assert.match(source, /PUSH_NOTIFICATION_MODULES\.has\(notification\.module_name\)/);
 });
 
+test("CAPEX email delivery uses committed notification recipients and stays independent from Firebase", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../services/NotificationService/NotificationService.js"), "utf8"
+  );
+  const emailDelivery = source.match(/const emailNotificationToRecipients[\s\S]*?\/\/ =+/)?.[0] || "";
+  const create = source.match(/const createNotification = async \(data\)[\s\S]*?const getNotifications/)?.[0] || "";
+
+  assert.match(source, /const EMAIL_NOTIFICATION_MODULES = new Set\(\["Capex"\]\)/);
+  assert.match(emailDelivery, /um\.userid::text = ANY\(\$1::text\[\]\)/);
+  assert.match(emailDelivery, /um\.isactive = TRUE AND um\.isdeleted = FALSE AND um\.islocked = FALSE/);
+  assert.match(emailDelivery, /NULLIF\(TRIM\(um\.email\), ''\) IS NOT NULL/);
+  assert.match(emailDelivery, /uniqueEmails\.set\(email\.toLowerCase\(\), email\)/);
+  assert.match(emailDelivery, /Promise\.all\(\[\.\.\.uniqueEmails\.values\(\)\]\.map/);
+  assert.match(emailDelivery, /await sendNotificationEmail\(email, emailNotification\)/);
+  assert.match(emailDelivery, /Notification email delivery failed/);
+  assert.match(emailDelivery, /FROM organization_master om/);
+  assert.match(emailDelivery, /organization_master_logo oml/);
+  assert.match(emailDelivery, /generateOrganizationLogoUrl\(organization\.logoname\)/);
+
+  const commitIndex = create.indexOf('await client.query("COMMIT")');
+  const firebaseIndex = create.indexOf("PUSH_NOTIFICATION_MODULES.has");
+  const emailIndex = create.indexOf("EMAIL_NOTIFICATION_MODULES.has");
+  assert.ok(commitIndex >= 0 && firebaseIndex > commitIndex && emailIndex > commitIndex);
+  assert.notEqual(firebaseIndex, emailIndex);
+});
+
 test("Guest Glitch create notification is organization-scoped to HOD, GM and CEO recipients", () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, "../../services/GuestGlitchService/GuestGlitchService.js"),
