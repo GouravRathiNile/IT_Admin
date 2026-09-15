@@ -883,7 +883,52 @@ const appendOpexRoleStatusFilter = (
   userType,
   approverStatusColumn,
   approvalStatus,
+  financeHod = false,
 ) => {
+  // A Finance HOD normally acts as FC, but must first be able to see the
+  // Finance OPEX while its configured current stage is HOD.
+  if (userType === "FC" && financeHod && approvalStatus === "PENDING") {
+    params.push(userType);
+    const roleParameter = `$${params.length}`;
+    return `${query}
+      AND (
+        (
+          UPPER(BTRIM(COALESCE(approval_state.HODStatus, 'PENDING'))) = 'APPROVED'
+          AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = ${roleParameter}
+          AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+        )
+        OR (
+          UPPER(COALESCE(current_stage.ApprovalRole, '')) = 'HOD'
+          AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+          AND UPPER(TRIM(cm.Department)) = 'FINANCE'
+        )
+      )
+    `;
+  }
+
+  if (userType === "FC" && financeHod && !approvalStatus) {
+    params.push(userType);
+    const roleParameter = `$${params.length}`;
+    return `${query}
+      AND (
+        (
+          UPPER(BTRIM(COALESCE(approval_state.HODStatus, 'PENDING'))) = 'APPROVED'
+          AND (
+            (UPPER(COALESCE(current_stage.ApprovalRole, '')) = ${roleParameter}
+              AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING')
+            OR UPPER(COALESCE(approval_state.FCStatus, ''))
+              IN ('APPROVED', 'REJECTED', 'HOLD', 'RETURNED')
+          )
+        )
+        OR (
+          UPPER(COALESCE(current_stage.ApprovalRole, '')) = 'HOD'
+          AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+          AND UPPER(TRIM(cm.Department)) = 'FINANCE'
+        )
+      )
+    `;
+  }
+
   // FC must never see or act on an OPEX until the HOD stage is approved.
   // This applies to Pending/default as well as FC's historical status tabs.
   if (userType === "FC") {
@@ -1152,6 +1197,7 @@ const getAllOpex = async (data) => {
         userType,
         approverStatusColumn,
         approvalStatus,
+        access.financeHod,
       );
     } else if (userType === "USER") {
       query = appendOpexUserStatusFilter(query, params, approvalStatus);
@@ -1237,6 +1283,7 @@ const getAllOpex = async (data) => {
         userType,
         approverStatusColumn,
         approvalStatus,
+        access.financeHod,
       );
     } else if (userType === "USER") {
       countQuery = appendOpexUserStatusFilter(
@@ -1957,7 +2004,7 @@ const processOpexApproval = async (data) => {
     const access = await resolveOpexAccess(data, pool, { approvalAction: true });
     if (access.error) return access.error;
 
-    const approverRole = access.effectiveRole;
+    let approverRole = access.effectiveRole;
 
     const action = String(data.Action || "")
       .trim()
@@ -2277,6 +2324,16 @@ CEORemarks,
     const currentRole = currentStage.role;
 
     const currentStatus = currentStage.status;
+
+    // Finance HOD is the effective HOD only for its own Finance OPEX while
+    // that configured stage is current. Later FC/RD-FC stages remain unchanged.
+    if (
+      access.financeHod &&
+      currentRole === "HOD" &&
+      String(Opex.department || "").trim().toUpperCase() === "FINANCE"
+    ) {
+      approverRole = "HOD";
+    }
 
     // Build one notification from the locked OPEX row and effective configured stage.
     const notifyApprovalCommitted = ({ kind, notificationAction, roles = [],
@@ -3109,7 +3166,16 @@ const getOpexSummaryReport = async (data) => {
           )) AS RoleStatus,
 
           UPPER(COALESCE(current_stage.ApprovalRole, '')) AS CurrentApprovalRole,
-          UPPER(COALESCE(current_stage.Status, 'PENDING')) AS CurrentStageStatus
+          UPPER(COALESCE(current_stage.Status, 'PENDING')) AS CurrentStageStatus,
+
+          -- Keep the summary aligned with list visibility: a property Finance
+          -- HOD also owns Finance OPEX while its configured HOD stage is pending.
+          ($5::boolean = TRUE
+            AND UPPER(TRIM(cm.Department)) = 'FINANCE'
+            AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = 'HOD'
+            AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
+            AND UPPER(COALESCE(ca.FinalStatus, 'PENDING')) = 'PENDING'
+          ) AS FinanceHodPending
 
         FROM Opex_Master cm
 
@@ -3196,6 +3262,7 @@ const getOpexSummaryReport = async (data) => {
               AND CurrentStageStatus = 'PENDING'
               AND FinalStatus = 'PENDING'
             THEN 'Pending'
+            WHEN FinanceHodPending THEN 'Pending'
             WHEN RoleStatus = 'APPROVED' THEN 'Approved'
             WHEN RoleStatus = 'REJECTED' THEN 'Rejected'
             WHEN RoleStatus = 'HOLD' THEN 'Hold'
@@ -3210,6 +3277,7 @@ const getOpexSummaryReport = async (data) => {
              AND CurrentStageStatus = 'PENDING'
              AND FinalStatus = 'PENDING'
            )
+           OR FinanceHodPending
       )
 
       SELECT
@@ -3324,7 +3392,8 @@ const getOpexSummaryReport = async (data) => {
       FROM visible_opex
       WHERE Status IS NOT NULL;
       `,
-      [OrganizationID, UserType, DepartmentName || null, access.centralizedRdfc],
+      [OrganizationID, UserType, DepartmentName || null, access.centralizedRdfc,
+        access.financeHod && !access.centralizedRdfc],
     );
 
     const row = result.rows[0];

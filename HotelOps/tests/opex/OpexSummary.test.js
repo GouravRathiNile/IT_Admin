@@ -189,7 +189,7 @@ test("OPEX approval roles retain their role-scoped summary", { concurrency: fals
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "GM", null, false]);
+    assert.deepEqual(call.values, [20, "GM", null, false, false]);
     assert.match(call.sql, /CurrentApprovalRole = \$2/);
   } finally {
     pool.query = originalQuery;
@@ -261,7 +261,7 @@ test("non-Finance HOD OPEX summary is scoped to JWT department", { concurrency: 
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "HOD", "Engineering", false]);
+    assert.deepEqual(call.values, [20, "HOD", "Engineering", false, false]);
     assert.match(
       call.sql,
       /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$3::text\)\)/,
@@ -487,6 +487,89 @@ test("Finance HOD receives organization-wide FC list filters", { concurrency: fa
   }
 });
 
+test("Finance OPEX pending at HOD is visible to its Finance HOD", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserType: "HOD",
+      DepartmentName: "Finance",
+      Status: "Pending",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(calls.length, 2);
+    for (const call of calls) {
+      assert.equal(call.values.includes(20), true);
+      assert.equal(call.values.includes("FC"), true);
+      assert.match(call.sql, /current_stage\.ApprovalRole, ''\)\) = 'HOD'/);
+      assert.match(call.sql, /UPPER\(TRIM\(cm\.Department\)\) = 'FINANCE'/);
+      assert.match(call.sql, /approval_state\.HODStatus[\s\S]*= 'APPROVED'[\s\S]*OR/);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Finance HOD can approve Finance OPEX while configured HOD stage is current", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const originalConnect = pool.connect;
+  const transactionCalls = [];
+  pool.query = async () => ({ rows: [] });
+  const client = {
+    query: async (sql, values) => {
+      transactionCalls.push({ sql, values });
+      if (/FROM Opex_Master cm/.test(sql) && /FOR UPDATE OF cm/.test(sql)) {
+        return { rows: [{ opexid: 901, organizationid: 20, createdby: 8,
+          department: "Finance", item: "Printer", qty: 1, description: "Office printer", isvoid: false }] };
+      }
+      if (/FROM Opex_Approval_Config/.test(sql)) {
+        return { rows: [
+          { approvallevel: 1, approvalrole: "HOD", approvalorder: 1, ismandatory: true },
+          { approvallevel: 2, approvalrole: "FC", approvalorder: 2, ismandatory: true },
+          { approvallevel: 3, approvalrole: "GM", approvalorder: 3, ismandatory: true },
+        ] };
+      }
+      if (/FROM Opex_Approval/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [{ opexapprovalid: 902, hodstatus: "Pending",
+          fcstatus: "Pending", gmstatus: "Pending", finalstatus: "Pending" }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  pool.connect = async () => client;
+
+  try {
+    const response = await OpexService.processOpexApproval({
+      OpexID: 901,
+      Action: "APPROVE",
+      UserID: 6,
+      UserType: "HOD",
+      DepartmentName: "Finance",
+    });
+    assert.equal(response.success, true);
+    const hodUpdate = transactionCalls.find((call) => /HODStatus = \$1/.test(call.sql));
+    assert.ok(hodUpdate);
+    assert.deepEqual(hodUpdate.values, ["Approved", 6, null, null, 902]);
+    assert.equal(transactionCalls.some((call) => /^COMMIT$/i.test(call.sql.trim())), true);
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    pool.query = originalQuery;
+    pool.connect = originalConnect;
+  }
+});
+
 test("Finance HOD receives organization-wide FC summary", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   let call;
@@ -503,7 +586,10 @@ test("Finance HOD receives organization-wide FC summary", { concurrency: false }
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "FC", null, false]);
+    assert.deepEqual(call.values, [20, "FC", null, false, true]);
+    assert.match(call.sql, /AS FinanceHodPending/);
+    assert.match(call.sql, /WHEN FinanceHodPending THEN 'Pending'/);
+    assert.match(call.sql, /OR FinanceHodPending/);
   } finally {
     pool.query = originalQuery;
   }
@@ -588,7 +674,7 @@ test("Organization 10 Finance HOD receives global RD-FC summary", { concurrency:
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(calls[1].values, [10, "RD-FC", null, true]);
+    assert.deepEqual(calls[1].values, [10, "RD-FC", null, true, false]);
     assert.match(calls[1].sql, /\$4::boolean = TRUE OR cm\.OrganizationID = \$1/);
   } finally {
     pool.query = originalQuery;
