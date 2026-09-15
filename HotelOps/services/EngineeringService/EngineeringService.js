@@ -5,7 +5,9 @@ const {
 const { formatDate } = require("../../utils/dateFormatter");
 const generateUrl = require("../../AzurConfigration/Engineering/AzureGetData");
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
-
+// ==========================================================QR Code Packages
+const QRCode = require("qrcode");
+const sharp = require("sharp");
 // ============================================================Response Helpers
 const fail = (message, statusCode = 400) => ({
   success: false,
@@ -14225,6 +14227,462 @@ const deleteAMCApprovalConfig = async (data) => {
     );
   }
 };
+// ============================================================================================OR Code of Equipment Entries
+const generateEquipmentQRCode = async (data) => {
+  try {
+    const OrganizationID =
+      Number(data.OrganizationID);
+
+    const EquipmentID =
+      Number(data.EquipmentID);
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(EquipmentID) ||
+      EquipmentID <= 0
+    ) {
+      return fail(
+        "Valid EquipmentID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Fetch Equipment + Organization
+    // ============================================================
+
+    const equipmentResult =
+      await pool.query(
+        `
+        SELECT
+          e.EquipmentID,
+          e.OrganizationID,
+          e.Description,
+          e.Area,
+
+          om.OrganizationName,
+          om.ShortName AS OrganizationShortName
+
+        FROM Engineering_Equipment_Entry_Master e
+
+        INNER JOIN Organization_Master om
+          ON om.OrganizationID = e.OrganizationID
+         AND om.IsDeleted = FALSE
+
+        WHERE e.OrganizationID = $1
+          AND e.EquipmentID = $2
+          AND e.IsDeleted = FALSE
+
+        LIMIT 1;
+        `,
+        [
+          OrganizationID,
+          EquipmentID,
+        ],
+      );
+
+    if (
+      equipmentResult.rows.length === 0
+    ) {
+      return fail(
+        "Equipment record not found.",
+        404,
+      );
+    }
+
+    const equipment =
+      equipmentResult.rows[0];
+
+    // ============================================================
+    // Public URL
+    // ============================================================
+
+    const baseURL =
+      process.env.PUBLIC_EQUIPMENT_URL;
+
+    if (
+      !baseURL ||
+      String(baseURL).trim() === ""
+    ) {
+      return fail(
+        "PUBLIC_EQUIPMENT_URL is not configured.",
+        500,
+      );
+    }
+
+    const publicURL = new URL(String(baseURL).trim());
+    publicURL.searchParams.set("OrganizationID", String(OrganizationID));
+    publicURL.searchParams.set("EquipmentID", String(EquipmentID));
+    const equipmentURL = publicURL.toString();
+
+    // ============================================================
+    // Generate QR Code
+    // ============================================================
+
+    const qrBuffer =
+      await QRCode.toBuffer(
+        equipmentURL,
+        {
+          type: "png",
+
+          width: 900,
+
+          margin: 3,
+
+          errorCorrectionLevel:
+            "H",
+
+          color: {
+            dark:
+              "#000000",
+
+            light:
+              "#FFFDF5",
+          },
+        },
+      );
+
+    // ============================================================
+    // Load Organization Logo
+    // loadLogo returns base64 data URL
+    // ============================================================
+
+    let logoBuffer = null;
+
+    try {
+      const logo =
+        await loadLogo(
+          OrganizationID,
+        );
+
+      if (
+        logo &&
+        typeof logo === "string"
+      ) {
+        const base64Data =
+          logo.replace(
+            /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
+            "",
+          );
+
+        logoBuffer =
+          Buffer.from(
+            base64Data,
+            "base64",
+          );
+      }
+    } catch (logoError) {
+      console.error(
+        "Equipment QR Logo Error:",
+        logoError.message,
+      );
+
+      logoBuffer = null;
+    }
+
+    // ============================================================
+    // Add Logo To QR
+    // ============================================================
+
+    let finalQRBuffer =
+      qrBuffer;
+
+    if (!logoBuffer) {
+      logoBuffer = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="50"><rect width="180" height="50" fill="white"/><text x="90" y="34" text-anchor="middle" font-family="Arial" font-size="30" fill="#202535">HotelOps</text></svg>');
+    }
+
+    if (logoBuffer) {
+      // ----------------------------------------------------------
+      // White background behind logo
+      // ----------------------------------------------------------
+
+      const logoBackground =
+        await sharp({
+          create: {
+            width:
+              220,
+
+            height:
+              150,
+
+            channels:
+              4,
+
+            background: {
+              r: 255,
+              g: 255,
+              b: 255,
+              alpha: 1,
+            },
+          },
+        })
+          .png()
+          .toBuffer();
+
+      // ----------------------------------------------------------
+      // Resize Organization Logo
+      // ----------------------------------------------------------
+
+      const resizedLogo =
+        await sharp(
+          logoBuffer,
+        )
+          .resize({
+            width:
+              180,
+
+            height:
+              110,
+
+            fit:
+              "inside",
+
+            withoutEnlargement:
+              true,
+          })
+          .png()
+          .toBuffer();
+
+      // ----------------------------------------------------------
+      // Add white box
+      // ----------------------------------------------------------
+
+      const qrWithBackground =
+        await sharp(
+          qrBuffer,
+        )
+          .composite([
+            {
+              input:
+                logoBackground,
+
+              gravity:
+                "center",
+            },
+          ])
+          .png()
+          .toBuffer();
+
+      // ----------------------------------------------------------
+      // Add organization logo
+      // ----------------------------------------------------------
+
+      finalQRBuffer =
+        await sharp(
+          qrWithBackground,
+        )
+          .composite([
+            {
+              input:
+                resizedLogo,
+
+              gravity:
+                "center",
+            },
+          ])
+          .png()
+          .toBuffer();
+    }
+
+    // ============================================================
+    // Equipment Name + Area Bottom Label
+    // ============================================================
+
+    const escapeXml = (value) =>
+      String(value || "")
+        .replace(
+          /&/g,
+          "&amp;",
+        )
+        .replace(
+          /</g,
+          "&lt;",
+        )
+        .replace(
+          />/g,
+          "&gt;",
+        )
+        .replace(
+          /"/g,
+          "&quot;",
+        )
+        .replace(
+          /'/g,
+          "&apos;",
+        );
+
+    const description =
+      String(
+        equipment.description || "",
+      ).trim();
+
+    const area =
+      String(
+        equipment.area || "",
+      ).trim();
+
+    const label =
+      `${description}` +
+      `${area ? ` - ${area}` : ""}`;
+
+    const safeLabel =
+      label.length > 70
+        ? `${label.substring(
+            0,
+            67,
+          )}...`
+        : label;
+
+    const labelSvg =
+      Buffer.from(
+        `
+        <svg
+          width="900"
+          height="90"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <rect
+            width="900"
+            height="90"
+            fill="#FFFDF5"
+          />
+
+          <text
+            x="450"
+            y="52"
+            text-anchor="middle"
+            font-family="Arial"
+            font-size="24"
+            fill="#3A9BAD"
+          >
+            ${escapeXml(
+              safeLabel,
+            )}
+          </text>
+        </svg>
+        `,
+      );
+
+    // ============================================================
+    // Final QR Canvas
+    // ============================================================
+
+    const finalImageBuffer =
+      await sharp({
+        create: {
+          width:
+            900,
+
+          height:
+            990,
+
+          channels:
+            4,
+
+          background: {
+            r: 255,
+            g: 253,
+            b: 245,
+            alpha: 1,
+          },
+        },
+      })
+        .composite([
+          {
+            input:
+              finalQRBuffer,
+
+            top:
+              0,
+
+            left:
+              0,
+          },
+
+          {
+            input:
+              labelSvg,
+
+            top:
+              900,
+
+            left:
+              0,
+          },
+        ])
+        .png()
+        .toBuffer();
+
+    // ============================================================
+    // Base64 Response
+    // ============================================================
+
+    const Base64QRCode =
+      `data:image/png;base64,${finalImageBuffer.toString(
+        "base64",
+      )}`;
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "Equipment QR code generated successfully.",
+      {
+        OrganizationID,
+
+        OrganizationShortName:
+          equipment.organizationshortname,
+
+        EquipmentID,
+
+        Description:
+          equipment.description,
+
+        Area:
+          equipment.area,
+
+        EquipmentURL:
+          equipmentURL,
+
+        QRCode:
+          Base64QRCode,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Generate Equipment QR Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(
+        error,
+      );
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to generate equipment QR code.",
+    );
+  }
+};
+
 // ============================================================EXPORTS
 module.exports = {
   createEquipment,
@@ -14275,4 +14733,5 @@ module.exports = {
    createAMCApprovalConfig,
   getAllAMCApprovalConfig,
   deleteAMCApprovalConfig,
+  generateEquipmentQRCode,
 };

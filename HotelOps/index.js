@@ -30,6 +30,7 @@ const OpexRoutes = require("./routes/OpexRoute/OpexRoute");
 const HLPReportRoutes = require("./routes/HLPReportRoutes/HLPReportRoutes");
 const ReportRoutes = require("./routes/ReportRoutes/ReportRoutes");
 const EngineeringRoutes = require("./routes/EngineeringRoutes/EngineeringRoutes");
+const PublicEquipmentRoutes = require("./routes/EngineeringRoutes/PublicEquipmentRoutes");
 const NotificationRoutes = require("./routes/NotificationRoute/NotificationRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
@@ -73,6 +74,7 @@ app.use("/api/Opex", OpexRoutes);
 app.use("/api/HLPReport", HLPReportRoutes);
 app.use("/api/Report", ReportRoutes);
 app.use("/api/Engineering", EngineeringRoutes);
+app.use("/public", PublicEquipmentRoutes);
 app.use("/api/Notification", NotificationRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
