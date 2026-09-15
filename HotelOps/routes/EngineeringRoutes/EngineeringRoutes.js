@@ -47,8 +47,8 @@ const {
   processAMCApproval,
   createAMCApprovalConfig,
   getAllAMCApprovalConfig,
-  updateAMCApprovalConfig,
   deleteAMCApprovalConfig,
+  generateEquipmentQRCode
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -108,4 +108,5 @@ router.put("/ApproveAMC",authenticateToken,processAMCApproval,);
 router.post("/CreateAMCApprovalConfig",authenticateToken,createAMCApprovalConfig,);
 router.get("/AMCApprovalConfigList",authenticateToken,getAllAMCApprovalConfig,);
 router.delete("/DeleteAMCApprovalConfig",authenticateToken,deleteAMCApprovalConfig,);
+router.get("/EquipmentQRCode",authenticateToken,generateEquipmentQRCode,);
 module.exports = router;
