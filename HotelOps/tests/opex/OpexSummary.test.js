@@ -487,6 +487,36 @@ test("Finance HOD receives organization-wide FC list filters", { concurrency: fa
   }
 });
 
+test("OPEX email reuses final notification recipients only after notification succeeds", () => {
+  const resolver = opexServiceSource.match(/const resolveOpexNotificationRecipients[\s\S]*?const opexNotificationContent/)?.[0] || "";
+  const notifier = opexServiceSource.match(/const notifyOpex[\s\S]*?const notifyCommittedOpex/)?.[0] || "";
+  assert.match(resolver, /SELECT DISTINCT um\.userid, um\.email, om\.organizationname/);
+  assert.match(resolver, /String\(row\.email \|\| ""\)\.trim\(\)\)\.filter\(Boolean\)/);
+  assert.match(resolver, /email\.toLowerCase\(\)/);
+  assert.match(resolver, /rdfc_uom\.organizationid = \$7/);
+  assert.match(notifier, /if \(!response \|\| response\.success !== true\)[\s\S]*return;/);
+  assert.match(notifier, /sendOpexEmails\([\s\S]*emails: context\.emails/);
+  assert.doesNotMatch(notifier, /sendOpexEmails[\s\S]*CREATE_NOTIFICATION[\s\S]*const response/);
+  assert.match(opexServiceSource, /Promise\.all\(emails\.map\(async \(address\)/);
+  assert.match(opexServiceSource, /OPEX email delivery failed/);
+  assert.match(opexServiceSource, /OPEX email preparation failed/);
+  const notificationSource = fs.readFileSync(
+    path.join(__dirname, "../../services/NotificationService/NotificationService.js"), "utf8",
+  );
+  assert.match(notificationSource, /const EMAIL_NOTIFICATION_MODULES = new Set\(\["Capex"\]\)/);
+  assert.doesNotMatch(notificationSource, /EMAIL_NOTIFICATION_MODULES = new Set\([^\n]*Opex/);
+});
+
+test("OPEX action email data comes from the locked master and DB action timestamp", () => {
+  const approval = opexServiceSource.match(/const processOpexApproval = async[\s\S]*?\/\/ =+ Summary/)?.[0] || "";
+  assert.match(approval, /cm\.Qty,\s*cm\.Rate,\s*cm\.Total,\s*cm\.Description/);
+  for (const role of ["HOD", "FC", "GM", "RDFC", "CEO"]) {
+    assert.match(approval, new RegExp(`RETURNING ${role}StatusDateTime AS ActionDate`));
+  }
+  assert.match(approval, /actionQuantity: approvedQuantity, remark: remarks/);
+  assert.match(approval, /actionDate: committedActionDate/);
+});
+
 test("Finance OPEX pending at HOD is visible to its Finance HOD", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];

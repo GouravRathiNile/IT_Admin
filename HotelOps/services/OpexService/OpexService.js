@@ -7,6 +7,9 @@ const { formatDate } = require("../../utils/dateFormatter");
 const PdfPrinter = require("pdfmake");
 const path = require("path");
 const { generatePdf } = require("../../utils/pdfHelper");
+const { sendEmail } = require("../../utils/emailService");
+const { buildOpexEmail } = require("../../utils/opexEmailTemplate");
+const generateOrganizationLogoUrl = require("../../AzurConfigration/ITAdmin/OrganizationMaster/AzureGetData");
 const OPEX_NOTIFICATION_MODULE = "Opex";
 
 const notificationUserIds = (values) => [...new Set((Array.isArray(values) ? values : [values])
@@ -32,7 +35,7 @@ const resolveOpexNotificationRecipients = async ({ organizationID, department, r
     .filter((role) => APPROVAL_ROLES.has(role)))];
   const normalizedUserIds = notificationUserIds(directUserIds);
   const result = await pool.query(`
-    SELECT DISTINCT um.userid,
+    SELECT DISTINCT um.userid, um.email, om.organizationname,
       COALESCE(NULLIF(TRIM(om.shortname), ''), om.organizationname) AS organization_short_name,
       COALESCE(NULLIF(TRIM(actor.fullname), ''), NULLIF(TRIM(actor.username), '')) AS actor_name
     FROM user_master um
@@ -82,9 +85,40 @@ const resolveOpexNotificationRecipients = async ({ organizationID, department, r
       CENTRAL_RDFC_ORGANIZATION_ID]);
   return {
     userIds: notificationUserIds(result.rows.map((row) => row.userid)),
+    emails: [...new Map(result.rows
+      .map((row) => String(row.email || "").trim()).filter(Boolean)
+      .map((email) => [email.toLowerCase(), email])).values()],
+    organizationName: String(result.rows[0]?.organizationname || "").trim(),
     organizationShortName: String(result.rows[0]?.organization_short_name || "").trim(),
     actorName: String(result.rows[0]?.actor_name || "").trim(),
   };
+};
+
+// Email is explicitly orchestrated by OPEX after notification persistence;
+// failures here cannot affect the committed OPEX or Firebase notification.
+const sendOpexEmails = async ({ emails, organizationID, organizationName,
+  notificationTitle, details }) => {
+  if (!emails.length) return;
+  try {
+    const logoResult = await pool.query(`
+      SELECT logoname
+      FROM organization_master_logo
+      WHERE organizationid = $1 AND isdeleted = FALSE
+      ORDER BY logoid
+      LIMIT 1`, [organizationID]);
+    let logoUrl = process.env.NILE_OFFICIAL_LOGO_URL || null;
+    if (logoResult.rows[0]?.logoname) {
+      try { logoUrl = generateOrganizationLogoUrl(logoResult.rows[0].logoname); }
+      catch (error) { console.error("OPEX email logo URL failed:", error.message); }
+    }
+    const email = buildOpexEmail({ notificationTitle, organizationName, logoUrl, details });
+    await Promise.all(emails.map(async (address) => {
+      try { await sendEmail(address, email.subject, email.text, email.html); }
+      catch (error) { console.error("OPEX email delivery failed:", error.message); }
+    }));
+  } catch (error) {
+    console.error("OPEX email preparation failed:", error.message);
+  }
 };
 
 // Presentation is separate from recipient selection so text changes cannot alter workflow.
@@ -100,7 +134,8 @@ const opexNotificationContent = ({ kind, item, qty, department, description,
 
 // OPEX owns recipient/content rules; the shared service persists and pushes the final command.
 const notifyOpex = async ({ organizationID, opexID, department, roles, directUserIds,
-  excludeUserID, actorUserID, kind, item, qty, description, approverRole, action }) => {
+  excludeUserID, actorUserID, kind, item, qty, rate, total, description,
+  actionQuantity, remark, actionDate, approverRole, action }) => {
   const context = await resolveOpexNotificationRecipients({ organizationID, department,
     roles, directUserIds, excludeUserID, actorUserID });
   if (!context.userIds.length) return;
@@ -116,7 +151,14 @@ const notifyOpex = async ({ organizationID, opexID, department, roles, directUse
   });
   if (!response || response.success !== true) {
     console.error("OPEX notification request unsuccessful:", response?.message || "No response");
+    return;
   }
+  Promise.resolve().then(() => sendOpexEmails({
+    emails: context.emails, organizationID, organizationName: context.organizationName,
+    notificationTitle: content.title,
+    details: { kind, item, department, quantity: qty, rate, total, description,
+      actionQuantity, remark, actionBy: context.actorName || approverRole || "-", actionDate },
+  })).catch((error) => console.error("OPEX email dispatch failed:", error.message));
 };
 
 // Notification failure is isolated from an OPEX transaction that already committed.
@@ -516,7 +558,7 @@ const createOpex = async (data) => {
     notifyCommittedOpex({ organizationID: data.OrganizationID, opexID: OpexID,
       department: data.Department, roles: firstApprovalRole ? [firstApprovalRole] : [],
       directUserIds: [], kind: "CREATE", item: data.Item, qty: data.Qty,
-      description: data.Description, action: "CREATED" });
+      rate: data.Rate, total, description: data.Description, action: "CREATED" });
 
     return {
       success: true,
@@ -2070,6 +2112,8 @@ const processOpexApproval = async (data) => {
         cm.Department,
         cm.Item,
         cm.Qty,
+        cm.Rate,
+        cm.Total,
         cm.Description,
         cm.IsVoid,
         cm.ModifiedDate
@@ -2337,12 +2381,14 @@ CEORemarks,
 
     // Build one notification from the locked OPEX row and effective configured stage.
     const notifyApprovalCommitted = ({ kind, notificationAction, roles = [],
-      includeCreator = false, excludeActor = false }) => notifyCommittedOpex({
+      includeCreator = false, excludeActor = false, actionDate: committedActionDate }) => notifyCommittedOpex({
       organizationID: Opex.organizationid, opexID: Opex.opexid,
       department: Opex.department, roles,
       directUserIds: includeCreator ? [Opex.createdby] : [],
       excludeUserID: excludeActor ? data.UserID : null, actorUserID: data.UserID,
-      kind, item: Opex.item, qty: Opex.qty, description: Opex.description,
+      kind, item: Opex.item, qty: Opex.qty, rate: Opex.rate, total: Opex.total,
+      description: Opex.description, actionQuantity: approvedQuantity, remark: remarks,
+      actionDate: committedActionDate,
       approverRole, action: notificationAction,
     });
 
@@ -2505,7 +2551,8 @@ CEORemarks,
       ModifiedBy = $2,
       ModifiedDate = CURRENT_TIMESTAMP
     WHERE OpexApprovalID = $5
-      AND IsDeleted = FALSE;
+      AND IsDeleted = FALSE
+    RETURNING HODStatusDateTime AS ActionDate;
   `;
           break;
 
@@ -2521,7 +2568,8 @@ CEORemarks,
       ModifiedBy = $2,
       ModifiedDate = CURRENT_TIMESTAMP
     WHERE OpexApprovalID = $5
-      AND IsDeleted = FALSE;
+      AND IsDeleted = FALSE
+    RETURNING FCStatusDateTime AS ActionDate;
   `;
           break;
         case "GM":
@@ -2536,7 +2584,8 @@ CEORemarks,
       ModifiedBy = $2,
       ModifiedDate = CURRENT_TIMESTAMP
     WHERE OpexApprovalID = $5
-      AND IsDeleted = FALSE;
+      AND IsDeleted = FALSE
+    RETURNING GMStatusDateTime AS ActionDate;
   `;
           break;
 
@@ -2552,7 +2601,8 @@ CEORemarks,
       ModifiedBy = $2,
       ModifiedDate = CURRENT_TIMESTAMP
     WHERE OpexApprovalID = $5
-      AND IsDeleted = FALSE;
+      AND IsDeleted = FALSE
+    RETURNING RDFCStatusDateTime AS ActionDate;
   `;
           break;
 
@@ -2568,7 +2618,8 @@ CEORemarks,
       ModifiedBy = $2,
       ModifiedDate = CURRENT_TIMESTAMP
     WHERE OpexApprovalID = $5
-      AND IsDeleted = FALSE;
+      AND IsDeleted = FALSE
+    RETURNING CEOStatusDateTime AS ActionDate;
   `;
           break;
 
@@ -2576,7 +2627,8 @@ CEORemarks,
           throw new Error(`Unsupported approval role: ${role}`);
       }
 
-      await client.query(query, params);
+      const result = await client.query(query, params);
+      return result.rows[0]?.actiondate || null;
     };
 
     // ============================================================
@@ -2601,7 +2653,7 @@ CEORemarks,
       // Update current role
       // ----------------------------------------------------------
 
-      await updateRoleApproval(
+      const committedActionDate = await updateRoleApproval(
         approverRole,
         "Approved",
         data.UserID,
@@ -2639,7 +2691,8 @@ CEORemarks,
         transactionStarted = false;
 
         notifyApprovalCommitted({ kind: "APPROVE", notificationAction: "APPROVED",
-          roles: [followingStage.role], includeCreator: true, excludeActor: true });
+          roles: [followingStage.role], includeCreator: true, excludeActor: true,
+          actionDate: committedActionDate });
 
         return {
           success: true,
@@ -2683,7 +2736,7 @@ CEORemarks,
       transactionStarted = false;
 
       notifyApprovalCommitted({ kind: "APPROVE", notificationAction: "APPROVED",
-        includeCreator: true, excludeActor: true });
+        includeCreator: true, excludeActor: true, actionDate: committedActionDate });
 
       return {
         success: true,
@@ -2726,7 +2779,7 @@ CEORemarks,
     // ============================================================
 
     if (action === "REJECT") {
-      await updateRoleApproval(
+      const committedActionDate = await updateRoleApproval(
         approverRole,
         "Rejected",
         data.UserID,
@@ -2753,7 +2806,8 @@ CEORemarks,
       transactionStarted = false;
 
       notifyApprovalCommitted({ kind: "REJECT", notificationAction: "REJECTED",
-        roles: [approverRole], includeCreator: true, excludeActor: true });
+        roles: [approverRole], includeCreator: true, excludeActor: true,
+        actionDate: committedActionDate });
 
       return {
         success: true,
@@ -2793,7 +2847,7 @@ CEORemarks,
       // GM becomes current stage
       // ----------------------------------------------------------
 
-      await updateRoleApproval(
+      const committedActionDate = await updateRoleApproval(
         approverRole,
         "Returned",
         data.UserID,
@@ -2820,7 +2874,8 @@ CEORemarks,
       transactionStarted = false;
 
       notifyApprovalCommitted({ kind: "RETURN", notificationAction: "RETURNED",
-        roles: [approverRole], includeCreator: true, excludeActor: true });
+        roles: [approverRole], includeCreator: true, excludeActor: true,
+        actionDate: committedActionDate });
 
       return {
         success: true,
@@ -2857,7 +2912,7 @@ CEORemarks,
         );
       }
 
-      await updateRoleApproval(
+      const committedActionDate = await updateRoleApproval(
         approverRole,
         "Hold",
         data.UserID,
@@ -2883,7 +2938,8 @@ CEORemarks,
       transactionStarted = false;
 
       notifyApprovalCommitted({ kind: "HOLD", notificationAction: "HOLD",
-        roles: [currentRole], includeCreator: true, excludeActor: true });
+        roles: [currentRole], includeCreator: true, excludeActor: true,
+        actionDate: committedActionDate });
 
       return {
         success: true,
