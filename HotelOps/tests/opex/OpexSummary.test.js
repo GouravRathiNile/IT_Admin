@@ -7,6 +7,91 @@ const { pool } = require("../../db");
 const OpexService = require("../../services/OpexService/OpexService");
 const OpexController = require("../../controllers/OpexController/OpexController");
 
+const opexServiceSource = fs.readFileSync(
+  path.join(__dirname, "../../services/OpexService/OpexService.js"), "utf8",
+);
+
+test("OPEX notifications use canonical payloads and exact action content", () => {
+  const content = opexServiceSource.match(/const opexNotificationContent[\s\S]*?const notifyOpex/)?.[0] || "";
+  const notifier = opexServiceSource.match(/const notifyOpex[\s\S]*?const notifyCommittedOpex/)?.[0] || "";
+  assert.match(opexServiceSource, /const OPEX_NOTIFICATION_MODULE = "Opex"/);
+  assert.match(content, /`OPEX - \$\{String\(item[\s\S]*\(\$\{String\(qty[\s\S]*\$\{organizationShortName\}`/);
+  assert.match(content, /APPROVE: "Approved", REJECT: "Rejected", RETURN: "Returned", HOLD: "Hold"/);
+  assert.match(notifier, /moduleName: OPEX_NOTIFICATION_MODULE, entityType: "Opex"/);
+  assert.match(notifier, /type: "info"/);
+  assert.match(notifier, /priority: "normal"/);
+  assert.doesNotMatch(content, /OpexNumber|OPEX number|remarks|approvedQuantity/i);
+  for (const action of ["CREATED", "APPROVED", "REJECTED", "RETURNED", "HOLD"]) {
+    assert.match(opexServiceSource, new RegExp(`(?:action|notificationAction): "${action}"`));
+  }
+});
+
+test("OPEX notification recipients follow effective organization and department roles", () => {
+  const resolver = opexServiceSource.match(/const resolveOpexNotificationRecipients[\s\S]*?const opexNotificationContent/)?.[0] || "";
+  assert.match(resolver, /SELECT DISTINCT um\.userid/);
+  assert.match(resolver, /dm\.organizationid = \$1/);
+  assert.match(resolver, /departmentname[\s\S]*UPPER\(TRIM\(\$6\)\)/);
+  assert.match(resolver, /'FC' = ANY[\s\S]*departmentname[\s\S]*'FINANCE'/);
+  assert.match(resolver, /'GM' = ANY[\s\S]*gm_uom\.organizationid = \$1/);
+  assert.match(resolver, /'CEO' = ANY[\s\S]*ceo_uom\.organizationid = \$1/);
+  assert.match(resolver, /'RD-FC' = ANY[\s\S]*rdfc_uom\.organizationid = \$7/);
+  assert.match(resolver, /CENTRAL_RDFC_ORGANIZATION_ID/);
+  assert.match(resolver, /\$4::text IS NULL OR um\.userid::text <> \$4::text/);
+  assert.match(resolver, /userIds: notificationUserIds\(result\.rows\.map/);
+});
+
+test("Finance OPEX first-stage HOD resolves the mapped Finance HOD", () => {
+  const resolver = opexServiceSource.match(/const resolveOpexNotificationRecipients[\s\S]*?const opexNotificationContent/)?.[0] || "";
+  const hodBranch = resolver.match(/OR \('HOD' = ANY[\s\S]*?OR \('FC' = ANY/)?.[0] || "";
+  assert.match(hodBranch, /UPPER\(TRIM\(COALESCE\(dm\.departmentname, ''\)\)\) = UPPER\(TRIM\(\$6\)\)/);
+  assert.match(hodBranch, /hod_uom\.organizationid = \$1/);
+  assert.doesNotMatch(hodBranch, /<> 'FINANCE'|!= 'FINANCE'/);
+  assert.doesNotMatch(hodBranch, /dm\.organizationid = \$1/);
+  assert.match(opexServiceSource, /department: data\.Department, roles: firstApprovalRole \? \[firstApprovalRole\] : \[\]/);
+});
+
+test("OPEX create and approval notifications use configured stages and action recipients", () => {
+  const create = opexServiceSource.match(/const createOpex = async[\s\S]*?\/\/ =+ Read Query/)?.[0] || "";
+  const approval = opexServiceSource.match(/const processOpexApproval = async[\s\S]*?\/\/ =+ Summary/)?.[0] || "";
+  assert.match(create, /const firstApprovalRole = String\(approvals\[0\]\?\.ApprovalRole/);
+  assert.match(create, /roles: firstApprovalRole \? \[firstApprovalRole\] : \[\]/);
+  assert.match(approval, /roles: \[followingStage\.role\], includeCreator: true, excludeActor: true/);
+  assert.match(approval, /kind: "APPROVE"[\s\S]*includeCreator: true, excludeActor: true/);
+  for (const kind of ["REJECT", "RETURN"]) {
+    assert.match(approval, new RegExp(`kind: "${kind}"[\\s\\S]*roles: \\[approverRole\\][\\s\\S]*includeCreator: true, excludeActor: true`));
+  }
+  assert.match(approval, /kind: "HOLD"[\s\S]*roles: \[currentRole\][\s\S]*includeCreator: true, excludeActor: true/);
+});
+
+for (const event of [
+  { action: "REJECT", kind: "REJECT", notificationAction: "REJECTED", role: "approverRole", message: "Rejected" },
+  { action: "RETURN", kind: "RETURN", notificationAction: "RETURNED", role: "approverRole", message: "Returned" },
+  { action: "HOLD", kind: "HOLD", notificationAction: "HOLD", role: "currentRole", message: "Hold" },
+]) {
+  test(`OPEX ${event.action} notifies creator and other applicable role users after commit`, () => {
+    const start = opexServiceSource.indexOf(`if (action === "${event.action}")`);
+    const nextAction = { REJECT: "RETURN", RETURN: "HOLD", HOLD: null }[event.action];
+    const end = nextAction
+      ? opexServiceSource.indexOf(`if (action === "${nextAction}")`, start + 1)
+      : opexServiceSource.indexOf('return fail("Unable to process Opex approval.', start + 1);
+    const actionBlock = opexServiceSource.slice(start, end);
+    assert.ok(start >= 0, `${event.action} action block must exist`);
+    assert.match(actionBlock, /await client\.query\("COMMIT"\);[\s\S]*transactionStarted = false;[\s\S]*notifyApprovalCommitted/);
+    assert.match(actionBlock, new RegExp(`kind: "${event.kind}"`));
+    assert.match(actionBlock, new RegExp(`notificationAction: "${event.notificationAction}"`));
+    assert.match(actionBlock, new RegExp(`roles: \\[${event.role}\\]`));
+    assert.match(actionBlock, /includeCreator: true, excludeActor: true/);
+    assert.match(opexServiceSource, new RegExp(`${event.kind}: "${event.message}"`));
+  });
+}
+
+test("OPEX notifications are post-commit and failure-isolated", () => {
+  assert.match(opexServiceSource, /const notifyCommittedOpex = \(event\)[\s\S]*Promise\.resolve\(\)[\s\S]*notifyOpex\(event\)[\s\S]*\.catch\(/);
+  assert.match(opexServiceSource, /await client\.query\("COMMIT"\);\s*transactionStarted = false;\s*const firstApprovalRole[\s\S]*notifyCommittedOpex\(/);
+  assert.equal((opexServiceSource.match(/await client\.query\("COMMIT"\);\s*transactionStarted = false;\s*notifyApprovalCommitted/g) || []).length, 5);
+  assert.doesNotMatch(opexServiceSource, /ROLLBACK[\s\S]{0,120}notifyCommittedOpex/);
+});
+
 const summaryRow = {
   totalopex: "6",
   totalamount: "2100",
@@ -104,7 +189,7 @@ test("OPEX approval roles retain their role-scoped summary", { concurrency: fals
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "GM", null, false]);
+    assert.deepEqual(call.values, [20, "GM", null, false, false]);
     assert.match(call.sql, /CurrentApprovalRole = \$2/);
   } finally {
     pool.query = originalQuery;
@@ -176,7 +261,7 @@ test("non-Finance HOD OPEX summary is scoped to JWT department", { concurrency: 
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "HOD", "Engineering", false]);
+    assert.deepEqual(call.values, [20, "HOD", "Engineering", false, false]);
     assert.match(
       call.sql,
       /LOWER\(TRIM\(cm\.Department\)\) = LOWER\(TRIM\(\$3::text\)\)/,
@@ -402,6 +487,119 @@ test("Finance HOD receives organization-wide FC list filters", { concurrency: fa
   }
 });
 
+test("OPEX email reuses final notification recipients only after notification succeeds", () => {
+  const resolver = opexServiceSource.match(/const resolveOpexNotificationRecipients[\s\S]*?const opexNotificationContent/)?.[0] || "";
+  const notifier = opexServiceSource.match(/const notifyOpex[\s\S]*?const notifyCommittedOpex/)?.[0] || "";
+  assert.match(resolver, /SELECT DISTINCT um\.userid, um\.email, om\.organizationname/);
+  assert.match(resolver, /String\(row\.email \|\| ""\)\.trim\(\)\)\.filter\(Boolean\)/);
+  assert.match(resolver, /email\.toLowerCase\(\)/);
+  assert.match(resolver, /rdfc_uom\.organizationid = \$7/);
+  assert.match(notifier, /if \(!response \|\| response\.success !== true\)[\s\S]*return;/);
+  assert.match(notifier, /sendOpexEmails\([\s\S]*emails: context\.emails/);
+  assert.doesNotMatch(notifier, /sendOpexEmails[\s\S]*CREATE_NOTIFICATION[\s\S]*const response/);
+  assert.match(opexServiceSource, /Promise\.all\(emails\.map\(async \(address\)/);
+  assert.match(opexServiceSource, /OPEX email delivery failed/);
+  assert.match(opexServiceSource, /OPEX email preparation failed/);
+  const notificationSource = fs.readFileSync(
+    path.join(__dirname, "../../services/NotificationService/NotificationService.js"), "utf8",
+  );
+  assert.match(notificationSource, /const EMAIL_NOTIFICATION_MODULES = new Set\(\["Capex"\]\)/);
+  assert.doesNotMatch(notificationSource, /EMAIL_NOTIFICATION_MODULES = new Set\([^\n]*Opex/);
+});
+
+test("OPEX action email data comes from the locked master and DB action timestamp", () => {
+  const approval = opexServiceSource.match(/const processOpexApproval = async[\s\S]*?\/\/ =+ Summary/)?.[0] || "";
+  assert.match(approval, /cm\.Qty,\s*cm\.Rate,\s*cm\.Total,\s*cm\.Description/);
+  for (const role of ["HOD", "FC", "GM", "RDFC", "CEO"]) {
+    assert.match(approval, new RegExp(`RETURNING ${role}StatusDateTime AS ActionDate`));
+  }
+  assert.match(approval, /actionQuantity: approvedQuantity, remark: remarks/);
+  assert.match(approval, /actionDate: committedActionDate/);
+});
+
+test("Finance OPEX pending at HOD is visible to its Finance HOD", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    return sql.includes("SELECT COUNT(*) AS TotalCount")
+      ? { rows: [{ totalcount: "0" }] }
+      : { rows: [] };
+  };
+
+  try {
+    const response = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserType: "HOD",
+      DepartmentName: "Finance",
+      Status: "Pending",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(response.success, true);
+    assert.equal(calls.length, 2);
+    for (const call of calls) {
+      assert.equal(call.values.includes(20), true);
+      assert.equal(call.values.includes("FC"), true);
+      assert.match(call.sql, /current_stage\.ApprovalRole, ''\)\) = 'HOD'/);
+      assert.match(call.sql, /UPPER\(TRIM\(cm\.Department\)\) = 'FINANCE'/);
+      assert.match(call.sql, /approval_state\.HODStatus[\s\S]*= 'APPROVED'[\s\S]*OR/);
+    }
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("Finance HOD can approve Finance OPEX while configured HOD stage is current", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const originalConnect = pool.connect;
+  const transactionCalls = [];
+  pool.query = async () => ({ rows: [] });
+  const client = {
+    query: async (sql, values) => {
+      transactionCalls.push({ sql, values });
+      if (/FROM Opex_Master cm/.test(sql) && /FOR UPDATE OF cm/.test(sql)) {
+        return { rows: [{ opexid: 901, organizationid: 20, createdby: 8,
+          department: "Finance", item: "Printer", qty: 1, description: "Office printer", isvoid: false }] };
+      }
+      if (/FROM Opex_Approval_Config/.test(sql)) {
+        return { rows: [
+          { approvallevel: 1, approvalrole: "HOD", approvalorder: 1, ismandatory: true },
+          { approvallevel: 2, approvalrole: "FC", approvalorder: 2, ismandatory: true },
+          { approvallevel: 3, approvalrole: "GM", approvalorder: 3, ismandatory: true },
+        ] };
+      }
+      if (/FROM Opex_Approval/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [{ opexapprovalid: 902, hodstatus: "Pending",
+          fcstatus: "Pending", gmstatus: "Pending", finalstatus: "Pending" }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  pool.connect = async () => client;
+
+  try {
+    const response = await OpexService.processOpexApproval({
+      OpexID: 901,
+      Action: "APPROVE",
+      UserID: 6,
+      UserType: "HOD",
+      DepartmentName: "Finance",
+    });
+    assert.equal(response.success, true);
+    const hodUpdate = transactionCalls.find((call) => /HODStatus = \$1/.test(call.sql));
+    assert.ok(hodUpdate);
+    assert.deepEqual(hodUpdate.values, ["Approved", 6, null, null, 902]);
+    assert.equal(transactionCalls.some((call) => /^COMMIT$/i.test(call.sql.trim())), true);
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    pool.query = originalQuery;
+    pool.connect = originalConnect;
+  }
+});
+
 test("Finance HOD receives organization-wide FC summary", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   let call;
@@ -418,7 +616,10 @@ test("Finance HOD receives organization-wide FC summary", { concurrency: false }
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(call.values, [20, "FC", null, false]);
+    assert.deepEqual(call.values, [20, "FC", null, false, true]);
+    assert.match(call.sql, /AS FinanceHodPending/);
+    assert.match(call.sql, /WHEN FinanceHodPending THEN 'Pending'/);
+    assert.match(call.sql, /OR FinanceHodPending/);
   } finally {
     pool.query = originalQuery;
   }
@@ -503,7 +704,7 @@ test("Organization 10 Finance HOD receives global RD-FC summary", { concurrency:
     });
 
     assert.equal(response.success, true);
-    assert.deepEqual(calls[1].values, [10, "RD-FC", null, true]);
+    assert.deepEqual(calls[1].values, [10, "RD-FC", null, true, false]);
     assert.match(calls[1].sql, /\$4::boolean = TRUE OR cm\.OrganizationID = \$1/);
   } finally {
     pool.query = originalQuery;

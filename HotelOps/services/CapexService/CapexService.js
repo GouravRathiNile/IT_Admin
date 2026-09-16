@@ -71,6 +71,7 @@ const capexNotificationContent = ({ kind, item, qty, department, description,
 // receives only the final generic command for persistence and Firebase delivery.
 const notifyCapex = async ({ organizationID, capexID, roles, directUserIds,
   excludeUserID, actorUserID, kind, item, qty, department, description,
+  rate, total, actionQuantity, remark, actionDate,
   approverRole, title, message, action }) => {
   const recipientContext = await resolveCapexNotificationRecipients({
     organizationID, roles, directUserIds, excludeUserID, actorUserID,
@@ -91,6 +92,14 @@ const notifyCapex = async ({ organizationID, capexID, roles, directUserIds,
       organizationId: Number(organizationID), title: content.title, message: content.message, type: "info",
       moduleName: CAPEX_NOTIFICATION_MODULE, entityType: "Capex",
       entityId: String(capexID), action, priority: "normal", userIds,
+      // Email-only presentation data travels with the existing notification
+      // command; it is not persisted and does not alter notification content.
+      emailData: {
+        kind, item, department, quantity: qty, rate, total, description,
+        actionQuantity, remark,
+        actionBy: recipientContext.actorName || approverRole || "-",
+        actionDate,
+      },
     },
   });
   if (!response || response.success !== true) {
@@ -373,6 +382,8 @@ const createCapex = async (data) => {
       qty: data.Qty,
       department: data.Department,
       description: data.Description,
+      rate: data.Rate,
+      total,
       action: "CREATED",
     });
 
@@ -1968,6 +1979,8 @@ const processCapexApproval = async (data) => {
         cm.Department,
         cm.Item,
         cm.Qty,
+        cm.Rate,
+        cm.Total,
         cm.Description,
         cm.IsVoid,
         cm.ModifiedDate
@@ -2207,7 +2220,13 @@ const processCapexApproval = async (data) => {
         kind,
         item: capex.item,
         qty: capex.qty,
+        rate: capex.rate,
+        total: capex.total,
         department: capex.department,
+        description: capex.description,
+        actionQuantity: approvedQuantity,
+        remark: remarks,
+        actionDate: new Date().toISOString(),
         approverRole,
         title,
         message,
