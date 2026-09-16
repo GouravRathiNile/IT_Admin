@@ -4,7 +4,18 @@ const {
 } = require("../../utils/retryableDatabaseError");
 const { formatDate } = require("../../utils/dateFormatter");
 const generateUrl = require("../../AzurConfigration/Engineering/AzureGetData");
+// ===============================================Pdf Helper
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
+const PdfPrinter = require("pdfmake");
+const path = require("path");
+const  EQUIPMENT_DETAIL_PDF_FONTS = {
+  Roboto: {
+    normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
+    bold: path.join(process.cwd(), "fonts/Roboto-Medium.ttf"),
+    italics: path.join(process.cwd(), "fonts/Roboto-SemiBold.ttf"),
+    bolditalics: path.join(process.cwd(), "fonts/Roboto-Bold.ttf"),
+  },
+};
 // ==========================================================QR Code Packages
 const QRCode = require("qrcode");
 const sharp = require("sharp");
@@ -341,21 +352,41 @@ const getAllEquipment = async (data) => {
     // Other Filters
     // ========================================================
 
-    for (const [parameter, column, operator] of [
-      ["WarrantyStatus", "WarrantyStatus", "="],
-      ["AMCStatus", "AMCStatus", "="],
-      ["SerialNo", "SerialNumber", "ILIKE"],
-      ["Area", "Area", "ILIKE"],
-      ["Equipment", "Description", "ILIKE"],
-    ]) {
-      const value = String(data[parameter] ?? "").trim();
+    // ========================================================
+// Other Filters
+// ========================================================
 
-      if (!value) continue;
+for (const [parameter, column, operator] of [
+  ["WarrantyStatus", "WarrantyStatus", "="],
+  ["AMCStatus", "AMCStatus", "="],
+  ["SerialNo", "SerialNumber", "ILIKE"],
+  ["Area", "Area", "ILIKE"],
+  ["Equipment", "Description", "ILIKE"],
+]) {
+  const value = String(data[parameter] ?? "").trim();
 
-      values.push(operator === "ILIKE" ? `%${value}%` : value);
+  if (!value) continue;
 
-      conditions.push(`e.${column} ${operator} $${values.length}`);
-    }
+  values.push(
+    operator === "ILIKE"
+      ? `%${value}%`
+      : value
+  );
+
+  // Status filters
+  if (operator === "=") {
+    conditions.push(
+      `LOWER(TRIM(e.${column})) = LOWER(TRIM($${values.length}))`
+    );
+  }
+
+  // Text filters
+  else {
+    conditions.push(
+      `TRIM(e.${column}) ILIKE $${values.length}`
+    );
+  }
+}
 
     // ========================================================
     // Search
@@ -1320,8 +1351,6 @@ const getBreakdownById = async (data) => {
       `
       SELECT
         BreakdownPartID,
-        BreakdownID,
-        OrganizationID,
         Item,
         Qty,
         Amount
@@ -1338,10 +1367,6 @@ const getBreakdownById = async (data) => {
 
     record.Parts = partsResult.rows.map((row) => ({
       BreakdownPartID: Number(row.breakdownpartid),
-
-      BreakdownID: Number(row.breakdownid),
-
-      OrganizationID: Number(row.organizationid),
 
       Item: row.item || null,
 
@@ -1654,6 +1679,1484 @@ const updateBreakdownStatus = async (data) => {
     return ok("Breakdown status updated successfully.");
   } catch (error) {
     return databaseFailure(error, "Update Engineering breakdown status");
+  }
+};
+// ============================================================Breakdown Details Pdf (single Record)
+const generateBreakdownDetailPdf = async (data) => {
+  try {
+    // =========================================================
+    // Validate Input
+    // =========================================================
+
+    const organizationID = Number(data.OrganizationID);
+    const breakdownID = Number(data.BreakdownID);
+
+    if (
+      !Number.isInteger(organizationID) ||
+      organizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    if (
+      !Number.isInteger(breakdownID) ||
+      breakdownID <= 0
+    ) {
+      return fail(
+        "Valid BreakdownID is required.",
+        400,
+      );
+    }
+
+    // =========================================================
+    // Fetch Breakdown + Equipment Details
+    // =========================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        b.BreakdownID,
+        b.OrganizationID,
+        b.EquipmentID,
+        b.BreakdownDate,
+        b.BreakdownTime,
+        b.BreakdownReason,
+        b.PartsUsed,
+        b.RepairedStatus,
+        b.RepairedDate,
+        b.RepairedByID,
+        b.Amount,
+        b.CreatedDate,
+
+        e.DepartmentID,
+        e.Description,
+        e.SerialNumber,
+        e.TypeOfMachine,
+        e.Capacity,
+        e.ModelNumber,
+        e.Make,
+        e.Area,
+        e.CommissioningDate,
+        e.WarrantyStartDate,
+        e.WarrantyEndDate,
+        e.WarrantyStatus,
+        e.AMCType,
+        e.AMCStartDate,
+        e.AMCEndDate,
+        e.AMCStatus,
+        e.AMCYearlyExpense,
+        e.IsMandatoryAMC,
+        e.ScheduleOfServicing,
+        e.ScheduleDay,
+        e.ResponsiblePerson,
+
+        om.OrganizationName,
+        om.ShortName AS OrganizationShortName,
+
+        d.DepartmentName,
+
+        rp.FullName AS ResponsiblePersonName,
+
+        rb.FullName AS RepairedByName
+
+      FROM Engineering_Breakdown_Entry b
+
+      INNER JOIN Engineering_Equipment_Entry_Master e
+        ON e.EquipmentID = b.EquipmentID
+       AND e.OrganizationID = b.OrganizationID
+       AND e.IsDeleted = FALSE
+
+      INNER JOIN Organization_Master om
+        ON om.OrganizationID = b.OrganizationID
+       AND om.IsDeleted = FALSE
+
+      LEFT JOIN department_master d
+        ON d.DepartmentID = e.DepartmentID
+       AND d.OrganizationID = e.OrganizationID
+       AND d.IsDeleted = FALSE
+
+      LEFT JOIN user_master rp
+        ON rp.UserID = e.ResponsiblePerson
+       AND rp.IsDeleted = FALSE
+
+      LEFT JOIN user_master rb
+        ON rb.UserID = b.RepairedByID
+       AND rb.IsDeleted = FALSE
+
+      WHERE b.OrganizationID = $1
+        AND b.BreakdownID = $2
+        AND b.IsDeleted = FALSE
+
+      LIMIT 1;
+      `,
+      [
+        organizationID,
+        breakdownID,
+      ],
+    );
+
+    if (result.rows.length === 0) {
+      return fail(
+        "Breakdown detail not found.",
+        404,
+      );
+    }
+
+    const row = result.rows[0];
+
+    // =========================================================
+    // Fetch Spare Parts
+    // =========================================================
+
+    const partsResult = await pool.query(
+      `
+      SELECT
+        BreakdownPartID,
+        Item,
+        Qty,
+        Amount
+
+      FROM Engineering_Breakdown_Parts_Details
+
+      WHERE BreakdownID = $1
+        AND OrganizationID = $2
+        AND IsDeleted = FALSE
+
+      ORDER BY BreakdownPartID ASC;
+      `,
+      [
+        breakdownID,
+        organizationID,
+      ],
+    );
+
+    // =========================================================
+    // Map Data
+    // =========================================================
+
+    const detail = {
+      BreakdownID:
+        Number(row.breakdownid),
+
+      OrganizationID:
+        Number(row.organizationid),
+
+      EquipmentID:
+        Number(row.equipmentid),
+
+      OrganizationName:
+        row.organizationname,
+
+      OrganizationShortName:
+        row.organizationshortname,
+
+      // Equipment
+      DepartmentID:
+        row.departmentid == null
+          ? null
+          : Number(row.departmentid),
+
+      DepartmentName:
+        row.departmentname,
+
+      Description:
+        row.description,
+
+      SerialNumber:
+        row.serialnumber,
+
+      TypeOfMachine:
+        row.typeofmachine,
+
+      Capacity:
+        row.capacity,
+
+      ModelNumber:
+        row.modelnumber,
+
+      Make:
+        row.make,
+
+      Area:
+        row.area,
+
+      CommissioningDate:
+        formatDate(row.commissioningdate),
+
+      WarrantyStartDate:
+        formatDate(row.warrantystartdate),
+
+      WarrantyEndDate:
+        formatDate(row.warrantyenddate),
+
+      WarrantyStatus:
+        row.warrantystatus,
+
+      AMCType:
+        row.amctype,
+
+      AMCStartDate:
+        formatDate(row.amcstartdate),
+
+      AMCEndDate:
+        formatDate(row.amcenddate),
+
+      AMCStatus:
+        row.amcstatus,
+
+      AMCYearlyExpense:
+        row.amcyearlyexpense == null
+          ? null
+          : Number(row.amcyearlyexpense),
+
+      IsMandatoryAMC:
+        row.ismandatoryamc,
+
+      ScheduleOfServicing:
+        row.scheduleofservicing,
+
+      ScheduleDay:
+        row.scheduleday,
+
+      ResponsiblePerson:
+        row.responsibleperson == null
+          ? null
+          : Number(row.responsibleperson),
+
+      ResponsiblePersonName:
+        row.responsiblepersonname,
+
+      // Breakdown
+      BreakdownDate:
+        formatDate(row.breakdowndate),
+
+      BreakdownTime:
+        row.breakdowntime,
+
+      BreakdownReason:
+        row.breakdownreason,
+
+      PartsUsed:
+        row.partsused,
+
+      RepairedStatus:
+        row.repairedstatus,
+
+      RepairedDate:
+        formatDate(row.repaireddate),
+
+      RepairedByID:
+        row.repairedbyid == null
+          ? null
+          : Number(row.repairedbyid),
+
+      RepairedByName:
+        row.repairedbyname,
+
+      Amount:
+        row.amount == null
+          ? null
+          : Number(row.amount),
+
+      CreatedDate:
+        formatDate(row.createddate),
+
+      Parts: partsResult.rows.map(
+        (part) => ({
+          BreakdownPartID:
+            Number(part.breakdownpartid),
+
+          Item:
+            part.item,
+
+          Qty:
+            part.qty == null
+              ? null
+              : Number(part.qty),
+
+          Amount:
+            part.amount == null
+              ? null
+              : Number(part.amount),
+        }),
+      ),
+    };
+
+    // =========================================================
+    // PDF DESIGN
+    // =========================================================
+
+    const COLORS = {
+      navy: "#082B5C",
+      label: "#082B5C",
+      text: "#172033",
+      muted: "#64748B",
+      border: "#CFD7E3",
+      labelBackground: "#F4F6F9",
+    };
+
+    const displayValue = (value) =>
+      value === null ||
+      value === undefined ||
+      String(value).trim() === ""
+        ? "-"
+        : String(value);
+
+    // =========================================================
+    // Canvas Helpers
+    // =========================================================
+
+    const line = (
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth = 1.1,
+    ) => ({
+      type: "line",
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth,
+      lineColor: COLORS.navy,
+    });
+
+    const rect = (
+      x,
+      y,
+      w,
+      h,
+      r = 0,
+    ) => ({
+      type: "rect",
+      x,
+      y,
+      w,
+      h,
+      r,
+      lineWidth: 1.1,
+      lineColor: COLORS.navy,
+    });
+
+    const ellipse = (
+      x,
+      y,
+      r1,
+      r2 = r1,
+    ) => ({
+      type: "ellipse",
+      x,
+      y,
+      r1,
+      r2,
+      lineWidth: 1.1,
+      lineColor: COLORS.navy,
+    });
+
+    // =========================================================
+    // Field Icons
+    // =========================================================
+
+    const fieldIcon = (type) => {
+      const icons = {
+        organization: [
+          rect(4, 2, 10, 15, 1),
+          line(1, 17, 17, 17),
+          line(7, 6, 7, 8),
+          line(11, 6, 11, 8),
+          line(7, 11, 7, 13),
+          line(11, 11, 11, 13),
+        ],
+
+        equipment: [
+          rect(2, 4, 14, 11, 2),
+          ellipse(6, 9, 2),
+          ellipse(12, 9, 2),
+          line(4, 17, 14, 17),
+        ],
+
+        serial: [
+          rect(2, 3, 14, 12, 1),
+          line(5, 6, 5, 12),
+          line(8, 6, 8, 12),
+          line(11, 6, 11, 12),
+          line(14, 6, 14, 12),
+        ],
+
+        calendar: [
+          rect(1, 4, 16, 13, 1),
+          line(1, 8, 17, 8),
+          line(5, 2, 5, 6),
+          line(13, 2, 13, 6),
+        ],
+
+        machine: [
+          rect(2, 5, 14, 11, 1),
+          ellipse(6, 10, 2),
+          ellipse(12, 10, 2),
+          line(5, 2, 13, 2),
+          line(9, 2, 9, 5),
+        ],
+
+        location: [
+          ellipse(9, 7, 5),
+          ellipse(9, 7, 1.5),
+          {
+            type: "polyline",
+            points: [
+              { x: 5, y: 10 },
+              { x: 9, y: 18 },
+              { x: 13, y: 10 },
+            ],
+            lineWidth: 1.1,
+            lineColor: COLORS.navy,
+          },
+        ],
+
+        person: [
+          ellipse(9, 5, 3),
+          {
+            type: "polyline",
+            points: [
+              { x: 2, y: 17 },
+              { x: 3, y: 13 },
+              { x: 6, y: 11 },
+              { x: 12, y: 11 },
+              { x: 15, y: 13 },
+              { x: 16, y: 17 },
+            ],
+            lineWidth: 1.1,
+            lineColor: COLORS.navy,
+          },
+        ],
+
+        status: [
+          ellipse(9, 9, 7),
+          line(5, 9, 8, 12),
+          line(8, 12, 14, 6),
+        ],
+
+        money: [
+          ellipse(9, 9, 7),
+          line(9, 4, 9, 14),
+          line(6, 6, 12, 6),
+          line(6, 12, 12, 12),
+        ],
+
+        reason: [
+          rect(2, 2, 14, 14, 1),
+          line(5, 6, 13, 6),
+          line(5, 9, 13, 9),
+          line(5, 12, 11, 12),
+        ],
+      };
+
+      const iconScale = 0.82;
+
+      return (
+        icons[type] ||
+        icons.equipment
+      ).map((shape) => {
+        const scaledShape = {
+          ...shape,
+          lineWidth:
+            (shape.lineWidth || 1) *
+            iconScale,
+        };
+
+        for (const coordinate of [
+          "x",
+          "y",
+          "x1",
+          "y1",
+          "x2",
+          "y2",
+          "w",
+          "h",
+          "r",
+          "r1",
+          "r2",
+        ]) {
+          if (
+            typeof scaledShape[
+              coordinate
+            ] === "number"
+          ) {
+            scaledShape[
+              coordinate
+            ] *= iconScale;
+          }
+        }
+
+        if (
+          Array.isArray(
+            scaledShape.points,
+          )
+        ) {
+          scaledShape.points =
+            scaledShape.points.map(
+              (point) => ({
+                x:
+                  point.x *
+                  iconScale,
+
+                y:
+                  point.y *
+                  iconScale,
+              }),
+            );
+        }
+
+        return scaledShape;
+      });
+    };
+
+    // =========================================================
+    // PDF Cell Helpers
+    // =========================================================
+
+    const labelCell = (
+      label,
+      icon,
+    ) => ({
+      columns: [
+        {
+          width: 22,
+          canvas:
+            fieldIcon(icon),
+          margin: [0, 0, 0, 0],
+        },
+        {
+          width: "*",
+          text: label,
+          style: "fieldLabel",
+          margin: [2, 3, 0, 0],
+        },
+      ],
+
+      fillColor:
+        COLORS.labelBackground,
+
+      margin: [8, 6, 5, 6],
+    });
+
+    const valueCell = (value) => ({
+      text:
+        displayValue(value),
+
+      style: "fieldValue",
+
+      margin: [9, 8, 7, 7],
+    });
+
+    const tableLayout = {
+      hLineColor: () =>
+        COLORS.border,
+
+      vLineColor: () =>
+        COLORS.border,
+
+      hLineWidth: () => 0.7,
+
+      vLineWidth: () => 0.7,
+
+      paddingLeft: () => 0,
+
+      paddingRight: () => 0,
+
+      paddingTop: () => 0,
+
+      paddingBottom: () => 0,
+    };
+
+    // =========================================================
+    // Section Heading
+    // =========================================================
+
+    const sectionHeading = (
+      title,
+    ) => ({
+      text: title,
+
+      fontSize: 11,
+
+      bold: true,
+
+      color: COLORS.navy,
+
+      margin: [0, 4, 0, 7],
+    });
+
+    // =========================================================
+    // Long/Narrative Field
+    // =========================================================
+
+    // =========================================================
+    // Logo + Generated Date
+    // =========================================================
+
+    const logo =
+      await loadLogo(
+        organizationID,
+        data.logoUrl,
+      );
+
+    const generatedOn =
+      formatDate(
+        new Date(),
+        "DD MMM YYYY hh:mm A",
+      );
+
+    const responsiblePerson =
+      detail.ResponsiblePersonName ||
+      (
+        detail.ResponsiblePerson
+          ? `User ID: ${detail.ResponsiblePerson}`
+          : null
+      );
+
+    const repairedBy =
+      detail.RepairedByName ||
+      (
+        detail.RepairedByID
+          ? `User ID: ${detail.RepairedByID}`
+          : null
+      );
+
+    // =========================================================
+    // Spare Parts Table Body
+    // =========================================================
+
+    const sparePartsBody = [
+      [
+        {
+          text: "Item",
+          style:
+            "tableHeader",
+        },
+        {
+          text: "Qty",
+          style:
+            "tableHeader",
+          alignment: "center",
+        },
+        {
+          text: "Amount",
+          style:
+            "tableHeader",
+          alignment: "center",
+        },
+      ],
+    ];
+
+    if (detail.Parts.length > 0) {
+      detail.Parts.forEach(
+        (part) => {
+          sparePartsBody.push([
+            {
+              text:
+                displayValue(
+                  part.Item,
+                ),
+
+              style:
+                "tableValue",
+            },
+
+            {
+              text:
+                displayValue(
+                  part.Qty,
+                ),
+
+              style:
+                "tableValue",
+
+              alignment:
+                "center",
+            },
+
+            {
+              text:
+                displayValue(
+                  part.Amount,
+                ),
+
+              style:
+                "tableValue",
+
+              alignment: "center",
+            },
+          ]);
+        },
+      );
+    } else {
+      sparePartsBody.push([
+        {
+          text:
+            "No spare parts added.",
+
+          colSpan: 3,
+
+          alignment:
+            "center",
+
+          color:
+            COLORS.muted,
+
+          margin: [
+            0,
+            8,
+            0,
+            8,
+          ],
+        },
+        {},
+        {},
+      ]);
+    }
+
+    // =========================================================
+    // Document Definition
+    // =========================================================
+
+    const documentDefinition = {
+      pageSize: "A4",
+
+      pageOrientation:
+        "portrait",
+
+      pageMargins: [
+        22,
+        26,
+        22,
+        72,
+      ],
+
+      defaultStyle: {
+        font: "Roboto",
+        fontSize: 9,
+        color: COLORS.text,
+      },
+
+      content: [
+        // =====================================================
+        // Header
+        // =====================================================
+
+        {
+          table: {
+            widths: [
+              130,
+              "*",
+              80,
+            ],
+
+            body: [
+              [
+                logo
+                  ? {
+                      image:
+                        logo,
+
+                      fit: [
+                        88,
+                        50,
+                      ],
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    }
+                  : {
+                      text: "",
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    },
+
+                {
+                  text:
+                    "Breakdown Detail Report",
+
+                  style:
+                    "title",
+
+                  alignment:
+                    "center",
+
+                  margin: [
+                    0,
+                    18,
+                    0,
+                    0,
+                  ],
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+
+                {
+                  text: "",
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            "noBorders",
+        },
+
+        {
+          canvas: [
+            {
+              type: "line",
+              x1: 0,
+              y1: 0,
+              x2: 551,
+              y2: 0,
+              lineWidth: 0.8,
+              lineColor:
+                COLORS.navy,
+            },
+          ],
+
+          margin: [
+            0,
+            7,
+            0,
+            14,
+          ],
+        },
+
+        // =====================================================
+        // Equipment Details
+        // =====================================================
+
+        sectionHeading(
+          "Equipment Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Organization",
+                  "organization",
+                ),
+
+                valueCell(
+                  detail.OrganizationShortName ||
+                    detail.OrganizationName,
+                ),
+
+                labelCell(
+                  "Department",
+                  "organization",
+                ),
+
+                valueCell(
+                  detail.DepartmentName,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Equipment",
+                  "equipment",
+                ),
+
+                valueCell(
+                  detail.Description,
+                ),
+
+                labelCell(
+                  "Serial Number",
+                  "serial",
+                ),
+
+                valueCell(
+                  detail.SerialNumber,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Type of Machine",
+                  "machine",
+                ),
+
+                valueCell(
+                  detail.TypeOfMachine,
+                ),
+
+                labelCell(
+                  "Capacity",
+                  "equipment",
+                ),
+
+                valueCell(
+                  detail.Capacity,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Make",
+                  "machine",
+                ),
+
+                valueCell(
+                  detail.Make,
+                ),
+
+                labelCell(
+                  "Model Number",
+                  "serial",
+                ),
+
+                valueCell(
+                  detail.ModelNumber,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Area",
+                  "location",
+                ),
+
+                valueCell(
+                  detail.Area,
+                ),
+
+                labelCell(
+                  "Commissioning",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.CommissioningDate,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Warranty Start",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.WarrantyStartDate,
+                ),
+
+                labelCell(
+                  "Warranty End",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.WarrantyEndDate,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Warranty Status",
+                  "status",
+                ),
+
+                valueCell(
+                  detail.WarrantyStatus,
+                ),
+
+                labelCell(
+                  "AMC Type",
+                  "equipment",
+                ),
+
+                valueCell(
+                  detail.AMCType,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "AMC Start",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.AMCStartDate,
+                ),
+
+                labelCell(
+                  "AMC End",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.AMCEndDate,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "AMC Status",
+                  "status",
+                ),
+
+                valueCell(
+                  detail.AMCStatus,
+                ),
+
+                labelCell(
+                  "AMC Yr. Exp.",
+                  "money",
+                ),
+
+                valueCell(
+                  detail.AMCYearlyExpense,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Schedule",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.ScheduleOfServicing,
+                ),
+
+                labelCell(
+                  "Schedule Day",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.ScheduleDay,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Responsible Person",
+                  "person",
+                ),
+
+                valueCell(
+                  responsiblePerson,
+                ),
+
+                labelCell(
+                  "Mandatory AMC",
+                  "status",
+                ),
+
+                valueCell(
+                  detail.IsMandatoryAMC
+                    ? "Yes"
+                    : "No",
+                ),
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+        // =====================================================
+        // Breakdown Details
+        // =====================================================
+
+        sectionHeading(
+          "Breakdown Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Breakdown Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.BreakdownDate,
+                ),
+
+                labelCell(
+                  "Breakdown Time",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.BreakdownTime,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Repaired Status",
+                  "status",
+                ),
+
+                valueCell(
+                  detail.RepairedStatus,
+                ),
+
+                labelCell(
+                  "Amount",
+                  "money",
+                ),
+
+                valueCell(
+                  detail.Amount,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Repaired Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.RepairedDate,
+                ),
+
+                labelCell(
+                  "Repaired By",
+                  "person",
+                ),
+
+                valueCell(
+                  repairedBy,
+                ),
+              ],
+              [
+                labelCell("Breakdown Reason", "reason"),
+                { ...valueCell(detail.BreakdownReason), colSpan: 3 },
+                {},
+                {},
+              ],
+              [
+                labelCell("Parts Used", "equipment"),
+                { ...valueCell(detail.PartsUsed), colSpan: 3 },
+                {},
+                {},
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            8,
+          ],
+        },
+
+        // =====================================================
+        // Spare Parts
+        // =====================================================
+
+        sectionHeading(
+          "Spare Parts Details",
+        ),
+
+        {
+          table: {
+            headerRows: 1,
+
+            widths: [
+              "*",
+              70,
+              100,
+            ],
+
+            body:
+              sparePartsBody,
+          },
+
+          layout: {
+            hLineColor: () =>
+              COLORS.border,
+
+            vLineColor: () =>
+              COLORS.border,
+
+            hLineWidth: () =>
+              0.7,
+
+            vLineWidth: () =>
+              0.7,
+
+            paddingLeft: () =>
+              8,
+
+            paddingRight: () =>
+              8,
+
+            paddingTop: () =>
+              7,
+
+            paddingBottom: () =>
+              7,
+          },
+        },
+      ],
+
+      // =======================================================
+      // Footer
+      // =======================================================
+
+      footer: () => ({
+        margin: [
+          22,
+          8,
+          22,
+          0,
+        ],
+
+        stack: [
+          {
+            canvas: [
+              {
+                type: "line",
+                x1: 0,
+                y1: 0,
+                x2: 551,
+                y2: 0,
+                lineWidth:
+                  0.7,
+                lineColor:
+                  COLORS.navy,
+              },
+            ],
+
+            margin: [
+              0,
+              0,
+              0,
+              8,
+            ],
+          },
+
+          {
+            columns: [
+              {
+                stack: [
+                  {
+                    text:
+                      "Powered by HotelOps",
+
+                    bold: true,
+
+                    color:
+                      COLORS.navy,
+
+                    fontSize: 8,
+                  },
+                ],
+              },
+
+              {
+                width: 130,
+
+                stack: [
+                  {
+                    text:
+                      `Generated On   :  ${generatedOn}`,
+
+                    fontSize: 7,
+
+                    color:
+                      COLORS.label,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+
+      // =======================================================
+      // Styles
+      // =======================================================
+
+      styles: {
+        title: {
+          fontSize: 18,
+          bold: true,
+          color: COLORS.navy,
+        },
+
+        fieldLabel: {
+          fontSize: 8.5,
+          bold: true,
+          color: COLORS.label,
+        },
+
+        fieldValue: {
+          fontSize: 9,
+          color: COLORS.text,
+        },
+
+        narrativeValue: {
+          fontSize: 9,
+          lineHeight: 1.25,
+          color: COLORS.text,
+        },
+
+        tableHeader: {
+          fontSize: 8.5,
+          bold: true,
+          color: COLORS.navy,
+          fillColor:
+            COLORS.labelBackground,
+          margin: [0, 2, 0, 2],
+        },
+
+        tableValue: {
+          fontSize: 8.5,
+          color: COLORS.text,
+          margin: [0, 2, 0, 2],
+        },
+      },
+    };
+
+    // =========================================================
+    // Generate PDF Buffer
+    // =========================================================
+
+    const pdfBuffer =
+      await new Promise(
+        (
+          resolve,
+          reject,
+        ) => {
+          try {
+            const pdfDocument =
+              new PdfPrinter(
+                EQUIPMENT_DETAIL_PDF_FONTS,
+              ).createPdfKitDocument(
+                documentDefinition,
+              );
+
+            const chunks = [];
+
+            pdfDocument.on(
+              "data",
+              (chunk) =>
+                chunks.push(
+                  chunk,
+                ),
+            );
+
+            pdfDocument.on(
+              "end",
+              () =>
+                resolve(
+                  Buffer.concat(
+                    chunks,
+                  ),
+                ),
+            );
+
+            pdfDocument.on(
+              "error",
+              reject,
+            );
+
+            pdfDocument.end();
+          } catch (error) {
+            reject(error);
+          }
+        },
+      );
+
+    // =========================================================
+    // Return
+    // =========================================================
+
+    const fileName =
+      `Breakdown-Detail-${breakdownID}.pdf`;
+
+    return {
+      success: true,
+
+      message:
+        "Breakdown detail PDF generated successfully.",
+
+      data: pdfBuffer,
+
+      fileName,
+
+      contentType:
+        "application/pdf",
+    };
+  } catch (error) {
+    console.error(
+      "Generate breakdown detail PDF error:",
+      error,
+    );
+
+    return databaseFailure(
+      error,
+      "Unable to generate breakdown detail PDF.",
+    );
   }
 };
 // ============================================================================================Vendor of Equipment
@@ -2188,7 +3691,13 @@ const mapMaintenance = (row) => ({
   Status: row.status || null,
 
   CreatedDate: formatDate(row.createddate),
+UpdatedById:
+  row.modifiedby == null
+    ? null
+    : Number(row.modifiedby),
 
+UpdatedBy:
+  row.modifiedbyname || null,
   Checklists: Array.isArray(row.checklists)
     ? row.checklists.map((item) => ({
         ChecklistID: Number(item.ChecklistID),
@@ -2783,7 +4292,7 @@ const getAllMaintenance = async (data) => {
 
     u.FullName AS EngineerAssignedName,
     sb.FullName AS ServicedByName,
-
+    mb.FullName AS ModifiedByName,
     COALESCE(
       (
         SELECT JSON_AGG(
@@ -2858,6 +4367,9 @@ const getAllMaintenance = async (data) => {
     ON sb.UserID = m.ServicedBy
     AND sb.IsDeleted = FALSE
 
+    LEFT JOIN user_master mb
+  ON mb.UserID = m.ModifiedBy
+  AND mb.IsDeleted = FALSE
   WHERE ${where}
 
   ORDER BY m.MaintenanceID DESC
@@ -2919,7 +4431,8 @@ const getMaintenanceById = async (data) => {
         SELECT
           m.*,
           u.FullName AS EngineerAssignedName,
-  sb.FullName AS ServicedByName
+          sb.FullName AS ServicedByName,
+          mb.FullName AS ModifiedByName
 
         FROM Engineering_Maintenance_Details m
 
@@ -2930,6 +4443,10 @@ const getMaintenanceById = async (data) => {
 LEFT JOIN user_master sb
   ON sb.UserID = m.ServicedBy
   AND sb.IsDeleted = FALSE
+   LEFT JOIN user_master mb
+      ON mb.UserID = m.ModifiedBy
+      AND mb.IsDeleted = FALSE
+
         WHERE
           m.MaintenanceID = $1
           AND m.IsDeleted = FALSE
@@ -5999,7 +7516,7 @@ const getScheduledMissingReports = async (data) => {
           // Baki ki 4 retport ki alg bna di gayi he 1. Breakdowns Report, 2. Daily Maintenance Report, 3. Monthly Maintenance Report, 4. Scheduled Missing Report
           // to Total 8 + 4 = 12 reports he
 
-// ============================================================================================Pdfs
+// ============================================================================================Report Pdfs
 // =============================================================1.Total Number of Machine Reports Pdf
 const generateTotalEquipmentReportsPdf = async (data) => {
   try {
@@ -6411,10 +7928,10 @@ const generateTotalEquipmentReportsPdf = async (data) => {
 
     const pdfBuffer = await generatePdf({
       title:
-        "TOTAL NUMBER OF MACHINE REPORT",
+        " EQIPMENT REPORT",
 
       reportName:
-        "Total Number of Machine Report",
+        "Equipment Report",
 
       organizationId:
         organizationID,
@@ -14227,6 +15744,1573 @@ const deleteAMCApprovalConfig = async (data) => {
     );
   }
 };
+// ============================================================AMC DETAIL PDF
+const generateAMCDetailPdf = async (data) => {
+  try {
+    // =========================================================
+    // Validate Input
+    // =========================================================
+
+    const organizationID = Number(data.OrganizationID);
+    const amcID = Number(data.AMCID);
+
+    if (
+      !Number.isInteger(organizationID) ||
+      organizationID <= 0
+    ) {
+      return fail("Valid OrganizationID is required.", 400);
+    }
+
+    if (
+      !Number.isInteger(amcID) ||
+      amcID <= 0
+    ) {
+      return fail("Valid AMCID is required.", 400);
+    }
+
+    // =========================================================
+    // Fetch AMC + Equipment + Approval Details
+    // =========================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        am.AMCID,
+        am.OrganizationID,
+        am.EquipmentID,
+
+        am.AMCStartDate,
+        am.AMCEndDate,
+        am.AMCType,
+        am.AMCAmount,
+
+        am.VendorName,
+        am.VendorEmailAddress,
+        am.VendorMobileNumber,
+        am.VendorSecondMobileNumber,
+        am.VendorLandlineNumber,
+        am.VendorAddress,
+        am.VendorCity,
+        am.VendorState,
+        am.VendorPincode,
+
+        am.CreatedDate,
+
+        -- =====================================================
+        -- Equipment
+        -- =====================================================
+
+        e.DepartmentID,
+        e.Description,
+        e.SerialNumber,
+        e.TypeOfMachine,
+        e.Capacity,
+        e.ModelNumber,
+        e.Make,
+        e.Area,
+        e.CommissioningDate,
+
+        e.WarrantyStartDate,
+        e.WarrantyEndDate,
+        e.WarrantyStatus,
+
+        e.ScheduleOfServicing,
+        e.ScheduleDay,
+        e.ResponsiblePerson,
+
+        -- =====================================================
+        -- Organization
+        -- =====================================================
+
+        om.OrganizationName,
+        om.ShortName AS OrganizationShortName,
+
+        d.DepartmentName,
+
+        rp.FullName AS ResponsiblePersonName,
+
+        -- =====================================================
+        -- Approval
+        -- =====================================================
+
+        aa.FCStatus,
+        aa.FCStatusDateTime,
+        aa.FCStatusApprovedBy,
+        aa.FCRemarks,
+
+        aa.GMStatus,
+        aa.GMStatusDateTime,
+        aa.GMStatusApprovedBy,
+        aa.GMRemarks,
+
+        aa.RDStatus,
+        aa.RDStatusDateTime,
+        aa.RDStatusApprovedBy,
+        aa.RDRemarks,
+
+        aa.CEOStatus,
+        aa.CEOStatusDateTime,
+        aa.CEOStatusApprovedBy,
+        aa.CEORemarks,
+
+        aa.FinalStatus,
+        aa.FinalStatusDateTime,
+
+        fc.FullName AS FCApprovedByName,
+        gm.FullName AS GMApprovedByName,
+        rd.FullName AS RDApprovedByName,
+        ceo.FullName AS CEOApprovedByName
+
+      FROM Engineering_AMC_Master am
+
+      INNER JOIN Engineering_Equipment_Entry_Master e
+        ON e.EquipmentID = am.EquipmentID
+       AND e.OrganizationID = am.OrganizationID
+       AND e.IsDeleted = FALSE
+
+      INNER JOIN Organization_Master om
+        ON om.OrganizationID = am.OrganizationID
+       AND om.IsDeleted = FALSE
+
+      LEFT JOIN department_master d
+        ON d.DepartmentID = e.DepartmentID
+       AND d.OrganizationID = e.OrganizationID
+       AND d.IsDeleted = FALSE
+
+      LEFT JOIN user_master rp
+        ON rp.UserID = e.ResponsiblePerson
+       AND rp.IsDeleted = FALSE
+
+      LEFT JOIN Engineering_AMC_Approval aa
+        ON aa.AMCID = am.AMCID
+       AND aa.IsDeleted = FALSE
+
+      LEFT JOIN user_master fc
+        ON fc.UserID = aa.FCStatusApprovedBy
+       AND fc.IsDeleted = FALSE
+
+      LEFT JOIN user_master gm
+        ON gm.UserID = aa.GMStatusApprovedBy
+       AND gm.IsDeleted = FALSE
+
+      LEFT JOIN user_master rd
+        ON rd.UserID = aa.RDStatusApprovedBy
+       AND rd.IsDeleted = FALSE
+
+      LEFT JOIN user_master ceo
+        ON ceo.UserID = aa.CEOStatusApprovedBy
+       AND ceo.IsDeleted = FALSE
+
+      WHERE am.OrganizationID = $1
+        AND am.AMCID = $2
+        AND am.IsDeleted = FALSE
+
+      LIMIT 1;
+      `,
+      [organizationID, amcID],
+    );
+
+    if (result.rows.length === 0) {
+      return fail("AMC detail not found.", 404);
+    }
+
+    const row = result.rows[0];
+
+    // =========================================================
+    // Map Data
+    // =========================================================
+
+    const detail = {
+      AMCID: Number(row.amcid),
+      OrganizationID: Number(row.organizationid),
+      EquipmentID: Number(row.equipmentid),
+
+      OrganizationName: row.organizationname,
+      OrganizationShortName: row.organizationshortname,
+
+      // Equipment
+      DepartmentID:
+        row.departmentid == null
+          ? null
+          : Number(row.departmentid),
+
+      DepartmentName: row.departmentname,
+
+      Description: row.description,
+      SerialNumber: row.serialnumber,
+      TypeOfMachine: row.typeofmachine,
+      Capacity: row.capacity,
+      ModelNumber: row.modelnumber,
+      Make: row.make,
+      Area: row.area,
+
+      CommissioningDate:
+        formatDate(row.commissioningdate),
+
+      WarrantyStartDate:
+        formatDate(row.warrantystartdate),
+
+      WarrantyEndDate:
+        formatDate(row.warrantyenddate),
+
+      WarrantyStatus:
+        row.warrantystatus,
+
+      ScheduleOfServicing:
+        row.scheduleofservicing,
+
+      ScheduleDay:
+        row.scheduleday,
+
+      ResponsiblePerson:
+        row.responsibleperson == null
+          ? null
+          : Number(row.responsibleperson),
+
+      ResponsiblePersonName:
+        row.responsiblepersonname,
+
+      // AMC
+      AMCStartDate:
+        formatDate(row.amcstartdate),
+
+      AMCEndDate:
+        formatDate(row.amcenddate),
+
+      AMCType:
+        row.amctype,
+
+      AMCAmount:
+        row.amcamount == null
+          ? null
+          : Number(row.amcamount),
+
+      // Vendor
+      VendorName:
+        row.vendorname,
+
+      VendorEmailAddress:
+        row.vendoremailaddress,
+
+      VendorMobileNumber:
+        row.vendormobilenumber,
+
+      VendorSecondMobileNumber:
+        row.vendorsecondmobilenumber,
+
+      VendorLandlineNumber:
+        row.vendorlandlinenumber,
+
+      VendorAddress:
+        row.vendoraddress,
+
+      VendorCity:
+        row.vendorcity,
+
+      VendorState:
+        row.vendorstate,
+
+      VendorPincode:
+        row.vendorpincode,
+
+      // Approval
+      FCStatus:
+        row.fcstatus,
+
+      FCStatusDateTime:
+        row.fcstatusdatetime,
+
+      FCStatusApprovedBy:
+        row.fcstatusapprovedby,
+
+      FCApprovedByName:
+        row.fcapprovedbyname,
+
+      FCRemarks:
+        row.fcremarks,
+
+      GMStatus:
+        row.gmstatus,
+
+      GMStatusDateTime:
+        row.gmstatusdatetime,
+
+      GMStatusApprovedBy:
+        row.gmstatusapprovedby,
+
+      GMApprovedByName:
+        row.gmapprovedbyname,
+
+      GMRemarks:
+        row.gmremarks,
+
+      RDStatus:
+        row.rdstatus,
+
+      RDStatusDateTime:
+        row.rdstatusdatetime,
+
+      RDStatusApprovedBy:
+        row.rdstatusapprovedby,
+
+      RDApprovedByName:
+        row.rdapprovedbyname,
+
+      RDRemarks:
+        row.rdremarks,
+
+      CEOStatus:
+        row.ceostatus,
+
+      CEOStatusDateTime:
+        row.ceostatusdatetime,
+
+      CEOStatusApprovedBy:
+        row.ceostatusapprovedby,
+
+      CEOApprovedByName:
+        row.ceoapprovedbyname,
+
+      CEORemarks:
+        row.ceoremarks,
+
+      FinalStatus:
+        row.finalstatus,
+
+      FinalStatusDateTime:
+        row.finalstatusdatetime,
+
+      CreatedDate:
+        formatDate(row.createddate),
+
+    };
+
+    // =========================================================
+    // PDF COLORS
+    // =========================================================
+
+    const COLORS = {
+      navy: "#082B5C",
+      label: "#082B5C",
+      text: "#172033",
+      muted: "#64748B",
+      border: "#CFD7E3",
+      labelBackground: "#F4F6F9",
+    };
+
+    const displayValue = (value) =>
+      value === null ||
+      value === undefined ||
+      String(value).trim() === ""
+        ? "-"
+        : String(value);
+
+    // =========================================================
+    // Canvas Helpers
+    // =========================================================
+
+    const line = (
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth = 1.1,
+    ) => ({
+      type: "line",
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth,
+      lineColor: COLORS.navy,
+    });
+
+    const rect = (
+      x,
+      y,
+      w,
+      h,
+      r = 0,
+    ) => ({
+      type: "rect",
+      x,
+      y,
+      w,
+      h,
+      r,
+      lineWidth: 1.1,
+      lineColor: COLORS.navy,
+    });
+
+    const ellipse = (
+      x,
+      y,
+      r1,
+      r2 = r1,
+    ) => ({
+      type: "ellipse",
+      x,
+      y,
+      r1,
+      r2,
+      lineWidth: 1.1,
+      lineColor: COLORS.navy,
+    });
+
+    // =========================================================
+    // Icons
+    // =========================================================
+
+    const fieldIcon = (type) => {
+      const icons = {
+        organization: [
+          rect(4, 2, 10, 15, 1),
+          line(1, 17, 17, 17),
+          line(7, 6, 7, 8),
+          line(11, 6, 11, 8),
+          line(7, 11, 7, 13),
+          line(11, 11, 11, 13),
+        ],
+
+        equipment: [
+          rect(2, 4, 14, 11, 2),
+          ellipse(6, 9, 2),
+          ellipse(12, 9, 2),
+          line(4, 17, 14, 17),
+        ],
+
+        serial: [
+          rect(2, 3, 14, 12, 1),
+          line(5, 6, 5, 12),
+          line(8, 6, 8, 12),
+          line(11, 6, 11, 12),
+          line(14, 6, 14, 12),
+        ],
+
+        calendar: [
+          rect(1, 4, 16, 13, 1),
+          line(1, 8, 17, 8),
+          line(5, 2, 5, 6),
+          line(13, 2, 13, 6),
+        ],
+
+        person: [
+          ellipse(9, 5, 3),
+          {
+            type: "polyline",
+            points: [
+              { x: 2, y: 17 },
+              { x: 3, y: 13 },
+              { x: 6, y: 11 },
+              { x: 12, y: 11 },
+              { x: 15, y: 13 },
+              { x: 16, y: 17 },
+            ],
+            lineWidth: 1.1,
+            lineColor: COLORS.navy,
+          },
+        ],
+
+        location: [
+          ellipse(9, 7, 5),
+          ellipse(9, 7, 1.5),
+          {
+            type: "polyline",
+            points: [
+              { x: 5, y: 10 },
+              { x: 9, y: 18 },
+              { x: 13, y: 10 },
+            ],
+            lineWidth: 1.1,
+            lineColor: COLORS.navy,
+          },
+        ],
+
+        money: [
+          ellipse(9, 9, 7),
+          line(9, 4, 9, 14),
+          line(6, 6, 12, 6),
+          line(6, 12, 12, 12),
+        ],
+
+        status: [
+          ellipse(9, 9, 7),
+          line(5, 9, 8, 12),
+          line(8, 12, 14, 6),
+        ],
+
+        vendor: [
+          rect(2, 5, 14, 11, 1),
+          line(5, 2, 13, 2),
+          line(9, 2, 9, 5),
+          line(5, 9, 13, 9),
+          line(5, 12, 11, 12),
+        ],
+
+        email: [
+          rect(1, 4, 16, 11, 1),
+          line(1, 5, 9, 11),
+          line(17, 5, 9, 11),
+        ],
+
+        phone: [
+          {
+            type: "polyline",
+            points: [
+              { x: 4, y: 2 },
+              { x: 7, y: 6 },
+              { x: 5, y: 8 },
+              { x: 10, y: 13 },
+              { x: 12, y: 11 },
+              { x: 16, y: 14 },
+              { x: 14, y: 17 },
+              { x: 10, y: 16 },
+              { x: 5, y: 12 },
+              { x: 2, y: 7 },
+              { x: 2, y: 4 },
+              { x: 4, y: 2 },
+            ],
+            lineWidth: 1.1,
+            lineColor: COLORS.navy,
+          },
+        ],
+      };
+
+      const iconScale = 0.82;
+
+      return (icons[type] || icons.equipment).map(
+        (shape) => {
+          const scaledShape = {
+            ...shape,
+            lineWidth:
+              (shape.lineWidth || 1) *
+              iconScale,
+          };
+
+          for (const coordinate of [
+            "x",
+            "y",
+            "x1",
+            "y1",
+            "x2",
+            "y2",
+            "w",
+            "h",
+            "r",
+            "r1",
+            "r2",
+          ]) {
+            if (
+              typeof scaledShape[
+                coordinate
+              ] === "number"
+            ) {
+              scaledShape[
+                coordinate
+              ] *= iconScale;
+            }
+          }
+
+          if (
+            Array.isArray(
+              scaledShape.points,
+            )
+          ) {
+            scaledShape.points =
+              scaledShape.points.map(
+                (point) => ({
+                  x:
+                    point.x *
+                    iconScale,
+
+                  y:
+                    point.y *
+                    iconScale,
+                }),
+              );
+          }
+
+          return scaledShape;
+        },
+      );
+    };
+
+    // =========================================================
+    // Cell Helpers
+    // =========================================================
+
+    const labelCell = (
+      label,
+      icon,
+    ) => ({
+      columns: [
+        {
+          width: 22,
+          canvas:
+            fieldIcon(icon),
+        },
+        {
+          width: "*",
+          text: label,
+          style: "fieldLabel",
+          margin: [2, 3, 0, 0],
+        },
+      ],
+
+      fillColor:
+        COLORS.labelBackground,
+
+      margin: [8, 6, 5, 6],
+    });
+
+    const valueCell = (value) => ({
+      text:
+        displayValue(value),
+
+      style:
+        "fieldValue",
+
+      margin: [9, 8, 7, 7],
+    });
+
+    const tableLayout = {
+      hLineColor: () =>
+        COLORS.border,
+
+      vLineColor: () =>
+        COLORS.border,
+
+      hLineWidth: () => 0.7,
+
+      vLineWidth: () => 0.7,
+
+      paddingLeft: () => 0,
+
+      paddingRight: () => 0,
+
+      paddingTop: () => 0,
+
+      paddingBottom: () => 0,
+    };
+
+    const sectionHeading = (
+      title,
+    ) => ({
+      text: title,
+
+      fontSize: 11,
+
+      bold: true,
+
+      color: COLORS.navy,
+
+      margin: [0, 4, 0, 7],
+    });
+
+    // =========================================================
+    // Logo
+    // =========================================================
+
+    const logo =
+      await loadLogo(
+        organizationID,
+        data.logoUrl,
+      );
+
+    const generatedOn =
+      formatDate(
+        new Date(),
+        "DD MMM YYYY hh:mm A",
+      );
+
+    const responsiblePerson =
+      detail.ResponsiblePersonName ||
+      (
+        detail.ResponsiblePerson
+          ? `User ID: ${detail.ResponsiblePerson}`
+          : null
+      );
+
+    // =========================================================
+    // Approval Table
+    // =========================================================
+
+    const approvalFlow = await getAMCApprovalFlow(organizationID);
+    const approvals = approvalFlow.map(({ ApprovalRole }) => ({
+      Role: ApprovalRole,
+      Status: detail[ApprovalRole + "Status"],
+      ApprovedBy: detail[ApprovalRole + "ApprovedByName"],
+      Remarks: detail[ApprovalRole + "Remarks"],
+    }));
+
+    const approvalBody = [
+      [
+        {
+          text: "Approval",
+          style: "tableHeader",
+        },
+        {
+          text: "Status",
+          style: "tableHeader",
+        },
+        {
+          text: "Approved By",
+          style: "tableHeader",
+        },
+        {
+          text: "Remarks",
+          style: "tableHeader",
+        },
+      ],
+    ];
+
+    approvals.forEach((approval) => {
+      approvalBody.push([
+        {
+          text:
+            approval.Role,
+          style:
+            "tableValue",
+        },
+
+        {
+          text:
+            displayValue(
+              approval.Status,
+            ),
+          style:
+            "tableValue",
+        },
+
+        {
+          text:
+            displayValue(
+              approval.ApprovedBy,
+            ),
+          style:
+            "tableValue",
+        },
+
+        {
+          text:
+            displayValue(
+              approval.Remarks,
+            ),
+          style:
+            "tableValue",
+        },
+      ]);
+    });
+
+    // =========================================================
+    // Document Definition
+    // =========================================================
+
+    const documentDefinition = {
+      pageSize: "A4",
+
+      pageOrientation:
+        "portrait",
+
+      pageMargins: [
+        22,
+        26,
+        22,
+        72,
+      ],
+
+      defaultStyle: {
+        font: "Roboto",
+        fontSize: 9,
+        color: COLORS.text,
+      },
+
+      content: [
+        // =====================================================
+        // Header
+        // =====================================================
+
+        {
+          table: {
+            widths: [
+              130,
+              "*",
+              80,
+            ],
+
+            body: [
+              [
+                logo
+                  ? {
+                      image:
+                        logo,
+
+                      fit: [
+                        88,
+                        50,
+                      ],
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    }
+                  : {
+                      text: "",
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    },
+
+                {
+                  text:
+                    "AMC Detail Report",
+
+                  style:
+                    "title",
+
+                  alignment:
+                    "center",
+
+                  margin: [
+                    0,
+                    18,
+                    0,
+                    0,
+                  ],
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+
+                {
+                  text: "",
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            "noBorders",
+        },
+
+        {
+          canvas: [
+            {
+              type: "line",
+              x1: 0,
+              y1: 0,
+              x2: 551,
+              y2: 0,
+              lineWidth: 0.8,
+              lineColor:
+                COLORS.navy,
+            },
+          ],
+
+          margin: [
+            0,
+            7,
+            0,
+            14,
+          ],
+        },
+
+        // =====================================================
+        // Equipment Details
+        // =====================================================
+
+        sectionHeading(
+          "Equipment Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Organization",
+                  "organization",
+                ),
+
+                valueCell(
+                  detail.OrganizationShortName ||
+                    detail.OrganizationName,
+                ),
+
+                labelCell(
+                  "Department",
+                  "organization",
+                ),
+
+                valueCell(
+                  detail.DepartmentName,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Equipment",
+                  "equipment",
+                ),
+
+                valueCell(
+                  detail.Description,
+                ),
+
+                labelCell(
+                  "Serial Number",
+                  "serial",
+                ),
+
+                valueCell(
+                  detail.SerialNumber,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Type of Machine",
+                  "equipment",
+                ),
+
+                valueCell(
+                  detail.TypeOfMachine,
+                ),
+
+                labelCell(
+                  "Capacity",
+                  "equipment",
+                ),
+
+                valueCell(
+                  detail.Capacity,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Make",
+                  "equipment",
+                ),
+
+                valueCell(
+                  detail.Make,
+                ),
+
+                labelCell(
+                  "Model Number",
+                  "serial",
+                ),
+
+                valueCell(
+                  detail.ModelNumber,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Area",
+                  "location",
+                ),
+
+                valueCell(
+                  detail.Area,
+                ),
+
+                labelCell(
+                  "Commissioning",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.CommissioningDate,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Warranty Start",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.WarrantyStartDate,
+                ),
+
+                labelCell(
+                  "Warranty End",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.WarrantyEndDate,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Warranty Status",
+                  "status",
+                ),
+
+                valueCell(
+                  detail.WarrantyStatus,
+                ),
+
+                labelCell(
+                  "Responsible Person",
+                  "person",
+                ),
+
+                valueCell(
+                  responsiblePerson,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Schedule",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.ScheduleOfServicing,
+                ),
+
+                labelCell(
+                  "Schedule Day",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.ScheduleDay,
+                ),
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+        // =====================================================
+        // AMC Details
+        // =====================================================
+
+        sectionHeading(
+          "AMC Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "AMC Start Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.AMCStartDate,
+                ),
+
+                labelCell(
+                  "AMC End Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.AMCEndDate,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "AMC Type",
+                  "equipment",
+                ),
+
+                valueCell(
+                  detail.AMCType,
+                ),
+
+                labelCell(
+                  "AMC Amount",
+                  "money",
+                ),
+
+                valueCell(
+                  detail.AMCAmount,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Final Status",
+                  "status",
+                ),
+
+                valueCell(
+                  detail.FinalStatus,
+                ),
+
+                labelCell(
+                  "Created Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.CreatedDate,
+                ),
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+        // =====================================================
+        // Vendor Details
+        // =====================================================
+
+        sectionHeading(
+          "Vendor Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Vendor Name",
+                  "vendor",
+                ),
+
+                valueCell(
+                  detail.VendorName,
+                ),
+
+                labelCell(
+                  "Email",
+                  "email",
+                ),
+
+                valueCell(
+                  detail.VendorEmailAddress,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Mobile Number",
+                  "phone",
+                ),
+
+                valueCell(
+                  detail.VendorMobileNumber,
+                ),
+
+                labelCell(
+                  "Second Mobile",
+                  "phone",
+                ),
+
+                valueCell(
+                  detail.VendorSecondMobileNumber,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Landline Number",
+                  "phone",
+                ),
+
+                valueCell(
+                  detail.VendorLandlineNumber,
+                ),
+
+                labelCell(
+                  "Pincode",
+                  "location",
+                ),
+
+                valueCell(
+                  detail.VendorPincode,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "City",
+                  "location",
+                ),
+
+                valueCell(
+                  detail.VendorCity,
+                ),
+
+                labelCell(
+                  "State",
+                  "location",
+                ),
+
+                valueCell(
+                  detail.VendorState,
+                ),
+              ],
+
+              [
+                {
+                  ...labelCell(
+                    "Address",
+                    "location",
+                  ),
+                },
+
+                {
+                  text:
+                    displayValue(
+                      detail.VendorAddress,
+                    ),
+
+                  style:
+                    "fieldValue",
+
+                  colSpan: 3,
+
+                  margin: [
+                    9,
+                    8,
+                    7,
+                    7,
+                  ],
+                },
+
+                {},
+                {},
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+        // =====================================================
+        // Approval Details
+        // =====================================================
+
+        sectionHeading(
+          "Approval Details",
+        ),
+
+        {
+          table: {
+            headerRows: 1,
+
+            widths: [
+              55,
+              75,
+              115,
+              "*",
+            ],
+
+            body:
+              approvalBody,
+          },
+
+          layout: {
+            hLineColor: () =>
+              COLORS.border,
+
+            vLineColor: () =>
+              COLORS.border,
+
+            hLineWidth: () =>
+              0.7,
+
+            vLineWidth: () =>
+              0.7,
+
+            paddingLeft: () =>
+              7,
+
+            paddingRight: () =>
+              7,
+
+            paddingTop: () =>
+              6,
+
+            paddingBottom: () =>
+              6,
+          },
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+      ],
+
+      // =======================================================
+      // Footer
+      // =======================================================
+
+      footer: () => ({
+        margin: [
+          22,
+          8,
+          22,
+          0,
+        ],
+
+        stack: [
+          {
+            canvas: [
+              {
+                type: "line",
+                x1: 0,
+                y1: 0,
+                x2: 551,
+                y2: 0,
+                lineWidth:
+                  0.7,
+                lineColor:
+                  COLORS.navy,
+              },
+            ],
+
+            margin: [
+              0,
+              0,
+              0,
+              8,
+            ],
+          },
+
+          {
+            columns: [
+              {
+                stack: [
+                  {
+                    text:
+                      "Powered by HotelOps",
+
+                    bold: true,
+
+                    color:
+                      COLORS.navy,
+
+                    fontSize: 8,
+                  },
+                ],
+              },
+
+              {
+                width: 130,
+
+                stack: [
+                  {
+                    text:
+                      `Generated On   :  ${generatedOn}`,
+
+                    fontSize: 7,
+
+                    color:
+                      COLORS.label,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+
+      // =======================================================
+      // Styles
+      // =======================================================
+
+      styles: {
+        title: {
+          fontSize: 18,
+          bold: true,
+          color:
+            COLORS.navy,
+        },
+
+        fieldLabel: {
+          fontSize: 8.5,
+          bold: true,
+          color:
+            COLORS.label,
+        },
+
+        fieldValue: {
+          fontSize: 9,
+          color:
+            COLORS.text,
+        },
+
+        tableHeader: {
+          fontSize: 8.5,
+          bold: true,
+          color:
+            COLORS.navy,
+          fillColor:
+            COLORS.labelBackground,
+        },
+
+        tableValue: {
+          fontSize: 8.5,
+          color:
+            COLORS.text,
+        },
+      },
+    };
+
+    // =========================================================
+    // Generate PDF
+    // =========================================================
+
+    const pdfBuffer =
+      await new Promise(
+        (resolve, reject) => {
+          try {
+            const pdfDocument =
+              new PdfPrinter(
+                EQUIPMENT_DETAIL_PDF_FONTS,
+              ).createPdfKitDocument(
+                documentDefinition,
+              );
+
+            const chunks = [];
+
+            pdfDocument.on(
+              "data",
+              (chunk) =>
+                chunks.push(chunk),
+            );
+
+            pdfDocument.on(
+              "end",
+              () =>
+                resolve(
+                  Buffer.concat(
+                    chunks,
+                  ),
+                ),
+            );
+
+            pdfDocument.on(
+              "error",
+              reject,
+            );
+
+            pdfDocument.end();
+          } catch (error) {
+            reject(error);
+          }
+        },
+      );
+
+    // =========================================================
+    // Response
+    // =========================================================
+
+    const fileName =
+      `AMC-Detail-${amcID}.pdf`;
+
+    return {
+      success: true,
+
+      message:
+        "AMC detail PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName,
+
+      contentType:
+        "application/pdf",
+    };
+  } catch (error) {
+    console.error(
+      "Generate AMC detail PDF error:",
+      error,
+    );
+
+    return databaseFailure(
+      error,
+      "Unable to generate AMC detail PDF.",
+    );
+  }
+};
 // ============================================================================================OR Code of Equipment Entries
 const generateEquipmentQRCode = async (data) => {
   try {
@@ -15484,5 +18568,7 @@ module.exports = {
   getEngineeringDashboardSummary,
   getEngineeringMaintenanceChart,
   getEngineeringMaintenanceDistribution,
-  getEngineeringBreakdownChart
+  getEngineeringBreakdownChart,
+  generateBreakdownDetailPdf,
+  generateAMCDetailPdf
 };
