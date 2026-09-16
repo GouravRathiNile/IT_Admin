@@ -6,7 +6,7 @@ const { formatDate } = require("../../utils/dateFormatter");
 const generateUrl = require("../../AzurConfigration/Engineering/AzureGetData");
 // ===============================================Pdf Helper
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
-<<<<<<< Updated upstream
+
 const PdfPrinter = require("pdfmake");
 const path = require("path");
 const  EQUIPMENT_DETAIL_PDF_FONTS = {
@@ -17,7 +17,7 @@ const  EQUIPMENT_DETAIL_PDF_FONTS = {
     bolditalics: path.join(process.cwd(), "fonts/Roboto-Bold.ttf"),
   },
 };
-=======
+
 const ENGINEERING_NOTIFICATION_MODULE = "Engineering";
 const WARRANTY_NOTIFICATION_EVENTS = Object.freeze({
   TOMORROW: {
@@ -47,7 +47,7 @@ const addDaysToDate = (date, days) => {
 const dateOnly = (value) => value instanceof Date
   ? value.toISOString().slice(0, 10)
   : String(value || "").slice(0, 10);
->>>>>>> Stashed changes
+
 // ==========================================================QR Code Packages
 const QRCode = require("qrcode");
 const sharp = require("sharp");
@@ -19149,10 +19149,9 @@ module.exports = {
   getEngineeringMaintenanceChart,
   getEngineeringMaintenanceDistribution,
   getEngineeringBreakdownChart,
-<<<<<<< Updated upstream
+
   generateBreakdownDetailPdf,
-  generateAMCDetailPdf
-=======
+  generateAMCDetailPdf,
   processEquipmentWarrantyNotifications
->>>>>>> Stashed changes
+
 };
