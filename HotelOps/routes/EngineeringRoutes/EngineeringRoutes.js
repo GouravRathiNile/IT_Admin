@@ -54,7 +54,8 @@ const {
   getEngineeringMaintenanceDistribution,
   getEngineeringBreakdownChart,
   generateBreakdownDetailPdf,
-  generateAMCDetailPdf
+  generateAMCDetailPdf,
+  downloadAllEquipmentQRCodes
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -118,6 +119,7 @@ router.delete("/DeleteAMCApprovalConfig",authenticateToken,deleteAMCApprovalConf
 router.get("/AMCDetailPdf",authenticateToken,generateAMCDetailPdf,);
 // =============================================================QR Code of Equipment
 router.get("/EquipmentQRCode",authenticateToken,generateEquipmentQRCode,);
+router.get("/AllEquipmentQRCodeDownload",authenticateToken,downloadAllEquipmentQRCodes,);
 // =============================================================AMC of Equipment
 router.get("/DashboardSummary",authenticateToken,getEngineeringDashboardSummary,);
 router.get("/DashboardMaintenanceChart",authenticateToken,getEngineeringMaintenanceChart,);

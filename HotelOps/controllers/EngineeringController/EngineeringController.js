@@ -2336,6 +2336,7 @@ exports.generateAMCDetailPdf = async (req, res) => {
   }
 };
 // ============================================================================================OR Code of Equipment Entries
+// ============================================================Equipment QR Code
 exports.generateEquipmentQRCode = async (req, res) => {
   try {
     const result =
@@ -2369,6 +2370,96 @@ exports.generateEquipmentQRCode = async (req, res) => {
     return res
       .status(result.statusCode || 200)
       .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Generate All Equipment QR Codes By Organization
+exports.downloadAllEquipmentQRCodes = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.generateAllEquipmentQRCodes({
+        OrganizationID: req.query.OrganizationID,
+
+        UserID: req.user?.UserID,
+        UserType: req.user?.UserType,
+        DepartmentName: req.user?.DepartmentName,
+        LoginType: req.user?.LoginType,
+      });
+
+    if (!result.success) {
+      return res
+        .status(result.statusCode || 400)
+        .json(result);
+    }
+
+    const {
+      OrganizationID,
+      QRCodes,
+    } = result.data;
+
+    // ESM package ko CommonJS project me load karo
+    const { ZipArchive } =
+      await import("archiver");
+
+    const zipFileName =
+      `Equipment-QR-Organization-${OrganizationID}.zip`;
+
+    res.setHeader(
+      "Content-Type",
+      "application/zip",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${zipFileName}"`,
+    );
+
+    res.setHeader(
+      "Cache-Control",
+      "no-store",
+    );
+
+    const archive = new ZipArchive({
+      zlib: {
+        level: 9,
+      },
+    });
+
+    archive.on("error", (error) => {
+      console.error(
+        "Equipment QR ZIP Error:",
+        error.message,
+      );
+
+      if (!res.headersSent) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "Unable to generate equipment QR ZIP.",
+        });
+      }
+
+      res.destroy(error);
+    });
+
+    archive.pipe(res);
+
+    for (const qr of QRCodes) {
+      archive.append(
+        qr.QRBuffer,
+        {
+          name:
+            `Equipment-${qr.EquipmentID}-QR.png`,
+        },
+      );
+    }
+
+    await archive.finalize();
+
   } catch (error) {
     return handleError(
       error,

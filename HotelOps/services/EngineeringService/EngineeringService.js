@@ -6,7 +6,6 @@ const { formatDate } = require("../../utils/dateFormatter");
 const generateUrl = require("../../AzurConfigration/Engineering/AzureGetData");
 // ===============================================Pdf Helper
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
-
 const PdfPrinter = require("pdfmake");
 const path = require("path");
 const  EQUIPMENT_DETAIL_PDF_FONTS = {
@@ -1544,12 +1543,45 @@ const updateBreakdown = async (data) => {
     }
 
     // ========================================================
-    // Add New Parts
+    // Update Existing Parts / Add New Parts
     // ========================================================
 
     const parts = Array.isArray(data.Parts) ? data.Parts : [];
 
     for (const part of parts) {
+      const rawPartID = part.BreakdownPartID ?? part.Breakdownpartid;
+      const hasPartID = rawPartID !== undefined && rawPartID !== null &&
+        String(rawPartID).trim() !== "";
+
+      if (hasPartID) {
+        const partID = Number(rawPartID);
+        if (!Number.isSafeInteger(partID) || partID <= 0) {
+          await client.query("ROLLBACK");
+          return fail("Valid BreakdownPartID is required for an existing part.", 400);
+        }
+        if (deletePartIDs.includes(partID)) {
+          await client.query("ROLLBACK");
+          return fail("A part cannot be updated and deleted in the same request.", 400);
+        }
+
+        const updated = await client.query(
+          `UPDATE Engineering_Breakdown_Parts_Details
+           SET Item = $1, Qty = $2, Amount = $3
+           WHERE BreakdownPartID = $4
+             AND BreakdownID = $5
+             AND OrganizationID = $6
+             AND IsDeleted = FALSE
+           RETURNING BreakdownPartID;`,
+          [part.Item || null, part.Qty ?? null, part.Amount ?? null,
+            partID, breakdownID, organizationID],
+        );
+        if (!updated.rows.length) {
+          await client.query("ROLLBACK");
+          return fail("Breakdown part not found for this breakdown.", 404);
+        }
+        continue;
+      }
+
       await client.query(
         `
         INSERT INTO Engineering_Breakdown_Parts_Details
@@ -7253,33 +7285,14 @@ const getScheduledMissingReports = async (data) => {
     // =====================================================
 
     conditions.push(`
-      (
-        e.WarrantyStartDate IS NULL
+  (
+    e.ScheduleOfServicing IS NULL
+    OR TRIM(e.ScheduleOfServicing) = ''
 
-        OR e.WarrantyEndDate IS NULL
-
-        OR e.WarrantyStatus IS NULL
-        OR TRIM(e.WarrantyStatus) = ''
-
-        OR e.AMCType IS NULL
-        OR TRIM(e.AMCType) = ''
-
-        OR e.AMCStartDate IS NULL
-
-        OR e.AMCEndDate IS NULL
-
-        OR e.AMCStatus IS NULL
-        OR TRIM(e.AMCStatus) = ''
-
-        OR e.AMCYearlyExpense IS NULL
-
-        OR e.ScheduleOfServicing IS NULL
-        OR TRIM(e.ScheduleOfServicing) = ''
-
-        OR e.ScheduleDay IS NULL
-        OR TRIM(e.ScheduleDay) = ''
-      )
-    `);
+    OR e.ScheduleDay IS NULL
+    OR TRIM(e.ScheduleDay) = ''
+  )
+`);
 
     const where = conditions.join(
       " AND ",
@@ -7737,7 +7750,7 @@ const generateTotalEquipmentReportsPdf = async (data) => {
       },
 
       {
-        header: "Description",
+        header: "Description / Sr.No. / Capacity",
         value: (row) => {
           const lines = [];
 
@@ -7759,7 +7772,7 @@ const generateTotalEquipmentReportsPdf = async (data) => {
 
           return lines.join("\n") || "-";
         },
-        width: 125,
+        width: 138,
       },
 
       {
@@ -8284,7 +8297,7 @@ const generateBreakdownReportPdf = async (data) => {
           row.EquipmentDescription,
 
         width:
-          115,
+          140,
       },
 
       {
@@ -8348,7 +8361,7 @@ const generateBreakdownReportPdf = async (data) => {
           row.BreakdownReason,
 
         width:
-          125,
+          138,
       },
 
       {
@@ -9358,7 +9371,7 @@ const generateDailyMaintenanceReportPdf = async (data) => {
           row.Description,
 
         width:
-          115,
+          130,
       },
 
       {
@@ -10578,7 +10591,7 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
         },
 
         width:
-          125,
+          135,
       },
 
       {
@@ -10607,7 +10620,7 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
         },
 
         width:
-          90,
+          70,
       },
 
       {
@@ -10635,27 +10648,27 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           "center",
       },
 
-      {
-        header:
-          "Warranty Period",
+     {
+  header: "Warranty Period",
 
-        value: (row) => {
-          if (
-            !row.WarrantyStartDate &&
-            !row.WarrantyEndDate
-          ) {
-            return "-";
-          }
+  value: (row) => {
+    if (
+      !row.WarrantyStartDate &&
+      !row.WarrantyEndDate
+    ) {
+      return "-";
+    }
 
-          return [
-            `From : ${row.WarrantyStartDate || "-"}`,
-            `To : ${row.WarrantyEndDate || "-"}`,
-          ].join("\n");
-        },
+    return [
+      row.WarrantyStartDate || "-",
+      "To",
+      row.WarrantyEndDate || "-",
+    ].join("\n");
+  },
 
-        width:
-          76,
-      },
+  width: 60,
+  align: "center",
+},
 
       {
         header:
@@ -10668,30 +10681,27 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           60,
       },
 
-      {
-        header:
-          "AMC Period",
+     {
+  header: "AMC Period",
 
-        value: (row) => {
-          if (
-            !row.AMCStartDate &&
-            !row.AMCEndDate
-          ) {
-            return [
-              "From :",
-              "To :",
-            ].join("\n");
-          }
+  value: (row) => {
+    if (
+      !row.AMCStartDate &&
+      !row.AMCEndDate
+    ) {
+      return "-";
+    }
 
-          return [
-            `From : ${row.AMCStartDate || "-"}`,
-            `To : ${row.AMCEndDate || "-"}`,
-          ].join("\n");
-        },
+    return [
+      row.AMCStartDate || "-",
+      "To",
+      row.AMCEndDate || "-",
+    ].join("\n");
+  },
 
-        width:
-          76,
-      },
+  width: 50,
+  align: "center",
+},
 
       {
         header:
@@ -10701,7 +10711,7 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           row.AMCStatus,
 
         width:
-          58,
+          50,
       },
 
       {
@@ -10712,7 +10722,7 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           row.ScheduleOfServicing,
 
         width:
-          64,
+          55,
       },
 
       {
@@ -10723,7 +10733,7 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           row.MaintenanceDate,
 
         width:
-          65,
+          50,
 
         align:
           "center",
@@ -10956,33 +10966,14 @@ const generateScheduledMissingReportPdf = async (data) => {
     // ============================================================
 
     conditions.push(`
-      (
-        e.WarrantyStartDate IS NULL
+  (
+    e.ScheduleOfServicing IS NULL
+    OR TRIM(e.ScheduleOfServicing) = ''
 
-        OR e.WarrantyEndDate IS NULL
-
-        OR e.WarrantyStatus IS NULL
-        OR TRIM(e.WarrantyStatus) = ''
-
-        OR e.AMCType IS NULL
-        OR TRIM(e.AMCType) = ''
-
-        OR e.AMCStartDate IS NULL
-
-        OR e.AMCEndDate IS NULL
-
-        OR e.AMCStatus IS NULL
-        OR TRIM(e.AMCStatus) = ''
-
-        OR e.AMCYearlyExpense IS NULL
-
-        OR e.ScheduleOfServicing IS NULL
-        OR TRIM(e.ScheduleOfServicing) = ''
-
-        OR e.ScheduleDay IS NULL
-        OR TRIM(e.ScheduleDay) = ''
-      )
-    `);
+    OR e.ScheduleDay IS NULL
+    OR TRIM(e.ScheduleDay) = ''
+  )
+`);
 
     const where =
       conditions.join(
@@ -11222,7 +11213,7 @@ const generateScheduledMissingReportPdf = async (data) => {
         },
 
         width:
-          130,
+          140,
       },
 
       {
@@ -11279,27 +11270,27 @@ const generateScheduledMissingReportPdf = async (data) => {
           "center",
       },
 
-      {
-        header:
-          "Warranty Period",
+     {
+  header: "Warranty Period",
 
-        value: (row) => {
-          if (
-            !row.WarrantyStartDate &&
-            !row.WarrantyEndDate
-          ) {
-            return "-";
-          }
+  value: (row) => {
+    if (
+      !row.WarrantyStartDate &&
+      !row.WarrantyEndDate
+    ) {
+      return "-";
+    }
 
-          return [
-            `From : ${row.WarrantyStartDate || "-"}`,
-            `To : ${row.WarrantyEndDate || "-"}`,
-          ].join("\n");
-        },
+    return [
+      row.WarrantyStartDate || "-",
+      "To",
+      row.WarrantyEndDate || "-",
+    ].join("\n");
+  },
 
-        width:
-          82,
-      },
+  width: 70,
+  align: "center",
+},
 
       {
         header:
@@ -11312,30 +11303,27 @@ const generateScheduledMissingReportPdf = async (data) => {
           65,
       },
 
-      {
-        header:
-          "AMC Period",
+     {
+  header: "AMC Period",
 
-        value: (row) => {
-          if (
-            !row.AMCStartDate &&
-            !row.AMCEndDate
-          ) {
-            return [
-              "From :",
-              "To :",
-            ].join("\n");
-          }
+  value: (row) => {
+    if (
+      !row.AMCStartDate &&
+      !row.AMCEndDate
+    ) {
+      return "-";
+    }
 
-          return [
-            `From : ${row.AMCStartDate || "-"}`,
-            `To : ${row.AMCEndDate || "-"}`,
-          ].join("\n");
-        },
+    return [
+      row.AMCStartDate || "-",
+      "To",
+      row.AMCEndDate || "-",
+    ].join("\n");
+  },
 
-        width:
-          82,
-      },
+  width: 70,
+  align: "center",
+},
 
       {
         header:
@@ -13108,6 +13096,7 @@ const getAllAMC = async (data) => {
 
           e.ResponsiblePerson,
 
+          aa.AMCApprovalID,
           aa.FCStatus,
           aa.FCStatusDateTime,
           aa.FCStatusApprovedBy,
@@ -13192,6 +13181,27 @@ const getAllAMC = async (data) => {
         OrganizationID,
       );
 
+    const approvalRowsByID = new Map(
+      result.rows.map((row) => [Number(row.amcid), row]),
+    );
+    const normalizeApprovalStatus = (value) =>
+      String(value || "Pending").trim().toUpperCase();
+
+    for (const record of records) {
+      const approvalRow = approvalRowsByID.get(record.AMCID);
+      const currentStage = record.Approvals.find(
+        (stage) => normalizeApprovalStatus(stage.Status) !== "APPROVED",
+      );
+      record.CanApprove = Boolean(
+        Number.isSafeInteger(Number(data.UserID)) && Number(data.UserID) > 0 &&
+        approvalRow?.amcapprovalid != null &&
+        approvalRole &&
+        normalizeApprovalStatus(approvalRow.finalstatus) !== "APPROVED" &&
+        currentStage?.ApprovalRole === approvalRole &&
+        normalizeApprovalStatus(currentStage.Status) === "PENDING",
+      );
+    }
+
     // Omit detail-only fields from the AMC list response.
     for (const record of records) {
       for (const field of [
@@ -13261,7 +13271,8 @@ const getAllAMC = async (data) => {
     }
 
     return databaseFailure(
-      "Unable to fetch AMC records at this time.",
+      error,
+      "Fetch AMC records",
     );
   }
 };
@@ -17344,6 +17355,7 @@ const generateAMCDetailPdf = async (data) => {
   }
 };
 // ============================================================================================OR Code of Equipment Entries
+// ============================================================Equipment QR Code
 const generateEquipmentQRCode = async (data) => {
   try {
     const OrganizationID =
@@ -17798,7 +17810,151 @@ const generateEquipmentQRCode = async (data) => {
     );
   }
 };
-// ============================================================================================OR Code of Equipment Entries
+// ============================================================Generate All Equipment QR Codes By Organization
+const generateAllEquipmentQRCodes = async (data) => {
+  try {
+    const OrganizationID = Number(data.OrganizationID);
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Fetch Organization Equipment
+    // ============================================================
+
+    const equipmentResult = await pool.query(
+      `
+      SELECT
+        e.EquipmentID
+      FROM Engineering_Equipment_Entry_Master e
+      INNER JOIN Organization_Master om
+        ON om.OrganizationID = e.OrganizationID
+       AND om.IsDeleted = FALSE
+      WHERE e.OrganizationID = $1
+        AND e.IsDeleted = FALSE
+      ORDER BY e.EquipmentID ASC;
+      `,
+      [OrganizationID],
+    );
+
+    if (equipmentResult.rows.length === 0) {
+      return fail(
+        "No equipment records found for this organization.",
+        404,
+      );
+    }
+
+    // ============================================================
+    // Generate QR For Every Equipment
+    // Existing generateEquipmentQRCode() is reused
+    // ============================================================
+
+    const QRCodes = [];
+
+    for (const row of equipmentResult.rows) {
+      const EquipmentID = Number(
+        row.equipmentid,
+      );
+
+      const qrResult =
+        await generateEquipmentQRCode({
+          OrganizationID,
+          EquipmentID,
+        });
+
+      if (!qrResult.success) {
+        console.error(
+          `QR generation failed for EquipmentID ${EquipmentID}:`,
+          qrResult.message,
+        );
+
+        continue;
+      }
+
+      const base64QRCode =
+        String(qrResult.data.QRCode || "")
+          .replace(
+            /^data:image\/png;base64,/,
+            "",
+          );
+
+      if (!base64QRCode) {
+        continue;
+      }
+
+      const qrBuffer =
+        Buffer.from(
+          base64QRCode,
+          "base64",
+        );
+
+      QRCodes.push({
+        EquipmentID,
+        Description:
+          qrResult.data.Description,
+        Area:
+          qrResult.data.Area,
+        QRBuffer:
+          qrBuffer,
+      });
+    }
+
+    // ============================================================
+    // Check Generated QR Codes
+    // ============================================================
+
+    if (QRCodes.length === 0) {
+      return fail(
+        "Unable to generate equipment QR codes.",
+        500,
+      );
+    }
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "Equipment QR codes generated successfully.",
+      {
+        OrganizationID,
+        TotalEquipment:
+          equipmentResult.rows.length,
+        TotalQRCodes:
+          QRCodes.length,
+        QRCodes,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Generate All Equipment QR Codes Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to generate equipment QR codes.",
+    );
+  }
+};
+// ============================================================================================Dashboard of Equipment Entries
 // ============================================================Engineering Dashboard Summary
 const getEngineeringDashboardSummary = async (data) => {
   try {
@@ -19152,6 +19308,6 @@ module.exports = {
 
   generateBreakdownDetailPdf,
   generateAMCDetailPdf,
-  processEquipmentWarrantyNotifications
-
+  processEquipmentWarrantyNotifications,
+  generateAllEquipmentQRCodes,
 };
