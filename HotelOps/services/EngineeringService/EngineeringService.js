@@ -13389,6 +13389,7 @@ const getAMCById = async (data) => {
 
       const AMC = {
         AMCID: 0,
+        CanApprove: false,
 
         OrganizationID:
           Number(row.organizationid),
@@ -13630,6 +13631,7 @@ const getAMCById = async (data) => {
         -- Approval
         -- ========================================================
 
+        aa.AMCApprovalID,
         aa.FCStatus,
         aa.FCStatusDateTime,
         aa.FCStatusApprovedBy,
@@ -14018,6 +14020,20 @@ const getAMCById = async (data) => {
     delete AMC.FinalStatusDateTime;
     delete AMC.LoggedInApprovalRole;
     delete AMC.CanTakeApprovalAction;
+
+    const normalizeApprovalStatus = (value) =>
+      String(value || "Pending").trim().toUpperCase();
+    const currentStage = AMC.Approvals.find(
+      (stage) => normalizeApprovalStatus(stage.Status) !== "APPROVED",
+    );
+    AMC.CanApprove = Boolean(
+      Number.isSafeInteger(Number(data.UserID)) && Number(data.UserID) > 0 &&
+      row.amcapprovalid != null &&
+      approvalRole &&
+      normalizeApprovalStatus(row.finalstatus) !== "APPROVED" &&
+      currentStage?.ApprovalRole === approvalRole &&
+      normalizeApprovalStatus(currentStage.Status) === "PENDING",
+    );
 
     // ============================================================
     // Response

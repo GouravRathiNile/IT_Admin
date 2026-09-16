@@ -10,6 +10,54 @@ const defaultsEnd = source.indexOf("const AMC_APPROVAL_ROLES", defaultsStart);
 const start = source.indexOf("const resolveAMCApprovalRole =");
 const end = source.indexOf("const getAMCById =", start);
 
+test("AMC detail approval flag respects new records, stages and existing access restrictions", async () => {
+  let row;
+  let flow;
+  const context = {
+    console, formatDate: () => null,
+    fail: (message, statusCode) => ({ success: false, message, statusCode }),
+    ok: (message, data) => ({ success: true, data }),
+    retryableDatabaseResponse: () => null,
+    databaseFailure: (error) => { throw error; },
+    pool: { query: async (sql) => {
+      assert.doesNotMatch(sql, /COALESCE\(\s*aa\.AMCApprovalID/i);
+      if (sql.includes("FROM Engineering_AMC_Master")) {
+        assert.match(sql.slice(0, sql.indexOf("FROM Engineering_AMC_Master")), /aa\.AMCApprovalID,/);
+      }
+      return { rows: [row] };
+    } },
+    attachAMCRelatedData: async () => [{ Approvals: flow }],
+  };
+  vm.createContext(context);
+  const roleEnd = source.indexOf("const getAMCApprovalFlow =", start);
+  const detailEnd = source.indexOf("const updateAMC =", end);
+  vm.runInContext(source.slice(start, roleEnd) + source.slice(end, detailEnd) + "\nthis.run = getAMCById;", context);
+  for (const scenario of [
+    { id: 0, expected: false },
+    { expected: true },
+    { status: "Rejected", expected: false },
+    { status: "Returned", expected: false },
+    { final: "Approved", status: "Approved", expected: false },
+    { missing: true, expected: false },
+    { user: "Employee", expected: false },
+    { user: "GM", forbidden: true },
+    { status: "Approved", stage: "GM", expected: false },
+  ]) {
+    row = { organizationid: 20, equipmentid: 2, departmentid: 1,
+      amcapprovalid: scenario.missing ? null : 1,
+      currentapprovalrole: scenario.stage || "FC",
+      fcstatus: scenario.status || "Pending", finalstatus: scenario.final || "Pending" };
+    flow = [{ ApprovalRole: "FC", Status: row.fcstatus }, { ApprovalRole: "GM", Status: "Pending" }];
+    const result = await context.run({ AMCID: scenario.id ?? 1, EquipmentID: 2,
+      UserID: 3, UserType: scenario.user || "HOD", DepartmentName: "Finance" });
+    if (scenario.forbidden) assert.equal(result.statusCode, 403);
+    else {
+      assert.equal(result.success, true);
+      assert.equal(result.data.CanApprove, scenario.expected);
+    }
+  }
+});
+
 async function getRecords({ userType = "HOD", department = "Finance", organization = 20, config = [], rows }) {
   const context = {
     console,
