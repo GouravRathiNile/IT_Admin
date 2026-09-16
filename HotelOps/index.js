@@ -50,6 +50,7 @@ const HLPReportHandler = require("./consumer/HLPReportConsumer/HLPReportHandler"
 const ReportBuilderHandler = require("./consumer/ReportBuilderConsumer/ReportBuilderHandler");
 const EngineeringHandler = require("./consumer/EngineeringConsumer/EngineeringHandler");
 const NotificationHandler = require("./consumer/NotificationConsumer/NotificationHandler");
+const { startEngineeringWarrantyNotificationJob } = require("./services/EngineeringService/EngineeringWarrantyNotificationJob");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -195,6 +196,9 @@ const startServer = async () => {
       QUEUE.NOTIFICATION.RESPONSE,
       NotificationHandler
     );
+    // Start only after RabbitMQ consumers are ready; the job itself is
+    // concurrency-safe across multiple application instances.
+    startEngineeringWarrantyNotificationJob();
     //=====================================Port
     const PORT = process.env.PORT || 5000;
     //=====================================Project Start

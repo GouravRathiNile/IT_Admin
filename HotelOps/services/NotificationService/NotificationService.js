@@ -5,7 +5,7 @@ const {
 } = require("../../utils/retryableDatabaseError");
 
 const { sendPushNotification } = require("../../utils/sendPushNotification");
-const { sendNotificationEmail } = require("../../utils/emailService");
+const { sendNotificationEmail } = require("../CapexService/CapexEmailTemplate");
 const generateOrganizationLogoUrl = require("../../AzurConfigration/ITAdmin/OrganizationMaster/AzureGetData");
 
 // Canonical notification module names are defined in one place. Add a new
@@ -15,11 +15,12 @@ const NOTIFICATION_MODULE_NAMES = Object.freeze({
     guestglitch: "Guest Glitch",
     incidentreport: "Incident Report",
     opex: "Opex",
+    engineering: "Engineering",
 });
 
 // Modules using the shared Firebase dispatcher. Recipient selection remains in
 // each module service; this set only enables generic post-persistence delivery.
-const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Report", "Opex"]);
+const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Report", "Opex", "Engineering"]);
 
 // Email rollout is intentionally limited to CAPEX. Other modules keep their
 // existing notification delivery until they are explicitly enabled here.

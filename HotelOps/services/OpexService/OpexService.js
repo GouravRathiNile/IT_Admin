@@ -8,7 +8,7 @@ const PdfPrinter = require("pdfmake");
 const path = require("path");
 const { generatePdf } = require("../../utils/pdfHelper");
 const { sendEmail } = require("../../utils/emailService");
-const { buildOpexEmail } = require("../../utils/opexEmailTemplate");
+const { buildOpexEmail } = require("./OpexEmailTemplate");
 const generateOrganizationLogoUrl = require("../../AzurConfigration/ITAdmin/OrganizationMaster/AzureGetData");
 const OPEX_NOTIFICATION_MODULE = "Opex";
 

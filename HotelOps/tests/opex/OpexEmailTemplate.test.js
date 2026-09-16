@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildOpexEmail } = require("../../utils/opexEmailTemplate");
+const { buildOpexEmail } = require("../../services/OpexService/OpexEmailTemplate");
 
 const base = {
   notificationTitle: "OPEX - Printer (2) - Finance - HJU",

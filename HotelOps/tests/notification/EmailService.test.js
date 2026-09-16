@@ -20,12 +20,15 @@ const withMockTransport = async (work) => {
   });
 
   const servicePath = require.resolve("../../utils/emailService");
+  const capexTemplatePath = require.resolve("../../services/CapexService/CapexEmailTemplate");
   delete require.cache[servicePath];
+  delete require.cache[capexTemplatePath];
   try {
-    await work(require(servicePath), sent);
+    await work({ ...require(servicePath), ...require(capexTemplatePath) }, sent);
   } finally {
     nodemailer.createTransport = originalCreateTransport;
     delete require.cache[servicePath];
+    delete require.cache[capexTemplatePath];
     for (const [key, value] of Object.entries(originalEnvironment)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

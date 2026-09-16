@@ -6,6 +6,7 @@ const { formatDate } = require("../../utils/dateFormatter");
 const generateUrl = require("../../AzurConfigration/Engineering/AzureGetData");
 // ===============================================Pdf Helper
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
+<<<<<<< Updated upstream
 const PdfPrinter = require("pdfmake");
 const path = require("path");
 const  EQUIPMENT_DETAIL_PDF_FONTS = {
@@ -16,6 +17,37 @@ const  EQUIPMENT_DETAIL_PDF_FONTS = {
     bolditalics: path.join(process.cwd(), "fonts/Roboto-Bold.ttf"),
   },
 };
+=======
+const ENGINEERING_NOTIFICATION_MODULE = "Engineering";
+const WARRANTY_NOTIFICATION_EVENTS = Object.freeze({
+  TOMORROW: {
+    action: "WARRANTY_EXPIRING_TOMORROW",
+    title: "Equipment Warranty Expiring Tomorrow",
+  },
+  TODAY: {
+    action: "WARRANTY_EXPIRING_TODAY",
+    title: "Equipment Warranty Expiring Today",
+  },
+  EXPIRED: {
+    action: "WARRANTY_EXPIRED",
+    title: "Equipment Warranty Expired - Take Action",
+  },
+});
+
+const uniquePositiveIDs = (values) => [...new Set(values
+  .map((value) => Number(value))
+  .filter((value) => Number.isSafeInteger(value) && value > 0))];
+
+const addDaysToDate = (date, days) => {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+};
+
+const dateOnly = (value) => value instanceof Date
+  ? value.toISOString().slice(0, 10)
+  : String(value || "").slice(0, 10);
+>>>>>>> Stashed changes
 // ==========================================================QR Code Packages
 const QRCode = require("qrcode");
 const sharp = require("sharp");
@@ -707,8 +739,8 @@ const updateEquipment = async (data) => {
 
     const deleteIDs = Array.isArray(data.DeleteDocumentIDs)
       ? data.DeleteDocumentIDs.map(Number).filter(
-          (id) => Number.isInteger(id) && id > 0,
-        )
+        (id) => Number.isInteger(id) && id > 0,
+      )
       : [];
 
     if (deleteIDs.length) {
@@ -1001,14 +1033,14 @@ const mapBreakdown = (row) => ({
 
   Parts: Array.isArray(row.parts)
     ? row.parts.map((part) => ({
-        BreakdownPartID: Number(part.BreakdownPartID),
+      BreakdownPartID: Number(part.BreakdownPartID),
 
-        Item: part.Item || null,
+      Item: part.Item || null,
 
-        Qty: part.Qty !== null ? Number(part.Qty) : null,
+      Qty: part.Qty !== null ? Number(part.Qty) : null,
 
-        Amount: part.Amount !== null ? Number(part.Amount) : null,
-      }))
+      Amount: part.Amount !== null ? Number(part.Amount) : null,
+    }))
     : [],
 
   RepairedStatus: row.repairedstatus,
@@ -1483,8 +1515,8 @@ const updateBreakdown = async (data) => {
 
     const deletePartIDs = Array.isArray(data.DeletePartIDs)
       ? data.DeletePartIDs.map(Number).filter(
-          (id) => Number.isInteger(id) && id > 0,
-        )
+        (id) => Number.isInteger(id) && id > 0,
+      )
       : [];
 
     if (deletePartIDs.length) {
@@ -3700,22 +3732,22 @@ UpdatedBy:
   row.modifiedbyname || null,
   Checklists: Array.isArray(row.checklists)
     ? row.checklists.map((item) => ({
-        ChecklistID: Number(item.ChecklistID),
+      ChecklistID: Number(item.ChecklistID),
 
-        Title: item.Title || null,
+      Title: item.Title || null,
 
-        IsChecked: item.IsChecked === true,
-      }))
+      IsChecked: item.IsChecked === true,
+    }))
     : [],
 
   Documents: Array.isArray(row.documents)
     ? row.documents.map((doc) => ({
-        MaintenanceDocumentID: Number(doc.MaintenanceDocumentID),
+      MaintenanceDocumentID: Number(doc.MaintenanceDocumentID),
 
-        FileName: doc.FileName || null,
+      FileName: doc.FileName || null,
 
-        FileUrl: doc.FilePath ? generateUrl(doc.FilePath) : null,
-      }))
+      FileUrl: doc.FilePath ? generateUrl(doc.FilePath) : null,
+    }))
     : [],
 });
 // =============================Create + Update Who deside WHat to do create or update
@@ -5296,7 +5328,7 @@ const getDailyMaintenanceReports = async (data) => {
 
     const equipmentID =
       data.EquipmentID &&
-      String(data.EquipmentID).trim()
+        String(data.EquipmentID).trim()
         ? Number(data.EquipmentID)
         : null;
 
@@ -5453,7 +5485,7 @@ const getDailyMaintenanceReports = async (data) => {
 
       const schedule = String(
         equipment.scheduleofservicing ||
-          "",
+        "",
       )
         .trim()
         .toLowerCase()
@@ -5620,7 +5652,7 @@ const getDailyMaintenanceReports = async (data) => {
         )
           .trim()
           .toLowerCase() !==
-          "pending"
+        "pending"
       ) {
         continue;
       }
@@ -5924,14 +5956,14 @@ const getDailyMaintenanceReports = async (data) => {
     const databaseLimit =
       Math.max(
         pageSize -
-          paginatedVirtualRows.length,
+        paginatedVirtualRows.length,
         0,
       );
 
     const databaseOffset =
       Math.max(
         pageStart -
-          virtualCount,
+        virtualCount,
         0,
       );
 
@@ -6056,8 +6088,8 @@ const getDailyMaintenanceReports = async (data) => {
             ServicedBy:
               row.servicedby
                 ? Number(
-                    row.servicedby,
-                  )
+                  row.servicedby,
+                )
                 : null,
 
             ServicedByName:
@@ -6067,8 +6099,8 @@ const getDailyMaintenanceReports = async (data) => {
             EngineerAssigned:
               row.engineerassigned
                 ? Number(
-                    row.engineerassigned,
-                  )
+                  row.engineerassigned,
+                )
                 : null,
 
             EngineerAssignedName:
@@ -6182,7 +6214,7 @@ const getMonthlyMaintenanceReports = async (data) => {
 
     const equipmentID =
       data.EquipmentID &&
-      String(data.EquipmentID).trim()
+        String(data.EquipmentID).trim()
         ? Number(data.EquipmentID)
         : null;
 
@@ -6195,14 +6227,14 @@ const getMonthlyMaintenanceReports = async (data) => {
 
     const reportMonth =
       data.Month &&
-      Number(data.Month) >= 1 &&
-      Number(data.Month) <= 12
+        Number(data.Month) >= 1 &&
+        Number(data.Month) <= 12
         ? Number(data.Month)
         : currentDate.getMonth() + 1;
 
     const reportYear =
       data.Year &&
-      Number(data.Year) > 0
+        Number(data.Year) > 0
         ? Number(data.Year)
         : currentDate.getFullYear();
 
@@ -6373,7 +6405,7 @@ const getMonthlyMaintenanceReports = async (data) => {
 
       const schedule = String(
         equipment.scheduleofservicing ||
-          "",
+        "",
       )
         .trim()
         .toLowerCase()
@@ -6385,14 +6417,14 @@ const getMonthlyMaintenanceReports = async (data) => {
       const dayMatch =
         String(
           equipment.scheduleday ||
-            "",
+          "",
         ).match(/\d+/);
 
       const scheduleDay =
         dayMatch
           ? Number(
-              dayMatch[0],
-            )
+            dayMatch[0],
+          )
           : null;
 
       // ===================================================
@@ -6520,7 +6552,7 @@ const getMonthlyMaintenanceReports = async (data) => {
         )
           .trim()
           .toLowerCase() !==
-          "pending"
+        "pending"
       ) {
         continue;
       }
@@ -6616,8 +6648,8 @@ const getMonthlyMaintenanceReports = async (data) => {
           equipment.amcyearlyexpense !==
             null
             ? Number(
-                equipment.amcyearlyexpense,
-              )
+              equipment.amcyearlyexpense,
+            )
             : null,
 
         ScheduleOfServicing:
@@ -6853,7 +6885,7 @@ const getMonthlyMaintenanceReports = async (data) => {
     const totalPages =
       Math.ceil(
         totalCount /
-          pageSize,
+        pageSize,
       );
 
     // =====================================================
@@ -6877,14 +6909,14 @@ const getMonthlyMaintenanceReports = async (data) => {
     const databaseLimit =
       Math.max(
         pageSize -
-          paginatedVirtualRows.length,
+        paginatedVirtualRows.length,
         0,
       );
 
     const databaseOffset =
       Math.max(
         pageStart -
-          virtualCount,
+        virtualCount,
         0,
       );
 
@@ -7031,8 +7063,8 @@ const getMonthlyMaintenanceReports = async (data) => {
             ServicedBy:
               row.servicedby
                 ? Number(
-                    row.servicedby,
-                  )
+                  row.servicedby,
+                )
                 : null,
 
             ServicedByName:
@@ -7042,8 +7074,8 @@ const getMonthlyMaintenanceReports = async (data) => {
             EngineerAssigned:
               row.engineerassigned
                 ? Number(
-                    row.engineerassigned,
-                  )
+                  row.engineerassigned,
+                )
                 : null,
 
             EngineerAssignedName:
@@ -7053,8 +7085,8 @@ const getMonthlyMaintenanceReports = async (data) => {
             Status:
               row.status
                 ? String(
-                    row.status,
-                  ).trim()
+                  row.status,
+                ).trim()
                 : null,
 
             CreatedDate:
@@ -7127,8 +7159,8 @@ const getMonthlyMaintenanceReports = async (data) => {
               row.amcyearlyexpense !==
                 null
                 ? Number(
-                    row.amcyearlyexpense,
-                  )
+                  row.amcyearlyexpense,
+                )
                 : null,
 
             ScheduleOfServicing:
@@ -7446,8 +7478,8 @@ const getScheduledMissingReports = async (data) => {
             row.amcyearlyexpense !==
               null
               ? Number(
-                  row.amcyearlyexpense,
-                )
+                row.amcyearlyexpense,
+              )
               : null,
 
           ScheduleOfServicing:
@@ -7461,8 +7493,8 @@ const getScheduledMissingReports = async (data) => {
           ResponsiblePerson:
             row.responsibleperson
               ? Number(
-                  row.responsibleperson,
-                )
+                row.responsibleperson,
+              )
               : null,
 
           Remarks:
@@ -7511,10 +7543,10 @@ const getScheduledMissingReports = async (data) => {
 };
 
 // NOTE => Total reports 12 he Jisme se - warrty status ki 3 , Amc Status ki 3,servred by hotel team ki 1 yani total 7 reports 
-          // ke liye 1.Total Number of Machine Reports vali api use hogo  
-          // To 1.Total Number of Machine Reports iske smet baki status api mila ke isse 8 bn gyi 
-          // Baki ki 4 retport ki alg bna di gayi he 1. Breakdowns Report, 2. Daily Maintenance Report, 3. Monthly Maintenance Report, 4. Scheduled Missing Report
-          // to Total 8 + 4 = 12 reports he
+// ke liye 1.Total Number of Machine Reports vali api use hogo  
+// To 1.Total Number of Machine Reports iske smet baki status api mila ke isse 8 bn gyi 
+// Baki ki 4 retport ki alg bna di gayi he 1. Breakdowns Report, 2. Daily Maintenance Report, 3. Monthly Maintenance Report, 4. Scheduled Missing Report
+// to Total 8 + 4 = 12 reports he
 
 // ============================================================================================Report Pdfs
 // =============================================================1.Total Number of Machine Reports Pdf
@@ -8508,7 +8540,7 @@ const generateDailyMaintenanceReportPdf = async (data) => {
 
     const equipmentID =
       data.EquipmentID &&
-      String(data.EquipmentID).trim()
+        String(data.EquipmentID).trim()
         ? Number(data.EquipmentID)
         : null;
 
@@ -8694,7 +8726,7 @@ const generateDailyMaintenanceReportPdf = async (data) => {
       const schedule =
         String(
           equipment.scheduleofservicing ||
-            "",
+          "",
         )
           .trim()
           .toLowerCase()
@@ -8706,14 +8738,14 @@ const generateDailyMaintenanceReportPdf = async (data) => {
       const dayMatch =
         String(
           equipment.scheduleday ||
-            "",
+          "",
         ).match(/\d+/);
 
       const scheduleDay =
         dayMatch
           ? Number(
-              dayMatch[0],
-            )
+            dayMatch[0],
+          )
           : null;
 
       const currentMonth =
@@ -8866,7 +8898,7 @@ const generateDailyMaintenanceReportPdf = async (data) => {
         )
           .trim()
           .toLowerCase() !==
-          "pending"
+        "pending"
       ) {
         continue;
       }
@@ -9212,8 +9244,8 @@ const generateDailyMaintenanceReportPdf = async (data) => {
           ServicedBy:
             row.servicedby
               ? Number(
-                  row.servicedby,
-                )
+                row.servicedby,
+              )
               : null,
 
           ServicedByName:
@@ -9223,8 +9255,8 @@ const generateDailyMaintenanceReportPdf = async (data) => {
           EngineerAssigned:
             row.engineerassigned
               ? Number(
-                  row.engineerassigned,
-                )
+                row.engineerassigned,
+              )
               : null,
 
           EngineerAssignedName:
@@ -9597,7 +9629,7 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
 
     const equipmentID =
       data.EquipmentID &&
-      String(data.EquipmentID).trim()
+        String(data.EquipmentID).trim()
         ? Number(data.EquipmentID)
         : null;
 
@@ -9626,14 +9658,14 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
 
     const reportMonth =
       data.Month &&
-      Number(data.Month) >= 1 &&
-      Number(data.Month) <= 12
+        Number(data.Month) >= 1 &&
+        Number(data.Month) <= 12
         ? Number(data.Month)
         : currentDate.getMonth() + 1;
 
     const reportYear =
       data.Year &&
-      Number(data.Year) > 0
+        Number(data.Year) > 0
         ? Number(data.Year)
         : currentDate.getFullYear();
 
@@ -9805,7 +9837,7 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
 
       const schedule = String(
         equipment.scheduleofservicing ||
-          "",
+        "",
       )
         .trim()
         .toLowerCase()
@@ -9817,14 +9849,14 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
       const dayMatch =
         String(
           equipment.scheduleday ||
-            "",
+          "",
         ).match(/\d+/);
 
       const scheduleDay =
         dayMatch
           ? Number(
-              dayMatch[0],
-            )
+            dayMatch[0],
+          )
           : null;
 
       // ==========================================================
@@ -9953,7 +9985,7 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
         )
           .trim()
           .toLowerCase() !==
-          "pending"
+        "pending"
       ) {
         continue;
       }
@@ -10045,8 +10077,8 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           equipment.amcyearlyexpense !==
             null
             ? Number(
-                equipment.amcyearlyexpense,
-              )
+              equipment.amcyearlyexpense,
+            )
             : null,
 
         ScheduleOfServicing:
@@ -10362,8 +10394,8 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           ServicedBy:
             row.servicedby
               ? Number(
-                  row.servicedby,
-                )
+                row.servicedby,
+              )
               : null,
 
           ServicedByName:
@@ -10373,8 +10405,8 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           EngineerAssigned:
             row.engineerassigned
               ? Number(
-                  row.engineerassigned,
-                )
+                row.engineerassigned,
+              )
               : null,
 
           EngineerAssignedName:
@@ -10384,8 +10416,8 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
           Status:
             row.status
               ? String(
-                  row.status,
-                ).trim()
+                row.status,
+              ).trim()
               : null,
 
           CreatedDate:
@@ -10458,8 +10490,8 @@ const generateMonthlyMaintenanceReportPdf = async (data) => {
             row.amcyearlyexpense !==
               null
               ? Number(
-                  row.amcyearlyexpense,
-                )
+                row.amcyearlyexpense,
+              )
               : null,
 
           ScheduleOfServicing:
@@ -11095,8 +11127,8 @@ const generateScheduledMissingReportPdf = async (data) => {
             row.amcyearlyexpense !==
               null
               ? Number(
-                  row.amcyearlyexpense,
-                )
+                row.amcyearlyexpense,
+              )
               : null,
 
           ScheduleOfServicing:
@@ -11110,8 +11142,8 @@ const generateScheduledMissingReportPdf = async (data) => {
           ResponsiblePerson:
             row.responsibleperson
               ? Number(
-                  row.responsibleperson,
-                )
+                row.responsibleperson,
+              )
               : null,
 
           Remarks:
@@ -12093,7 +12125,7 @@ const mapAMC = (row) => ({
   CreatedDate:
     formatDate(row.createddate),
 
- 
+
 });
 //=================Attach AMC Documents + Approval Array Helper
 const attachAMCRelatedData = async (
@@ -12168,7 +12200,7 @@ const attachAMCRelatedData = async (
         StatusDateTime:
           formatDate(row.gmstatusdatetime) || null,
 
-      
+
 
         Remarks:
           row.gmremarks || null,
@@ -12181,7 +12213,7 @@ const attachAMCRelatedData = async (
         StatusDateTime:
           formatDate(row.rdstatusdatetime) || null,
 
-       
+
 
         Remarks:
           row.rdremarks || null,
@@ -12194,7 +12226,7 @@ const attachAMCRelatedData = async (
         StatusDateTime:
           formatDate(row.ceostatusdatetime) || null,
 
-      
+
 
         Remarks:
           row.ceoremarks || null,
@@ -12221,7 +12253,7 @@ const attachAMCRelatedData = async (
             approvalData.StatusDateTime ||
             null,
 
-        
+
 
           Remarks:
             approvalData.Remarks ||
@@ -12369,11 +12401,11 @@ const getAllAMC = async (data) => {
 
     const Status =
       data.Status !== undefined &&
-      data.Status !== null &&
-      String(data.Status).trim() !== ""
+        data.Status !== null &&
+        String(data.Status).trim() !== ""
         ? String(data.Status)
-            .trim()
-            .toUpperCase()
+          .trim()
+          .toUpperCase()
         : null;
 
     const validStatuses = [
@@ -12399,8 +12431,8 @@ const getAllAMC = async (data) => {
 
     const Search =
       data.Search !== undefined &&
-      data.Search !== null &&
-      String(data.Search).trim() !== ""
+        data.Search !== null &&
+        String(data.Search).trim() !== ""
         ? String(data.Search).trim()
         : null;
 
@@ -13188,8 +13220,8 @@ const getAllAMC = async (data) => {
     const TotalPages =
       TotalCount > 0
         ? Math.ceil(
-            TotalCount / PageSize,
-          )
+          TotalCount / PageSize,
+        )
         : 0;
 
     // ============================================================
@@ -13410,8 +13442,8 @@ const getAMCById = async (data) => {
         DepartmentID:
           row.departmentid !== null
             ? Number(
-                row.departmentid,
-              )
+              row.departmentid,
+            )
             : null,
 
         Description:
@@ -13472,8 +13504,8 @@ const getAMCById = async (data) => {
         AMCYearlyExpense:
           row.amcyearlyexpense !== null
             ? Number(
-                row.amcyearlyexpense,
-              )
+              row.amcyearlyexpense,
+            )
             : null,
 
         ScheduleOfServicing:
@@ -13485,8 +13517,8 @@ const getAMCById = async (data) => {
         ResponsiblePerson:
           row.responsibleperson !== null
             ? Number(
-                row.responsibleperson,
-              )
+              row.responsibleperson,
+            )
             : null,
 
         // ==========================================================
@@ -13866,10 +13898,10 @@ const getAMCById = async (data) => {
     const currentApprovalRole =
       row.currentapprovalrole
         ? String(
-            row.currentapprovalrole,
-          )
-            .trim()
-            .toUpperCase()
+          row.currentapprovalrole,
+        )
+          .trim()
+          .toUpperCase()
         : null;
 
     const roleStatusMap = {
@@ -13893,7 +13925,7 @@ const getAMCById = async (data) => {
     if (approvalRole) {
       const ownStatus = String(
         roleStatusMap[
-          approvalRole
+        approvalRole
         ] || "Pending",
       )
         .trim()
@@ -13943,8 +13975,8 @@ const getAMCById = async (data) => {
     AMC.DepartmentID =
       row.departmentid !== null
         ? Number(
-            row.departmentid,
-          )
+          row.departmentid,
+        )
         : null;
 
     AMC.EquipmentAMCType =
@@ -13966,8 +13998,8 @@ const getAMCById = async (data) => {
     AMC.AMCYearlyExpense =
       row.amcyearlyexpense !== null
         ? Number(
-            row.amcyearlyexpense,
-          )
+          row.amcyearlyexpense,
+        )
         : null;
 
     AMC.OrganizationShortName = row.organizationshortname ?? null;
@@ -14030,8 +14062,8 @@ const updateAMC = async (data) => {
 
     const Changes =
       data.Changes &&
-      typeof data.Changes === "object" &&
-      !Array.isArray(data.Changes)
+        typeof data.Changes === "object" &&
+        !Array.isArray(data.Changes)
         ? data.Changes
         : {};
 
@@ -14192,7 +14224,7 @@ const updateAMC = async (data) => {
       finalAMCStartDate &&
       finalAMCEndDate &&
       new Date(finalAMCStartDate) >
-        new Date(finalAMCEndDate)
+      new Date(finalAMCEndDate)
     ) {
       await client.query("ROLLBACK");
 
@@ -14383,7 +14415,7 @@ const updateAMC = async (data) => {
           document.FilePath,
           document.FileType || null,
           document.FileSize !== undefined &&
-          document.FileSize !== null
+            document.FileSize !== null
             ? Number(document.FileSize)
             : null,
           UserID,
@@ -14395,12 +14427,12 @@ const updateAMC = async (data) => {
 
     return ok(
       "AMC updated successfully.",
-     
+
     );
   } catch (error) {
     try {
       await client.query("ROLLBACK");
-    } catch (_) {}
+    } catch (_) { }
 
     console.error(
       "Update AMC Error:",
@@ -14539,7 +14571,7 @@ const deleteAMC = async (data) => {
   } catch (error) {
     try {
       await client.query("ROLLBACK");
-    } catch (_) {}
+    } catch (_) { }
 
     console.error(
       "Delete AMC Error:",
@@ -14574,7 +14606,7 @@ const processAMCApproval = async (data) => {
 
     const Remarks =
       data.Remarks !== undefined &&
-      data.Remarks !== null
+        data.Remarks !== null
         ? String(data.Remarks).trim()
         : null;
 
@@ -14781,9 +14813,9 @@ const processAMCApproval = async (data) => {
 
     const getRoleStatus = (role) => {
       switch (
-        String(role || "")
-          .trim()
-          .toUpperCase()
+      String(role || "")
+        .trim()
+        .toUpperCase()
       ) {
         case "FC":
           return approval.fcstatus || "Pending";
@@ -15113,7 +15145,7 @@ const processAMCApproval = async (data) => {
   } catch (error) {
     try {
       await client.query("ROLLBACK");
-    } catch (_) {}
+    } catch (_) { }
 
     console.error(
       "AMC Approval Error:",
@@ -15140,7 +15172,7 @@ const createAMCApprovalConfig = async (data) => {
   let transactionStarted = false;
 
   try {
-    
+
 
     const OrganizationID = Number(data.OrganizationID);
 
@@ -15303,7 +15335,7 @@ const createAMCApprovalConfig = async (data) => {
     const existingConfigs =
       existingResult.rows;
 
-    
+
 
     // ============================================================
     // MAP EXISTING CONFIG BY LEVEL
@@ -17625,9 +17657,9 @@ const generateEquipmentQRCode = async (data) => {
     const safeLabel =
       label.length > 70
         ? `${label.substring(
-            0,
-            67,
-          )}...`
+          0,
+          67,
+        )}...`
         : label;
 
     const labelSvg =
@@ -17653,8 +17685,8 @@ const generateEquipmentQRCode = async (data) => {
             fill="#3A9BAD"
           >
             ${escapeXml(
-              safeLabel,
-            )}
+          safeLabel,
+        )}
           </text>
         </svg>
         `,
@@ -18514,6 +18546,554 @@ const getEngineeringBreakdownChart = async (data) => {
     );
   }
 };
+// Run the date-based warranty checks in batches. Engineering owns event and
+// recipient rules; NotificationService only persists and delivers the command.
+// const processEquipmentWarrantyNotifications = async ({ businessDate, queryable = pool,
+//   publishNotification } = {}) => {
+//   const today = String(businessDate || "").trim();
+//   if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+//     throw new Error("A valid warranty notification business date is required.");
+//   }
+
+//   const tomorrow = addDaysToDate(today, 1);
+//   const yesterday = addDaysToDate(today, -1);
+//   const equipmentResult = await queryable.query(`
+//     SELECT e.EquipmentID, e.OrganizationID, e.Description, e.SerialNumber,
+//            e.Area, e.WarrantyEndDate,
+//            CASE
+//              WHEN e.WarrantyEndDate = $1::date THEN 'TOMORROW'
+//              WHEN e.WarrantyEndDate = $2::date THEN 'TODAY'
+//              WHEN e.WarrantyEndDate = $3::date
+//                AND UPPER(TRIM(COALESCE(e.WarrantyStatus, ''))) = 'EXPIRED'
+//              THEN 'EXPIRED'
+//            END AS WarrantyEvent
+//     FROM Engineering_Equipment_Entry_Master e
+//     INNER JOIN Organization_Master om
+//       ON om.OrganizationID = e.OrganizationID
+//      AND om.IsActive = TRUE AND om.ActivationStatus = TRUE AND om.IsDeleted = FALSE
+//     WHERE e.IsDeleted = FALSE
+//       AND (e.WarrantyEndDate IN ($1::date, $2::date)
+//         OR (e.WarrantyEndDate = $3::date
+//           AND UPPER(TRIM(COALESCE(e.WarrantyStatus, ''))) = 'EXPIRED'))
+//     ORDER BY e.OrganizationID, e.EquipmentID;`, [tomorrow, today, yesterday]);
+
+//   if (!equipmentResult.rows.length) return { candidates: 0, sent: 0, skipped: 0, failed: 0 };
+
+//   const organizationIDs = uniquePositiveIDs(equipmentResult.rows.map((row) => row.organizationid));
+//   const hodResult = await queryable.query(`
+//     SELECT DISTINCT um.UserID, uom.OrganizationID
+//     FROM user_master um
+//     INNER JOIN user_org_mapping uom ON uom.UserID = um.UserID
+//     INNER JOIN department_master dm ON dm.DepartmentID = um.DepartmentID
+//       AND dm.OrganizationID = uom.OrganizationID
+//     WHERE uom.OrganizationID = ANY($1::bigint[])
+//       AND UPPER(TRIM(um.UserType)) = 'HOD'
+//       AND UPPER(TRIM(dm.DepartmentName)) = 'ENGINEERING'
+//       AND um.IsActive = TRUE AND um.IsDeleted = FALSE AND um.IsLocked = FALSE
+//       AND uom.IsActive = TRUE AND uom.IsDeleted = FALSE
+//       AND dm.IsDeleted = FALSE;`, [organizationIDs]);
+
+//   const recipientsByOrganization = new Map();
+//   for (const row of hodResult.rows) {
+//     const organizationID = Number(row.organizationid);
+//     const ids = recipientsByOrganization.get(organizationID) || [];
+//     ids.push(row.userid);
+//     recipientsByOrganization.set(organizationID, uniquePositiveIDs(ids));
+//   }
+
+//   const equipmentIDs = uniquePositiveIDs(equipmentResult.rows.map((row) => row.equipmentid));
+//   const actions = Object.values(WARRANTY_NOTIFICATION_EVENTS).map((event) => event.action);
+//   const existingResult = await queryable.query(`
+//     SELECT entity_id, action
+//     FROM notifications
+//     WHERE Module_Name = $1 AND Entity_Type = 'Equipment'
+//       AND Entity_ID = ANY($2::text[]) AND Action = ANY($3::text[])
+//       AND (Created_At AT TIME ZONE 'Asia/Kolkata')::date = $4::date;`,
+//   [ENGINEERING_NOTIFICATION_MODULE, equipmentIDs.map(String), actions, today]);
+//   const existingEvents = new Set(existingResult.rows.map((row) =>
+//     `${String(row.entity_id)}:${String(row.action)}`));
+
+//   const send = publishNotification || (async (data) => {
+//     const { sendMessage } = require("../../producer/producer");
+//     const QUEUE = require("../../config/queue");
+//     return sendMessage(QUEUE.NOTIFICATION.REQUEST, QUEUE.NOTIFICATION.RESPONSE,
+//       { action: "CREATE_NOTIFICATION", data });
+//   });
+//   const summary = { candidates: equipmentResult.rows.length, sent: 0, skipped: 0, failed: 0 };
+
+//   for (const row of equipmentResult.rows) {
+//     const event = WARRANTY_NOTIFICATION_EVENTS[String(row.warrantyevent || "").toUpperCase()];
+//     const userIds = recipientsByOrganization.get(Number(row.organizationid)) || [];
+//     const eventKey = `${String(row.equipmentid)}:${event?.action || ""}`;
+//     if (!event || !userIds.length || existingEvents.has(eventKey)) {
+//       summary.skipped += 1;
+//       continue;
+//     }
+
+//     const details = [String(row.description || "Equipment").trim()];
+//     if (String(row.serialnumber || "").trim()) details.push(`Serial: ${String(row.serialnumber).trim()}`);
+//     if (String(row.area || "").trim()) details.push(`Area: ${String(row.area).trim()}`);
+//     details.push(`Warranty end date: ${dateOnly(row.warrantyenddate)}`);
+//     try {
+//       const response = await send({ organizationId: Number(row.organizationid), title: event.title,
+//         message: details.join(" | "), type: "info", moduleName: ENGINEERING_NOTIFICATION_MODULE,
+//         entityType: "Equipment", entityId: String(row.equipmentid), action: event.action,
+//         priority: "normal", userIds });
+//       if (!response || response.success !== true) throw new Error(response?.message || "No response");
+//       existingEvents.add(eventKey);
+//       summary.sent += 1;
+//     } catch (error) {
+//       summary.failed += 1;
+//       console.error(`Engineering warranty notification failed for equipment ${row.equipmentid}:`, error.message);
+//     }
+//   }
+//   return summary;
+// };
+
+// ============================================================
+// Engineering Equipment Warranty Notification Job
+//
+// One notification is created per organization per day.
+// All warranty events for that organization are aggregated
+// into a single notification.
+// ============================================================
+const processEquipmentWarrantyNotifications = async ({
+  businessDate,
+  queryable = pool,
+  publishNotification,
+} = {}) => {
+  const today = String(businessDate || "").trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+    throw new Error(
+      "A valid warranty notification business date is required.",
+    );
+  }
+
+  const tomorrow = addDaysToDate(today, 1);
+  const yesterday = addDaysToDate(today, -1);
+
+  // ============================================================
+  // Find all warranty events for the current business date.
+  //
+  // Keep the existing event rules unchanged:
+  // - Tomorrow expiry
+  // - Today expiry
+  // - Yesterday + EXPIRED status
+  // ============================================================
+  const equipmentResult = await queryable.query(
+    `
+    SELECT
+      e.EquipmentID,
+      e.OrganizationID,
+      e.Description,
+      e.SerialNumber,
+      e.Area,
+      e.WarrantyEndDate,
+
+      CASE
+        WHEN e.WarrantyEndDate = $1::date
+          THEN 'TOMORROW'
+
+        WHEN e.WarrantyEndDate = $2::date
+          THEN 'TODAY'
+
+        WHEN e.WarrantyEndDate = $3::date
+          AND UPPER(TRIM(COALESCE(e.WarrantyStatus, ''))) = 'EXPIRED'
+          THEN 'EXPIRED'
+      END AS WarrantyEvent
+
+    FROM Engineering_Equipment_Entry_Master e
+
+    INNER JOIN Organization_Master om
+      ON om.OrganizationID = e.OrganizationID
+     AND om.IsActive = TRUE
+     AND om.ActivationStatus = TRUE
+     AND om.IsDeleted = FALSE
+
+    WHERE e.IsDeleted = FALSE
+
+      AND (
+        e.WarrantyEndDate IN ($1::date, $2::date)
+
+        OR (
+          e.WarrantyEndDate = $3::date
+          AND UPPER(TRIM(COALESCE(e.WarrantyStatus, ''))) = 'EXPIRED'
+        )
+      )
+
+    ORDER BY
+      e.OrganizationID,
+      e.EquipmentID;
+    `,
+    [tomorrow, today, yesterday],
+  );
+
+  if (!equipmentResult.rows.length) {
+    return {
+      candidates: 0,
+      organizations: 0,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+    };
+  }
+
+  // ============================================================
+  // Resolve Engineering HOD recipients per organization.
+  // ============================================================
+  const organizationIDs = uniquePositiveIDs(
+    equipmentResult.rows.map(
+      (row) => row.organizationid,
+    ),
+  );
+
+  const hodResult = await queryable.query(
+    `
+    SELECT DISTINCT
+      um.UserID,
+      uom.OrganizationID
+
+    FROM user_master um
+
+    INNER JOIN user_org_mapping uom
+      ON uom.UserID = um.UserID
+
+    INNER JOIN department_master dm
+      ON dm.DepartmentID = um.DepartmentID
+     AND dm.OrganizationID = uom.OrganizationID
+
+    WHERE uom.OrganizationID = ANY($1::bigint[])
+
+      AND UPPER(TRIM(um.UserType)) = 'HOD'
+
+      AND UPPER(TRIM(dm.DepartmentName)) = 'ENGINEERING'
+
+      AND um.IsActive = TRUE
+      AND um.IsDeleted = FALSE
+      AND um.IsLocked = FALSE
+
+      AND uom.IsActive = TRUE
+      AND uom.IsDeleted = FALSE
+
+      AND dm.IsDeleted = FALSE;
+    `,
+    [organizationIDs],
+  );
+
+  const recipientsByOrganization = new Map();
+
+  for (const row of hodResult.rows) {
+    const organizationID = Number(
+      row.organizationid,
+    );
+
+    const ids =
+      recipientsByOrganization.get(
+        organizationID,
+      ) || [];
+
+    ids.push(row.userid);
+
+    recipientsByOrganization.set(
+      organizationID,
+      uniquePositiveIDs(ids),
+    );
+  }
+
+  // ============================================================
+  // Group equipment by organization.
+  //
+  // This is the main aggregation step.
+  // ============================================================
+  const equipmentByOrganization = new Map();
+
+  for (const row of equipmentResult.rows) {
+    const organizationID = Number(
+      row.organizationid,
+    );
+
+    if (!equipmentByOrganization.has(organizationID)) {
+      equipmentByOrganization.set(
+        organizationID,
+        [],
+      );
+    }
+
+    equipmentByOrganization
+      .get(organizationID)
+      .push(row);
+  }
+
+  // ============================================================
+  // Check whether today's aggregated notification already exists.
+  //
+  // EntityID uses the business date so retrying the job does not
+  // create duplicate organization-level notifications.
+  // ============================================================
+  const existingResult = await queryable.query(
+    `
+    SELECT
+      organization_id,
+      entity_id,
+      action
+
+    FROM notifications
+
+    WHERE Module_Name = $1
+      AND Entity_Type = 'EquipmentWarrantySummary'
+      AND Action = 'WARRANTY_DAILY_SUMMARY'
+      AND Entity_ID = $2
+      AND Organization_ID = ANY($3::bigint[])
+
+      AND (
+        Created_At AT TIME ZONE 'Asia/Kolkata'
+      )::date = $4::date;
+    `,
+    [
+      ENGINEERING_NOTIFICATION_MODULE,
+      today,
+      organizationIDs,
+      today,
+    ],
+  );
+
+  const existingOrganizations =
+    new Set(
+      existingResult.rows.map(
+        (row) => Number(row.organization_id),
+      ),
+    );
+
+  // ============================================================
+  // Notification publisher.
+  // ============================================================
+  const send =
+    publishNotification ||
+    (async (data) => {
+      const {
+        sendMessage,
+      } = require("../../producer/producer");
+
+      const QUEUE =
+        require("../../config/queue");
+
+      return sendMessage(
+        QUEUE.NOTIFICATION.REQUEST,
+        QUEUE.NOTIFICATION.RESPONSE,
+        {
+          action: "CREATE_NOTIFICATION",
+          data,
+        },
+      );
+    });
+
+  const summary = {
+    candidates: equipmentResult.rows.length,
+    organizations: equipmentByOrganization.size,
+    sent: 0,
+    skipped: 0,
+    failed: 0,
+  };
+
+  // ============================================================
+  // Create ONE notification per organization.
+  // ============================================================
+  for (
+    const [
+      organizationID,
+      equipmentRows,
+    ] of equipmentByOrganization
+  ) {
+    const userIds =
+      recipientsByOrganization.get(
+        organizationID,
+      ) || [];
+
+    if (
+      !userIds.length ||
+      existingOrganizations.has(
+        organizationID,
+      )
+    ) {
+      summary.skipped += 1;
+      continue;
+    }
+
+    // ----------------------------------------------------------
+    // Count each warranty event.
+    // ----------------------------------------------------------
+    const tomorrowItems =
+      equipmentRows.filter(
+        (row) =>
+          String(
+            row.warrantyevent || "",
+          ).toUpperCase() === "TOMORROW",
+      );
+
+    const todayItems =
+      equipmentRows.filter(
+        (row) =>
+          String(
+            row.warrantyevent || "",
+          ).toUpperCase() === "TODAY",
+      );
+
+    const expiredItems =
+      equipmentRows.filter(
+        (row) =>
+          String(
+            row.warrantyevent || "",
+          ).toUpperCase() === "EXPIRED",
+      );
+
+    // ----------------------------------------------------------
+    // Build a compact summary message.
+    // ----------------------------------------------------------
+    const summaryParts = [];
+
+    if (tomorrowItems.length) {
+      summaryParts.push(
+        `${tomorrowItems.length} Warranty ${tomorrowItems.length === 1
+          ? "Expires"
+          : "Expire"
+        } Tomorrow`,
+      );
+    }
+
+    if (todayItems.length) {
+      summaryParts.push(
+        `${todayItems.length} Warranty ${todayItems.length === 1
+          ? "Expires"
+          : "Expire"
+        } Today`,
+      );
+    }
+
+    if (expiredItems.length) {
+      summaryParts.push(
+        `${expiredItems.length} ${expiredItems.length === 1
+          ? "Warranty has"
+          : "Warranties have"
+        } Expired and Require Action`,
+      );
+    }
+
+    const message =
+      summaryParts.join(", ") + ".";
+
+    // Keep detailed equipment information only for small batches.
+    // For larger batches, the notification remains summary-only
+    // so it stays short and readable.
+    let finalMessage = message;
+
+    if (equipmentRows.length <= 3) {
+      const equipmentDetails = equipmentRows.map(
+        (row) => {
+          const details = [
+            String(
+              row.description ||
+              "Equipment",
+            ).trim(),
+          ];
+
+          if (
+            String(
+              row.serialnumber || "",
+            ).trim()
+          ) {
+            details.push(
+              `Serial: ${String(
+                row.serialnumber,
+              ).trim()}`,
+            );
+          }
+
+          if (
+            String(
+              row.area || "",
+            ).trim()
+          ) {
+            details.push(
+              `Area: ${String(
+                row.area,
+              ).trim()}`,
+            );
+          }
+
+          details.push(
+            `Warranty End Date: ${dateOnly(
+              row.warrantyenddate,
+            )}`,
+          );
+
+          return `• ${details.join(" | ")}`;
+        },
+      );
+
+      finalMessage = [
+        message,
+        "",
+        "Affected Equipment:",
+        ...equipmentDetails,
+      ].join("\n");
+    }
+
+    try {
+      const response = await send({
+        // organizationId,
+        organizationId: Number(organizationID),
+        title:
+          "Equipment Warranty Summary",
+
+        message: finalMessage,
+
+        type: "info",
+
+        moduleName:
+          ENGINEERING_NOTIFICATION_MODULE,
+
+        entityType:
+          "EquipmentWarrantySummary",
+
+        entityId: today,
+
+        action:
+          "WARRANTY_DAILY_SUMMARY",
+
+        priority: "normal",
+
+        userIds,
+      });
+
+      if (
+        !response ||
+        response.success !== true
+      ) {
+        throw new Error(
+          response?.message ||
+          "No Response from Notification Service",
+        );
+      }
+
+      existingOrganizations.add(
+        organizationID,
+      );
+
+      summary.sent += 1;
+    } catch (error) {
+      summary.failed += 1;
+
+      console.error(
+        `Engineering Warranty Summary Notification Failed for Organization ${organizationID}:`,
+        error.message,
+      );
+    }
+  }
+
+  return summary;
+};
+
 // ============================================================EXPORTS
 module.exports = {
   createEquipment,
@@ -18569,6 +19149,10 @@ module.exports = {
   getEngineeringMaintenanceChart,
   getEngineeringMaintenanceDistribution,
   getEngineeringBreakdownChart,
+<<<<<<< Updated upstream
   generateBreakdownDetailPdf,
   generateAMCDetailPdf
+=======
+  processEquipmentWarrantyNotifications
+>>>>>>> Stashed changes
 };
