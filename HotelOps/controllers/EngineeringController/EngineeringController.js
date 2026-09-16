@@ -594,6 +594,55 @@ exports.updateBreakdownStatus = async (req, res) => {
     return handleError(error, res);
   }
 };
+// ============================================================Breakdown Details Pdf (single Record)
+exports.generateBreakdownDetailPdf = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.generateBreakdownDetailPdf({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        BreakdownID:
+          req.query.BreakdownID,
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    if (!result.success) {
+      return res
+        .status(result.statusCode || 400)
+        .json(result);
+    }
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.fileName}"`,
+    );
+
+    return res.send(result.data);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
 // ============================================================================================ Vendors of Equipment Entries
 // ============================================================CREATE Vendor
 exports.createVendor = async (req, res) => {
@@ -1365,7 +1414,7 @@ exports.getScheduledMissingReports = async (
     );
   }
 };
-// ============================================================================================Pdfs of Equipment
+// ============================================================================================Report Pdfs of Equipment
 // =============================================================1.Total Number of Machine Reports PDF
 exports.getTotalEquipmentReportsPdf = async (
   req,
@@ -2233,6 +2282,57 @@ exports.deleteAMCApprovalConfig = async (
     );
   } catch (error) {
     return handleError(error, res);
+  }
+};
+// ============================================================AMC DETAIL PDF
+exports.generateAMCDetailPdf = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.generateAMCDetailPdf({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        AMCID:
+          req.query.AMCID,
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    if (!result.success) {
+      return res
+        .status(result.statusCode || 400)
+        .json(result);
+    }
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.fileName}"`,
+    );
+
+    return res.send(
+      result.data,
+    );
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
   }
 };
 // ============================================================================================OR Code of Equipment Entries

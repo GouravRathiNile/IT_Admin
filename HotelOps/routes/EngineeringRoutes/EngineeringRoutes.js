@@ -52,7 +52,9 @@ const {
   getEngineeringDashboardSummary,
   getEngineeringMaintenanceChart,
   getEngineeringMaintenanceDistribution,
-  getEngineeringBreakdownChart
+  getEngineeringBreakdownChart,
+  generateBreakdownDetailPdf,
+  generateAMCDetailPdf
 } = require("../../controllers/EngineeringController/EngineeringController");
 const router = express.Router();
 
@@ -73,6 +75,7 @@ router.delete("/DeleteBreakdown",authenticateToken,deleteBreakdown,);
 router.get("/BreakdownList",authenticateToken,getAllBreakdowns,);
 router.get("/BreakdownById/:id",authenticateToken,getBreakdownById,);
 router.put("/BreakdownStatus",authenticateToken,updateBreakdownStatus,);
+router.get("/BreakdownDetailPdf",authenticateToken,generateBreakdownDetailPdf,);
 // =============================================================Vendor of Equipment
 router.post("/CreateVendor",authenticateToken,createVendor,);
 router.put("/UpdateVendor",authenticateToken,updateVendor,);
@@ -96,7 +99,7 @@ router.get("/BreakdownReports",authenticateToken,getAllBreakdownsReport,);
 router.get("/DailyMaintenanceReports",authenticateToken,getDailyMaintenanceReports,);
 router.get("/MonthlyMaintenanceReports",authenticateToken,getMonthlyMaintenanceReports,);
 router.get("/ScheduledMissingReports",authenticateToken,getScheduledMissingReports,);
-// =============================================================PDFs of Equipment
+// =============================================================Report PDFs of Equipment
 router.get("/TotalEquipmentReportsPdf", authenticateToken, getTotalEquipmentReportsPdf);
 router.get("/BreakdownReportsPdf",authenticateToken,getBreakdownReportPdf,);
 router.get("/DailyMaintenanceReportsPdf",authenticateToken,getDailyMaintenanceReportPdf,);
@@ -112,6 +115,8 @@ router.put("/ApproveAMC",authenticateToken,processAMCApproval,);
 router.post("/CreateAMCApprovalConfig",authenticateToken,createAMCApprovalConfig,);
 router.get("/AMCApprovalConfigList",authenticateToken,getAllAMCApprovalConfig,);
 router.delete("/DeleteAMCApprovalConfig",authenticateToken,deleteAMCApprovalConfig,);
+router.get("/AMCDetailPdf",authenticateToken,generateAMCDetailPdf,);
+// =============================================================QR Code of Equipment
 router.get("/EquipmentQRCode",authenticateToken,generateEquipmentQRCode,);
 // =============================================================AMC of Equipment
 router.get("/DashboardSummary",authenticateToken,getEngineeringDashboardSummary,);
