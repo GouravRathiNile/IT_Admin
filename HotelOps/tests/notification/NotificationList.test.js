@@ -57,6 +57,20 @@ test("CAPEX email delivery uses committed notification recipients and stays inde
   assert.notEqual(firebaseIndex, emailIndex);
 });
 
+test("Engineering warranty persistence atomically prevents duplicate database rows", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../services/NotificationService/NotificationService.js"), "utf8"
+  );
+  const create = source.match(/const createNotification = async \(data\)[\s\S]*?const getNotifications/)?.[0] || "";
+  assert.match(source, /const ENGINEERING_WARRANTY_ENTITY = "EquipmentWarrantySummary"/);
+  assert.match(source, /"WARRANTY_DAILY_SUMMARY"[\s\S]*"WARRANTY_EXPIRING_TODAY"[\s\S]*"WARRANTY_EXPIRED"/);
+  assert.match(create, /pg_advisory_xact_lock\(hashtext\(\$1\)\)/);
+  assert.match(create, /organization_id = \$1[\s\S]*entity_id = \$4[\s\S]*action = ANY\(\$5::text\[\]\)/);
+  assert.match(create, /message: "Notification already exists\."/);
+  assert.match(create, /data\.action === "WARRANTY_DAILY_SUMMARY"[\s\S]*message: "Legacy warranty notification ignored\."/);
+  assert.ok(create.indexOf("pg_advisory_xact_lock") < create.indexOf("INSERT INTO notifications"));
+});
+
 test("Guest Glitch create notification is organization-scoped to HOD, GM and CEO recipients", () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, "../../services/GuestGlitchService/GuestGlitchService.js"),

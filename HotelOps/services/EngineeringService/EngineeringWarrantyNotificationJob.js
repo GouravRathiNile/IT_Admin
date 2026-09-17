@@ -1,5 +1,6 @@
 const { pool } = require("../../db");
 const EngineeringService = require("./EngineeringService");
+const EngineeringWarrantyEmailService = require("./EngineeringWarrantyEmailService");
 
 const TIME_ZONE = "Asia/Kolkata";
 const LOCK_KEY = "engineering-equipment-warranty-notification-job";
@@ -15,7 +16,8 @@ const kolkataDateTime = (date = new Date()) => {
 
 // The session-level advisory lock makes the daily job safe across app instances.
 const runEngineeringWarrantyNotificationJob = async ({
-  poolOverride = pool, service = EngineeringService, now = new Date(),
+  poolOverride = pool, service = EngineeringService,
+  warrantyEmailService = EngineeringWarrantyEmailService, now = new Date(),
 } = {}) => {
   const client = await poolOverride.connect();
   let locked = false;
@@ -24,10 +26,17 @@ const runEngineeringWarrantyNotificationJob = async ({
       "SELECT pg_try_advisory_lock(hashtext($1)) AS locked;", [LOCK_KEY]);
     locked = lockResult.rows[0]?.locked === true;
     if (!locked) return { skipped: true, reason: "already-running" };
-    const result = await service.processEquipmentWarrantyNotifications({
-      businessDate: kolkataDateTime(now).date,
-    });
-    return { skipped: false, ...result };
+    const businessDate = kolkataDateTime(now).date;
+    const result = await service.processEquipmentWarrantyNotifications({ businessDate });
+    let warrantyEmail = null;
+    try {
+      warrantyEmail = await warrantyEmailService.processEngineeringWarrantyEmails({ businessDate });
+    } catch (error) {
+      // Warranty email failures stay independent from in-app notifications.
+      console.error("Engineering Warranty Email Job Failed:", error.message);
+      warrantyEmail = { failed: 1 };
+    }
+    return { skipped: false, ...result, warrantyEmail };
   } finally {
     if (locked) {
       try { await client.query("SELECT pg_advisory_unlock(hashtext($1));", [LOCK_KEY]); }
@@ -38,7 +47,9 @@ const runEngineeringWarrantyNotificationJob = async ({
 };
 
 const startEngineeringWarrantyNotificationJob = () => {
-  const hour = Math.min(Math.max(Number(process.env.ENGINEERING_WARRANTY_JOB_HOUR ?? 8), 0), 23);
+  // Default production schedule is 09:00 AM India time; environment values
+  // remain available when a deployment needs a different maintenance window.
+  const hour = Math.min(Math.max(Number(process.env.ENGINEERING_WARRANTY_JOB_HOUR ?? 9), 0), 23);
   const minute = Math.min(Math.max(Number(process.env.ENGINEERING_WARRANTY_JOB_MINUTE ?? 0), 0), 59);
   let lastRunDate = null;
 

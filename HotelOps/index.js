@@ -53,6 +53,7 @@ const EngineeringHandler = require("./consumer/EngineeringConsumer/EngineeringHa
 const NotificationHandler = require("./consumer/NotificationConsumer/NotificationHandler");
 const { startEngineeringWarrantyNotificationJob } = require("./services/EngineeringService/EngineeringWarrantyNotificationJob");
 const MinutesOfMeetingHandler = require("./consumer/MinutesOfMeetingConsumer/MinutesOfMeetingHandler");
+const { startEngineeringMaintenanceNotificationJob } = require("./services/EngineeringService/EngineeringMaintenanceNotificationJob");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -207,6 +208,7 @@ const startServer = async () => {
     // Start only after RabbitMQ consumers are ready; the job itself is
     // concurrency-safe across multiple application instances.
     startEngineeringWarrantyNotificationJob();
+    startEngineeringMaintenanceNotificationJob();
     //=====================================Port
     const PORT = process.env.PORT || 5000;
     //=====================================Project Start

@@ -26,6 +26,18 @@ const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Re
 // existing notification delivery until they are explicitly enabled here.
 const EMAIL_NOTIFICATION_MODULES = new Set(["Capex"]);
 
+const ENGINEERING_WARRANTY_ENTITY = "EquipmentWarrantySummary";
+const ENGINEERING_WARRANTY_ACTIONS = Object.freeze([
+    "WARRANTY_DAILY_SUMMARY", // Legacy aggregate action used by older deployments.
+    "WARRANTY_EXPIRING_TOMORROW",
+    "WARRANTY_EXPIRING_TODAY",
+    "WARRANTY_EXPIRED",
+]);
+
+const warrantyDuplicateActions = (action) => action === "WARRANTY_DAILY_SUMMARY"
+    ? ENGINEERING_WARRANTY_ACTIONS
+    : ["WARRANTY_DAILY_SUMMARY", action];
+
 const normalizeNotificationModuleName = (moduleName) => {
     if (moduleName === undefined || moduleName === null) return moduleName;
     const trimmed = String(moduleName).trim();
@@ -205,6 +217,53 @@ const createNotification = async (data) => {
                 "At least one valid recipient user is required.",
                 400
             );
+        }
+
+        // Warranty summaries are scheduled and may arrive from more than one
+        // app worker. Serialize their persistence and reuse an existing row so
+        // the same organization/event/business-date is never inserted twice.
+        if (moduleName === "Engineering" &&
+            data.entityType === ENGINEERING_WARRANTY_ENTITY &&
+            ENGINEERING_WARRANTY_ACTIONS.includes(data.action) &&
+            data.entityId !== undefined && data.entityId !== null) {
+            const entityId = String(data.entityId);
+            const lockKey = `${moduleName}:${data.organizationId}:${data.entityType}:${entityId}`;
+            await client.query("SELECT pg_advisory_xact_lock(hashtext($1));", [lockKey]);
+
+            // Old workers/queued messages used one combined daily action.
+            // Ignore that obsolete command; current jobs publish one event row
+            // each for TOMORROW, TODAY and EXPIRED.
+            if (data.action === "WARRANTY_DAILY_SUMMARY") {
+                await client.query("COMMIT");
+                transactionStarted = false;
+                return {
+                    success: true,
+                    statusCode: 200,
+                    message: "Legacy warranty notification ignored.",
+                };
+            }
+
+            const duplicateResult = await client.query(`
+                SELECT id
+                FROM notifications
+                WHERE organization_id = $1
+                  AND module_name = $2
+                  AND entity_type = $3
+                  AND entity_id = $4
+                  AND action = ANY($5::text[])
+                ORDER BY id ASC
+                LIMIT 1;`, [data.organizationId, moduleName, data.entityType, entityId,
+                warrantyDuplicateActions(data.action)]);
+            if (duplicateResult.rows.length) {
+                await client.query("COMMIT");
+                transactionStarted = false;
+                return {
+                    success: true,
+                    statusCode: 200,
+                    message: "Notification already exists.",
+                    data: { id: Number(duplicateResult.rows[0].id) },
+                };
+            }
         }
 
 
