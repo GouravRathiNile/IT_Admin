@@ -1846,7 +1846,7 @@ const getMOMActionDetailReport = async (data) => {
   }
 };
 // ===================================================================== Pdfs
-// ============================================================ Generate MOM List PDF
+// ============================================================ MOM List PDF
 const generateMOMListPdf = async (data) => {
   try {
     const values = [];
@@ -1917,6 +1917,7 @@ const generateMOMListPdf = async (data) => {
         m.OrganizationID,
 
         o.ShortName AS OrganizationShortName,
+        o.OrganizationName AS OrganizationFullName,
 
         m.Title,
         m.MeetingDate,
@@ -1982,6 +1983,7 @@ const generateMOMListPdf = async (data) => {
         m.MeetingID,
         m.OrganizationID,
         o.ShortName,
+        o.OrganizationName,
         m.Title,
         m.MeetingDate,
         m.NotesTaker,
@@ -2070,6 +2072,14 @@ const generateMOMListPdf = async (data) => {
         width: 70,
         align: "center",
       },
+
+      {
+        header: "STATUS",
+        value: (row) =>
+          row.Status || "-",
+        width: 60,
+        align: "center",
+      },
     ];
 
 
@@ -2081,7 +2091,7 @@ const generateMOMListPdf = async (data) => {
       metadata.push({
         label: "Organization",
         value:
-          records[0].OrganizationShortName ||
+          result.rows[0]?.organizationfullname ||
           "-",
       });
     }
@@ -2106,12 +2116,6 @@ const generateMOMListPdf = async (data) => {
         value: formatDate(data.ToDate),
       });
     }
-
-    metadata.push({
-      label: "Total Meetings",
-      value: records.length,
-    });
-
 
     // ============================================================ Generate PDF
 
@@ -2168,6 +2172,743 @@ const generateMOMListPdf = async (data) => {
     };
   }
 };
+// ============================================================ Responsible Person Report PDF
+const generateMOMResponsiblePersonReportPdf = async (data) => {
+  try {
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+      "a.IsDeleted = FALSE",
+    ];
+
+
+    // ============================================================ Organization Filter
+
+    if (data.OrganizationID) {
+      values.push(data.OrganizationID);
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+
+    // ============================================================ From Date Filter
+
+    if (data.FromDate) {
+      values.push(data.FromDate);
+
+      conditions.push(
+        `m.MeetingDate >= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================ To Date Filter
+
+    if (data.ToDate) {
+      values.push(data.ToDate);
+
+      conditions.push(
+        `m.MeetingDate <= $${values.length}::DATE`,
+      );
+    }
+
+
+    const whereClause =
+      `WHERE ${conditions.join(" AND ")}`;
+
+
+    // ============================================================ Responsible Person Filter
+
+    if (data.ResponsiblePersonID) {
+      values.push(data.ResponsiblePersonID);
+    }
+
+
+    // ============================================================
+    // SAME QUERY AS GET API
+    // Only LIMIT / OFFSET removed
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      WITH action_users AS
+      (
+        SELECT
+          a.ActionID,
+          a.Status,
+          rp.UserID
+
+        FROM MOM_Entry_Action_Details a
+
+        INNER JOIN MOM_Entry_Master m
+          ON m.MeetingID = a.MeetingID
+
+        CROSS JOIN LATERAL
+        UNNEST(
+          COALESCE(
+            a.ResponsiblePerson,
+            ARRAY[]::BIGINT[]
+          )
+        ) AS rp(UserID)
+
+        ${whereClause}
+      )
+
+      SELECT
+        au.UserID AS ResponsiblePersonID,
+
+        u.FullName AS ResponsiblePersonName,
+
+        COUNT(*)::BIGINT AS TotalActions,
+
+        COUNT(*) FILTER
+        (
+          WHERE LOWER(TRIM(au.Status)) = 'pending'
+        )::BIGINT AS PendingActions,
+
+        COUNT(*) FILTER
+        (
+          WHERE LOWER(TRIM(au.Status)) = 'completed'
+        )::BIGINT AS CompletedActions,
+
+        CASE
+          WHEN COUNT(*) = 0
+            THEN 0
+
+          ELSE ROUND(
+            (
+              COUNT(*) FILTER
+              (
+                WHERE LOWER(TRIM(au.Status)) = 'completed'
+              )::NUMERIC
+              /
+              COUNT(*)::NUMERIC
+            ) * 100,
+            2
+          )
+        END AS CompletionPercentage
+
+      FROM action_users au
+
+      LEFT JOIN user_master u
+        ON u.UserID = au.UserID
+        AND COALESCE(u.IsDeleted, FALSE) = FALSE
+
+      ${
+        data.ResponsiblePersonID
+          ? `WHERE au.UserID = $${values.length}`
+          : ""
+      }
+
+      GROUP BY
+        au.UserID,
+        u.FullName
+
+      ORDER BY
+        u.FullName ASC;
+      `,
+      values,
+    );
+
+
+    // ============================================================
+    // SAME MAPPER AS GET API
+    // ============================================================
+
+    const records =
+      result.rows.map(
+        mapResponsiblePersonReport,
+      );
+
+
+    // ============================================================ Organization Details
+
+    let organization = null;
+
+    if (data.OrganizationID) {
+      const organizationResult = await pool.query(
+        `
+        SELECT
+          OrganizationID,
+          OrganizationName,
+          ShortName
+        FROM Organization_Master
+        WHERE OrganizationID = $1
+          AND COALESCE(IsDeleted, FALSE) = FALSE
+        LIMIT 1;
+        `,
+        [data.OrganizationID],
+      );
+
+      organization =
+        organizationResult.rows[0] || null;
+    }
+
+
+    // ============================================================ PDF Rows
+
+    const pdfRows = records.map((row, index) => ({
+      ...row,
+
+      SrNo:
+        index + 1,
+
+      Completion:
+        `${Number(
+          row.CompletionPercentage || 0,
+        ).toFixed(2)}%`,
+    }));
+
+
+    // ============================================================ PDF Columns
+
+    const columns = [
+      {
+        header: "Sr.No.",
+        value: (row) => row.SrNo,
+        width: 50,
+        align: "center",
+      },
+
+      {
+        header: "Responsible Person",
+        value: (row) =>
+          row.ResponsiblePersonName || "-",
+        width: "*",
+      },
+
+      {
+        header: "Total Actions",
+        value: (row) =>
+          row.TotalActions,
+        width: 105,
+        align: "center",
+      },
+
+      {
+        header: "Pending Actions",
+        value: (row) =>
+          row.PendingActions,
+        width: 110,
+        align: "center",
+      },
+
+      {
+        header: "Completed Actions",
+        value: (row) =>
+          row.CompletedActions,
+        width: 115,
+        align: "center",
+      },
+
+      {
+        header: "Completion %",
+        value: (row) =>
+          row.Completion,
+        width: 110,
+        align: "center",
+      },
+    ];
+
+
+    // ============================================================ Metadata
+
+    const metadata = [];
+
+    if (data.OrganizationID) {
+      metadata.push({
+        label: "Organization",
+        value:
+          organization?.organizationname ||
+          organization?.shortname ||
+          "-",
+      });
+    }
+
+    if (data.ResponsiblePersonID) {
+      metadata.push({
+        label: "Responsible Person",
+        value:
+          records[0]?.ResponsiblePersonName ||
+          "-",
+      });
+    }
+
+    if (data.FromDate) {
+      metadata.push({
+        label: "From Date",
+        value:
+          formatDate(data.FromDate),
+      });
+    }
+
+    if (data.ToDate) {
+      metadata.push({
+        label: "To Date",
+        value:
+          formatDate(data.ToDate),
+      });
+    }
+
+    // ============================================================ Generate PDF
+
+    const pdfBuffer = await generatePdf({
+      title:
+        "RESPONSIBLE PERSON WISE REPORT",
+
+      reportName:
+        "MOM Responsible Person Wise Report",
+
+      organizationId:
+        data.OrganizationID || null,
+
+      orientation:
+        "landscape",
+
+      metadata,
+
+      columns,
+
+      rows:
+        pdfRows,
+
+      pageMargins:
+        [20, 24, 20, 35],
+    });
+
+
+    // ============================================================ Response
+
+    return {
+      success: true,
+
+      message:
+        "Responsible person wise MOM report PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `MOM_Responsible_Person_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "MOM Responsible Person Report PDF Error:",
+      error,
+    );
+
+    return {
+      success: false,
+      statusCode: 503,
+      message:
+        "Unable to generate responsible person wise MOM report PDF.",
+    };
+  }
+};
+// ============================================================ MOM Action Detail Report PDF
+const generateMOMActionDetailReportPdf = async (data) => {
+  try {
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+      "a.IsDeleted = FALSE",
+    ];
+
+
+    // ============================================================ Organization
+
+    if (data.OrganizationID) {
+      values.push(data.OrganizationID);
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+
+    // ============================================================ Title
+
+    if (data.Title) {
+      values.push(
+        `%${String(data.Title).trim()}%`,
+      );
+
+      conditions.push(
+        `m.Title ILIKE $${values.length}`,
+      );
+    }
+
+
+    // ============================================================ Action
+
+    if (data.Action) {
+      values.push(
+        `%${String(data.Action).trim()}%`,
+      );
+
+      conditions.push(
+        `a.Action ILIKE $${values.length}`,
+      );
+    }
+
+
+    // ============================================================ Status
+
+    if (data.Status) {
+      values.push(data.Status);
+
+      conditions.push(
+        `LOWER(TRIM(a.Status)) = LOWER(TRIM($${values.length}))`,
+      );
+    }
+
+
+    // ============================================================ Responsible Person
+
+    if (data.ResponsiblePersonId) {
+      values.push(
+        data.ResponsiblePersonId,
+      );
+
+      conditions.push(
+        `$${values.length}::BIGINT = ANY(
+          COALESCE(
+            a.ResponsiblePerson,
+            ARRAY[]::BIGINT[]
+          )
+        )`,
+      );
+    }
+
+
+    // ============================================================ Meeting Date
+
+    if (data.FromDate) {
+      values.push(data.FromDate);
+
+      conditions.push(
+        `m.MeetingDate >= $${values.length}::DATE`,
+      );
+    }
+
+
+    if (data.ToDate) {
+      values.push(data.ToDate);
+
+      conditions.push(
+        `m.MeetingDate <= $${values.length}::DATE`,
+      );
+    }
+
+
+    const whereClause =
+      `WHERE ${conditions.join(" AND ")}`;
+
+
+    // ============================================================
+    // SAME QUERY AS GET API
+    // Only LIMIT / OFFSET removed
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        a.ActionID,
+        a.MeetingID,
+
+        m.OrganizationID,
+
+        o.ShortName AS OrganizationShortName,
+        o.OrganizationName AS OrganizationFullName,
+
+        m.Title,
+        m.MeetingDate,
+
+        a.Action,
+        a.ResponsiblePerson,
+
+        ARRAY(
+          SELECT u.FullName
+
+          FROM UNNEST(
+            COALESCE(
+              a.ResponsiblePerson,
+              ARRAY[]::BIGINT[]
+            )
+          ) WITH ORDINALITY AS x(UserID, ord)
+
+          INNER JOIN user_master u
+            ON u.UserID = x.UserID
+            AND COALESCE(u.IsDeleted, FALSE) = FALSE
+
+          ORDER BY x.ord
+        ) AS ResponsiblePersonNames,
+
+        a.Deadline,
+        a.Status,
+        a.SrNo
+
+      FROM MOM_Entry_Action_Details a
+
+      INNER JOIN MOM_Entry_Master m
+        ON m.MeetingID = a.MeetingID
+
+      LEFT JOIN Organization_Master o
+        ON o.OrganizationID = m.OrganizationID
+        AND COALESCE(o.IsDeleted, FALSE) = FALSE
+
+      ${whereClause}
+
+      ORDER BY
+        m.MeetingDate DESC,
+        a.SrNo ASC,
+        a.ActionID ASC;
+      `,
+      values,
+    );
+
+
+    // ============================================================
+    // SAME MAPPER AS GET API
+    // ============================================================
+
+    const records =
+      result.rows.map(
+        mapActionDetailReport,
+      );
+
+
+    // ============================================================
+    // Same Organization Data As GET API
+    // ============================================================
+
+    const organizationID =
+      records.length > 0
+        ? records[0].OrganizationID
+        : data.OrganizationID
+          ? Number(data.OrganizationID)
+          : null;
+
+    const organizationShortName =
+      records.length > 0
+        ? records[0].OrganizationShortName
+        : null;
+
+    const organizationFullName =
+      result.rows[0]?.organizationfullname || null;
+
+
+    // ============================================================ PDF Rows
+
+    const pdfRows = records.map(
+      (record, index) => ({
+        ...record,
+
+        DisplaySrNo:
+          index + 1,
+
+        ResponsiblePersonName:
+          record.ResponsiblePersonNames?.length
+            ? record.ResponsiblePersonNames.join(", ")
+            : "-",
+      }),
+    );
+
+
+    // ============================================================ PDF Columns
+
+    const columns = [
+      {
+        header: "Sr.No.",
+        value: (row) =>
+          row.DisplaySrNo,
+        width: 35,
+        align: "center",
+      },
+
+      {
+        header: "Title",
+        value: (row) =>
+          row.Title || "-",
+        width: 150,
+      },
+
+      {
+        header: "Meeting Date",
+        value: (row) =>
+          row.MeetingDate || "-",
+        width: 70,
+        align: "center",
+      },
+
+      {
+        header: "Action",
+        value: (row) =>
+          row.Action || "-",
+        width: 200,
+      },
+
+      {
+        header: "Responsible Person",
+        value: (row) =>
+          row.ResponsiblePersonName,
+        width: 110,
+      },
+
+      {
+        header: "Deadline",
+        value: (row) =>
+          row.Deadline || "-",
+        width: 70,
+        align: "center",
+      },
+
+      {
+        header: "Status",
+        value: (row) =>
+          row.Status || "-",
+        width: 60,
+        align: "center",
+      },
+    ];
+
+
+    // ============================================================ Metadata
+
+    const metadata = [];
+
+    if (organizationID) {
+      metadata.push({
+        label: "Organization",
+        value:
+          organizationFullName ||
+          organizationShortName ||
+          "-",
+      });
+    }
+
+    if (data.Title) {
+      metadata.push({
+        label: "Title",
+        value: data.Title,
+      });
+    }
+
+    if (data.Action) {
+      metadata.push({
+        label: "Action",
+        value: data.Action,
+      });
+    }
+
+    if (data.Status) {
+      metadata.push({
+        label: "Status",
+        value: data.Status,
+      });
+    }
+
+    if (data.ResponsiblePersonId) {
+      metadata.push({
+        label: "Responsible Person",
+        value:
+          records[0]?.ResponsiblePersonNames?.join(", ") ||
+          "-",
+      });
+    }
+
+    if (data.FromDate) {
+      metadata.push({
+        label: "From Date",
+        value:
+          formatDate(data.FromDate),
+      });
+    }
+
+    if (data.ToDate) {
+      metadata.push({
+        label: "To Date",
+        value:
+          formatDate(data.ToDate),
+      });
+    }
+
+    metadata.push({
+      label: "Total Actions",
+      value: records.length,
+    });
+
+
+    // ============================================================ Generate PDF
+
+    const pdfBuffer =
+      await generatePdf({
+        title:
+          "MOM ACTION DETAIL REPORT",
+
+        reportName:
+          "MOM Action Detail Report",
+
+        organizationId:
+          organizationID,
+
+        orientation:
+          "landscape",
+
+        metadata,
+
+        columns,
+
+        rows:
+          pdfRows,
+
+        pageMargins:
+          [20, 24, 20, 35],
+      });
+
+
+    // ============================================================ Response
+
+    return {
+      success: true,
+
+      message:
+        "MOM action detail report PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `MOM_Action_Detail_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "MOM Action Detail Report PDF Error:",
+      error,
+    );
+
+    return {
+      success: false,
+
+      statusCode: 503,
+
+      message:
+        "Unable to generate MOM action detail report PDF.",
+    };
+  }
+};
 module.exports = {
   createMOM,
   getMOMById,
@@ -2181,4 +2922,6 @@ module.exports = {
   getMOMTitles,
   getMOMActions,
   generateMOMListPdf,
+  generateMOMResponsiblePersonReportPdf,
+  generateMOMActionDetailReportPdf
 };

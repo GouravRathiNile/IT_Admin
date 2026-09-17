@@ -1,6 +1,6 @@
 const express = require("express");
 const authenticateToken = require("../../middleware/authMiddleware");
-const { getMOMById,saveMOM,deleteMOM,getAllMOM,updateMOMStatus,getMOMTitles,getMOMActions,getMOMSummaryReport,getMOMResponsiblePersonReport,getMOMActionDetailReport,getMOMListPdf } = require("../../controllers/MinutesOfMeetingController/MinutesOfMeetingController");
+const { getMOMById,saveMOM,deleteMOM,getAllMOM,updateMOMStatus,getMOMTitles,getMOMActions,getMOMSummaryReport,getMOMResponsiblePersonReport,getMOMActionDetailReport,getMOMListPdf,getMOMResponsiblePersonReportPdf,getMOMActionDetailReportPdf } = require("../../controllers/MinutesOfMeetingController/MinutesOfMeetingController");
 const router = express.Router();
 
 // ============================================================ CRUD Operations
@@ -20,6 +20,7 @@ router.get("/ResponsiblePersonReport",authenticateToken,getMOMResponsiblePersonR
 router.get("/ActionDetailsReport",authenticateToken,getMOMActionDetailReport,);
 // ============================================================ Pdfs
 router.get("/MOMListPdf",authenticateToken,getMOMListPdf,);
-
+router.get("/ResponsiblePersonReportPdf",authenticateToken,getMOMResponsiblePersonReportPdf,);
+router.get("/ActionDetailsReportPdf",authenticateToken,getMOMActionDetailReportPdf,);
 
 module.exports = router;
