@@ -18,6 +18,7 @@ const  EQUIPMENT_DETAIL_PDF_FONTS = {
 };
 
 const ENGINEERING_NOTIFICATION_MODULE = "Engineering";
+const LEGACY_WARRANTY_SUMMARY_ACTION = "WARRANTY_DAILY_SUMMARY";
 const WARRANTY_NOTIFICATION_EVENTS = Object.freeze({
   TOMORROW: {
     action: "WARRANTY_EXPIRING_TOMORROW",
@@ -18861,16 +18862,18 @@ const processEquipmentWarrantyNotifications = async ({
       e.Description,
       e.SerialNumber,
       e.Area,
-      e.WarrantyEndDate,
+      -- Keep this as date-only text so JavaScript UTC conversion cannot
+      -- display the previous calendar day.
+      TO_CHAR(e.WarrantyEndDate, 'YYYY-MM-DD') AS WarrantyEndDate,
 
       CASE
-        WHEN e.WarrantyEndDate = $1::date
+        WHEN e.WarrantyEndDate::date = $1::date
           THEN 'TOMORROW'
 
-        WHEN e.WarrantyEndDate = $2::date
+        WHEN e.WarrantyEndDate::date = $2::date
           THEN 'TODAY'
 
-        WHEN e.WarrantyEndDate = $3::date
+        WHEN e.WarrantyEndDate::date = $3::date
           AND UPPER(TRIM(COALESCE(e.WarrantyStatus, ''))) = 'EXPIRED'
           THEN 'EXPIRED'
       END AS WarrantyEvent
@@ -18886,10 +18889,10 @@ const processEquipmentWarrantyNotifications = async ({
     WHERE e.IsDeleted = FALSE
 
       AND (
-        e.WarrantyEndDate IN ($1::date, $2::date)
+        e.WarrantyEndDate::date IN ($1::date, $2::date)
 
         OR (
-          e.WarrantyEndDate = $3::date
+          e.WarrantyEndDate::date = $3::date
           AND UPPER(TRIM(COALESCE(e.WarrantyStatus, ''))) = 'EXPIRED'
         )
       )
@@ -18998,7 +19001,7 @@ const processEquipmentWarrantyNotifications = async ({
   }
 
   // ============================================================
-  // Check whether today's aggregated notification already exists.
+  // Check which organization/event notifications already exist today.
   //
   // EntityID uses the business date so retrying the job does not
   // create duplicate organization-level notifications.
@@ -19014,26 +19017,23 @@ const processEquipmentWarrantyNotifications = async ({
 
     WHERE Module_Name = $1
       AND Entity_Type = 'EquipmentWarrantySummary'
-      AND Action = 'WARRANTY_DAILY_SUMMARY'
-      AND Entity_ID = $2
-      AND Organization_ID = ANY($3::bigint[])
-
-      AND (
-        Created_At AT TIME ZONE 'Asia/Kolkata'
-      )::date = $4::date;
+      AND Action = ANY($2::text[])
+      AND Entity_ID = $3
+      AND Organization_ID = ANY($4::bigint[]);
     `,
     [
       ENGINEERING_NOTIFICATION_MODULE,
+      [LEGACY_WARRANTY_SUMMARY_ACTION,
+        ...Object.values(WARRANTY_NOTIFICATION_EVENTS).map((event) => event.action)],
       today,
       organizationIDs,
-      today,
     ],
   );
 
-  const existingOrganizations =
+  const existingEvents =
     new Set(
       existingResult.rows.map(
-        (row) => Number(row.organization_id),
+        (row) => `${Number(row.organization_id)}:${String(row.action)}`,
       ),
     );
 
@@ -19069,7 +19069,7 @@ const processEquipmentWarrantyNotifications = async ({
   };
 
   // ============================================================
-  // Create ONE notification per organization.
+  // Create one notification for each non-empty event type per organization.
   // ============================================================
   for (
     const [
@@ -19082,12 +19082,7 @@ const processEquipmentWarrantyNotifications = async ({
         organizationID,
       ) || [];
 
-    if (
-      !userIds.length ||
-      existingOrganizations.has(
-        organizationID,
-      )
-    ) {
+    if (!userIds.length) {
       summary.skipped += 1;
       continue;
     }
@@ -19119,48 +19114,37 @@ const processEquipmentWarrantyNotifications = async ({
           ).toUpperCase() === "EXPIRED",
       );
 
-    // ----------------------------------------------------------
-    // Build a compact summary message.
-    // ----------------------------------------------------------
-    const summaryParts = [];
+    const eventGroups = [
+      { type: "TOMORROW", items: tomorrowItems },
+      { type: "TODAY", items: todayItems },
+      { type: "EXPIRED", items: expiredItems },
+    ];
 
-    if (tomorrowItems.length) {
-      summaryParts.push(
-        `${tomorrowItems.length} Warranty ${tomorrowItems.length === 1
-          ? "Expires"
-          : "Expire"
-        } Tomorrow`,
-      );
-    }
-
-    if (todayItems.length) {
-      summaryParts.push(
-        `${todayItems.length} Warranty ${todayItems.length === 1
-          ? "Expires"
-          : "Expire"
-        } Today`,
-      );
-    }
-
-    if (expiredItems.length) {
-      summaryParts.push(
-        `${expiredItems.length} ${expiredItems.length === 1
-          ? "Warranty has"
-          : "Warranties have"
-        } Expired and Require Action`,
-      );
-    }
-
-    const message =
-      summaryParts.join(", ") + ".";
+    for (const group of eventGroups) {
+      if (!group.items.length) continue;
+      const event = WARRANTY_NOTIFICATION_EVENTS[group.type];
+      const eventKey = `${organizationID}:${event.action}`;
+      const legacyEventKey = `${organizationID}:${LEGACY_WARRANTY_SUMMARY_ACTION}`;
+      // Older deployments used one daily-summary action. Treat that row as
+      // delivered so a rolling deployment cannot add the new event row again.
+      if (existingEvents.has(eventKey) || existingEvents.has(legacyEventKey)) {
+        summary.skipped += 1;
+        continue;
+      }
+      const count = group.items.length;
+      const message = group.type === "TOMORROW"
+        ? `${count} Warranty ${count === 1 ? "Expires" : "Expire"} Tomorrow.`
+        : group.type === "TODAY"
+          ? `${count} Warranty ${count === 1 ? "Expires" : "Expire"} Today.`
+          : `${count} ${count === 1 ? "Warranty has" : "Warranties have"} Expired and Require Action.`;
 
     // Keep detailed equipment information only for small batches.
     // For larger batches, the notification remains summary-only
     // so it stays short and readable.
     let finalMessage = message;
 
-    if (equipmentRows.length <= 3) {
-      const equipmentDetails = equipmentRows.map(
+    if (group.items.length <= 3) {
+      const equipmentDetails = group.items.map(
         (row) => {
           const details = [
             String(
@@ -19230,8 +19214,7 @@ const processEquipmentWarrantyNotifications = async ({
 
         entityId: today,
 
-        action:
-          "WARRANTY_DAILY_SUMMARY",
+        action: event.action,
 
         priority: "normal",
 
@@ -19248,18 +19231,17 @@ const processEquipmentWarrantyNotifications = async ({
         );
       }
 
-      existingOrganizations.add(
-        organizationID,
-      );
+      existingEvents.add(eventKey);
 
       summary.sent += 1;
     } catch (error) {
       summary.failed += 1;
 
       console.error(
-        `Engineering Warranty Summary Notification Failed for Organization ${organizationID}:`,
+        `Engineering Warranty Summary Notification Failed for Organization ${organizationID} (${group.type}):`,
         error.message,
       );
+    }
     }
   }
 
