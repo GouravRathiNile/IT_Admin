@@ -67,5 +67,8 @@ module.exports = {
     REQUEST: "notification_request",
     RESPONSE: "notification_response",
   },
-  
+  MOM: {
+  REQUEST: "mom_request_queue",
+  RESPONSE: "mom_response_queue",
+},
 };

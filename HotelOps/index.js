@@ -32,6 +32,7 @@ const ReportRoutes = require("./routes/ReportRoutes/ReportRoutes");
 const EngineeringRoutes = require("./routes/EngineeringRoutes/EngineeringRoutes");
 const PublicEquipmentRoutes = require("./routes/EngineeringRoutes/PublicEquipmentRoutes");
 const NotificationRoutes = require("./routes/NotificationRoute/NotificationRoutes");
+const MinutesOfMeetingRoutes = require("./routes/MinutesOfMeetingRoutes/MinutesOfMeetingRoutes");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
 const OrganizationHandler = require("./consumer/ITAdminConsumer/OrganizationHandler");
@@ -51,6 +52,7 @@ const ReportBuilderHandler = require("./consumer/ReportBuilderConsumer/ReportBui
 const EngineeringHandler = require("./consumer/EngineeringConsumer/EngineeringHandler");
 const NotificationHandler = require("./consumer/NotificationConsumer/NotificationHandler");
 const { startEngineeringWarrantyNotificationJob } = require("./services/EngineeringService/EngineeringWarrantyNotificationJob");
+const MinutesOfMeetingHandler = require("./consumer/MinutesOfMeetingConsumer/MinutesOfMeetingHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -77,6 +79,7 @@ app.use("/api/Report", ReportRoutes);
 app.use("/api/Engineering", EngineeringRoutes);
 app.use("/public", PublicEquipmentRoutes);
 app.use("/api/Notification", NotificationRoutes);
+app.use("/api/MinutesOfMeeting", MinutesOfMeetingRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -190,12 +193,17 @@ const startServer = async () => {
       EngineeringHandler
     );
     // ===================================== Notification Consumer
-
     await startConsumer(
       QUEUE.NOTIFICATION.REQUEST,
       QUEUE.NOTIFICATION.RESPONSE,
       NotificationHandler
     );
+    // ===================================== MOM Consumer
+    await startConsumer(
+      QUEUE.MOM.REQUEST,
+      QUEUE.MOM.RESPONSE,
+      MinutesOfMeetingHandler
+      );
     // Start only after RabbitMQ consumers are ready; the job itself is
     // concurrency-safe across multiple application instances.
     startEngineeringWarrantyNotificationJob();

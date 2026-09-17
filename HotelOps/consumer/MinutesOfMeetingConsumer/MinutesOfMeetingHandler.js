@@ -1,5 +1,7 @@
 const MinutesOfMeetingService = require("../../services/MinutesOfMeetingService/MinutesOfMeetingService");
-const {retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
+const {
+  retryableDatabaseResponse,
+} = require("../../utils/retryableDatabaseError");
 
 const MOMHandler = async (message) => {
   try {
@@ -7,7 +9,8 @@ const MOMHandler = async (message) => {
       // ====================================================== Create
       case "CREATE_MOM":
         return await MinutesOfMeetingService.createMOM(message.data);
-
+      case "UPDATE_MOM":
+        return await MinutesOfMeetingService.updateMOM(message.data);
 
       // ====================================================== Invalid Action
       default:
@@ -17,7 +20,6 @@ const MOMHandler = async (message) => {
           message: "Invalid MOM action.",
         };
     }
-
   } catch (error) {
     console.error("MOM Handler Error:", error.message);
 
@@ -34,6 +36,5 @@ const MOMHandler = async (message) => {
     };
   }
 };
-
 
 module.exports = MOMHandler;
