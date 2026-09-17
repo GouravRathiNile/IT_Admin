@@ -80,10 +80,11 @@ const validateDateFormat = (value, fieldName) => {
     );
   }
 };
-// ============================================================ Create MOM
-exports.createMOM = async (req, res) => {
+// ============================================================ Create / Update MOM
+exports.saveMOM = async (req, res) => {
   try {
     const {
+      MeetingID,
       OrganizationID,
       Title,
       MeetingDate,
@@ -93,6 +94,7 @@ exports.createMOM = async (req, res) => {
       Attendees,
       Absentees,
       Actions,
+      DeleteActionIDs,
     } = req.body || {};
 
     if (!OrganizationID) {
@@ -116,14 +118,43 @@ exports.createMOM = async (req, res) => {
       );
     }
 
-    // ============================================================ Date Format Validation
+    // ============================================================ Date Validation
 
     validateDateFormat(MeetingDate, "Meeting Date");
     validateDateFormat(NextReviewDate, "Next Review Date");
 
     for (const item of Actions || []) {
       validateDateFormat(item.Deadline, "Deadline");
+
+      if (
+        item.Status !== undefined &&
+        !["pending", "completed"].includes(
+          String(item.Status).trim().toLowerCase(),
+        )
+      ) {
+        throw new AppError(
+          "Action Status must be Pending or Completed",
+          STATUS_CODES.BAD_REQUEST,
+        );
+      }
     }
+
+    // ============================================================ Create / Update Check
+
+    const isCreate =
+      MeetingID === undefined ||
+      MeetingID === null ||
+      String(MeetingID).trim() === "" ||
+      Number(MeetingID) === 0;
+
+    if (!isCreate && (!Number.isInteger(Number(MeetingID)) || Number(MeetingID) <= 0)) {
+      throw new AppError(
+        "Meeting ID must be a valid positive integer",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    // ============================================================ Data
 
     const data = {
       OrganizationID,
@@ -136,15 +167,41 @@ exports.createMOM = async (req, res) => {
       Attendees: Attendees || [],
       Absentees: Absentees || [],
 
-      Actions: Actions || [],
+      Actions: (Actions || []).map((item) => ({
+        ...item,
+        ...(item.Status !== undefined
+          ? {
+              Status:
+                String(item.Status).trim().toLowerCase() === "completed"
+                  ? "Completed"
+                  : "Pending",
+            }
+          : {}),
+      })),
     };
+
+    // ============================================================ Create
+
+    if (isCreate) {
+      return sendQueueResponse(
+        req,
+        res,
+        "CREATE_MOM",
+        data,
+        STATUS_CODES.CREATED,
+      );
+    }
+
+    // ============================================================ Update
+
+    data.MeetingID = Number(MeetingID);
+    data.DeleteActionIDs = DeleteActionIDs || [];
 
     return sendQueueResponse(
       req,
       res,
-      "CREATE_MOM",
+      "UPDATE_MOM",
       data,
-      STATUS_CODES.CREATED,
     );
 
   } catch (error) {
@@ -183,21 +240,85 @@ exports.getMOMById = async (req, res) => {
     return handleError(error, res);
   }
 };
-// ============================================================ Update MOM
-exports.updateMOM = async (req, res) => {
+// ============================================================ Delete MOM
+exports.deleteMOM = async (req, res) => {
+  try {
+    const { MeetingID } = req.body || {};
+
+    if (!MeetingID) {
+      throw new AppError(
+        "Meeting ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    return sendQueueResponse(
+      req,
+      res,
+      "DELETE_MOM",
+      {
+        MeetingID,
+      },
+    );
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================ MOM List
+exports.getAllMOM = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      Status,
+      FromDate,
+      ToDate,
+      page,
+      PageSize,
+    } = req.query;
+
+    validateDateFormat(FromDate, "From Date");
+    validateDateFormat(ToDate, "To Date");
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    const response =
+      await MinutesOfMeetingService.getAllMOM({
+        OrganizationID,
+        Status,
+        FromDate,
+        ToDate,
+        page,
+        PageSize,
+      });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch MOM list",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================ Update MOM Status
+exports.updateMOMStatus = async (req, res) => {
   try {
     const {
       MeetingID,
-      OrganizationID,
-      Title,
-      MeetingDate,
-      MeetingTime,
-      NextReviewDate,
-      NotesTaker,
-      Attendees,
-      Absentees,
-      Actions,
-      DeleteActionIDs,
+      Status,
     } = req.body || {};
 
     if (!MeetingID) {
@@ -207,55 +328,28 @@ exports.updateMOM = async (req, res) => {
       );
     }
 
-    if (!OrganizationID) {
+    if (!Status) {
       throw new AppError(
-        "Organization ID is required",
+        "Status is required",
         STATUS_CODES.BAD_REQUEST,
       );
     }
 
-    if (!Title) {
+    if (!["Active", "Archive"].includes(Status)) {
       throw new AppError(
-        "Title is required",
+        "Status must be Active or Archive",
         STATUS_CODES.BAD_REQUEST,
       );
     }
-
-    if (!MeetingDate) {
-      throw new AppError(
-        "Meeting Date is required",
-        STATUS_CODES.BAD_REQUEST,
-      );
-    }
-
-    validateDateFormat(MeetingDate, "Meeting Date");
-    validateDateFormat(NextReviewDate, "Next Review Date");
-
-    for (const item of Actions || []) {
-      validateDateFormat(item.Deadline, "Deadline");
-    }
-
-    const data = {
-      MeetingID,
-      OrganizationID,
-      Title,
-      MeetingDate,
-      MeetingTime: MeetingTime || null,
-      NextReviewDate: NextReviewDate || null,
-
-      NotesTaker: NotesTaker || [],
-      Attendees: Attendees || [],
-      Absentees: Absentees || [],
-
-      Actions: Actions || [],
-      DeleteActionIDs: DeleteActionIDs || [],
-    };
 
     return sendQueueResponse(
       req,
       res,
-      "UPDATE_MOM",
-      data,
+      "UPDATE_MOM_STATUS",
+      {
+        MeetingID,
+        Status,
+      },
     );
 
   } catch (error) {

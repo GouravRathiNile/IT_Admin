@@ -15,9 +15,10 @@ const  MOM_DETAIL_PDF_FONTS = {
 };
 
 // ===================== Response Helpers
-const ok = (message, data) => ({
+const ok = (message, data, metadata) => ({
   success: true,
   message,
+  ...(metadata !== undefined ? metadata : {}),
   ...(data !== undefined ? { data } : {}),
 });
 const fail = (message, statusCode = 400) => ({
@@ -173,10 +174,7 @@ const createMOM = async (data) => {
     await client.query("COMMIT");
 
     return ok(
-      "Meeting created successfully.",
-      {
-        MeetingID: Number(meetingID),
-      },
+      "Meeting created successfully."
     );
 
   } catch (error) {
@@ -580,17 +578,19 @@ const updateMOM = async (data) => {
             Action = $1,
             ResponsiblePerson = $2,
             Deadline = $3,
-            SrNo = $4,
-            ModifiedBy = $5,
+            Status = COALESCE($4, Status),
+            SrNo = $5,
+            ModifiedBy = $6,
             ModifiedDate = CURRENT_TIMESTAMP
-          WHERE ActionID = $6
-            AND MeetingID = $7
+          WHERE ActionID = $7
+            AND MeetingID = $8
             AND IsDeleted = FALSE;
           `,
           [
             item.Action,
             item.ResponsiblePerson || [],
             item.Deadline || null,
+            item.Status || null,
             item.SrNo || i + 1,
             UserID,
             item.ActionID,
@@ -644,6 +644,36 @@ const updateMOM = async (data) => {
     }
 
 
+    // ============================================================ Recalculate Completion Percentage
+
+    await client.query(
+      `
+      UPDATE MOM_Entry_Master
+      SET CompletionPercentage = (
+        SELECT
+          CASE
+            WHEN COUNT(*) = 0 THEN 0
+            ELSE ROUND(
+              (
+                COUNT(*) FILTER (
+                  WHERE LOWER(TRIM(Status)) = 'completed'
+                )::NUMERIC
+                / COUNT(*)::NUMERIC
+              ) * 100,
+              2
+            )
+          END
+        FROM MOM_Entry_Action_Details
+        WHERE MeetingID = $1
+          AND IsDeleted = FALSE
+      )
+      WHERE MeetingID = $1
+        AND IsDeleted = FALSE;
+      `,
+      [MeetingID],
+    );
+
+
     // ============================================================ Commit
 
     await client.query("COMMIT");
@@ -664,12 +694,402 @@ const updateMOM = async (data) => {
     client.release();
   }
 };
+// ============================================================ Delete MOM
+const deleteMOM = async (data) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const {
+      MeetingID,
+      UserID,
+    } = data;
 
 
+    // ============================================================ Check MOM
+
+    const existing = await client.query(
+      `
+      SELECT MeetingID
+      FROM MOM_Entry_Master
+      WHERE MeetingID = $1
+        AND IsDeleted = FALSE
+      FOR UPDATE;
+      `,
+      [MeetingID],
+    );
+
+    if (!existing.rows.length) {
+      await client.query("ROLLBACK");
+
+      return fail(
+        "MOM record not found.",
+        404,
+      );
+    }
+
+
+    // ============================================================ Delete Action Details
+
+    await client.query(
+      `
+      UPDATE MOM_Entry_Action_Details
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+      WHERE MeetingID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [
+        UserID,
+        MeetingID,
+      ],
+    );
+
+
+    // ============================================================ Delete Master
+
+    await client.query(
+      `
+      UPDATE MOM_Entry_Master
+      SET
+        IsDeleted = TRUE,
+        DeletedBy = $1,
+        DeletedDate = CURRENT_TIMESTAMP
+      WHERE MeetingID = $2
+        AND IsDeleted = FALSE;
+      `,
+      [
+        UserID,
+        MeetingID,
+      ],
+    );
+
+
+    // ============================================================ Commit
+
+    await client.query("COMMIT");
+
+    return ok(
+      "Meeting deleted successfully.",
+    );
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    return databaseFailure(
+      error,
+      "Delete MOM",
+    );
+
+  } finally {
+    client.release();
+  }
+};
+// ============================================================ MOM List
+//===================== MOM List Mapper Helper
+const mapMOMList = (row) => ({
+  MeetingID: Number(row.meetingid),
+
+  OrganizationID: Number(row.organizationid),
+
+  OrganizationShortName:
+    row.organizationshortname || null,
+
+  Title: row.title,
+
+  MeetingDate: formatDate(row.meetingdate),
+
+  NotesTaker:
+    Array.isArray(row.notestaker)
+      ? row.notestaker.map(Number)
+      : [],
+
+  NotesTakerNames:
+    row.notestakernames || [],
+
+  NextReviewDate:
+    formatDate(row.nextreviewdate),
+
+  CompletionPercentage:
+    row.completionpercentage == null
+      ? 0
+      : Number(row.completionpercentage),
+
+  Status: row.status,
+});
+//===================== Get MOM List
+const getAllMOM = async (data) => {
+  try {
+    const page = Number(data.page) || 1;
+    const pageSize = Number(data.PageSize) || 10;
+    const offset = (page - 1) * pageSize;
+
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+    ];
+
+
+    // ============================================================ Organization Filter
+
+    if (data.OrganizationID) {
+      values.push(data.OrganizationID);
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+
+    // ============================================================ Status Filter
+
+    if (data.Status) {
+      values.push(data.Status);
+
+      conditions.push(
+        `LOWER(TRIM(m.Status)) = LOWER(TRIM($${values.length}))`,
+      );
+    }
+
+
+    // ============================================================ From Date Filter
+
+    if (data.FromDate) {
+      values.push(data.FromDate);
+
+      conditions.push(
+        `m.MeetingDate >= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================ To Date Filter
+
+    if (data.ToDate) {
+      values.push(data.ToDate);
+
+      conditions.push(
+        `m.MeetingDate <= $${values.length}::DATE`,
+      );
+    }
+
+
+    const whereClause =
+      `WHERE ${conditions.join(" AND ")}`;
+
+
+    // ============================================================ Total Count
+
+    const countResult = await pool.query(
+      `
+      SELECT
+        COUNT(*)::BIGINT AS TotalCount
+
+      FROM MOM_Entry_Master m
+
+      ${whereClause};
+      `,
+      values,
+    );
+
+    const totalCount =
+      Number(countResult.rows[0].totalcount);
+
+
+    // ============================================================ Pagination Values
+
+    const listValues = [
+      ...values,
+      pageSize,
+      offset,
+    ];
+
+    const limitIndex =
+      listValues.length - 1;
+
+    const offsetIndex =
+      listValues.length;
+
+
+    // ============================================================ MOM List
+
+    const result = await pool.query(
+      `
+      SELECT
+        m.MeetingID,
+        m.OrganizationID,
+
+        o.ShortName AS OrganizationShortName,
+
+        m.Title,
+        m.MeetingDate,
+
+        m.NotesTaker,
+
+        ARRAY(
+          SELECT u.FullName
+
+          FROM UNNEST(
+            COALESCE(
+              m.NotesTaker,
+              ARRAY[]::BIGINT[]
+            )
+          ) WITH ORDINALITY AS x(UserID, ord)
+
+          INNER JOIN user_master u
+            ON u.UserID = x.UserID
+            AND COALESCE(u.IsDeleted, FALSE) = FALSE
+
+          ORDER BY x.ord
+        ) AS NotesTakerNames,
+
+        m.NextReviewDate,
+
+
+        CASE
+          WHEN COUNT(a.ActionID) = 0
+            THEN 0
+
+          ELSE ROUND(
+            (
+              COUNT(a.ActionID) FILTER (
+                WHERE LOWER(TRIM(a.Status)) = 'completed'
+              )::NUMERIC
+              /
+              COUNT(a.ActionID)::NUMERIC
+            ) * 100,
+            2
+          )
+        END AS CompletionPercentage,
+
+        m.Status
+
+
+      FROM MOM_Entry_Master m
+
+
+      LEFT JOIN Organization_Master o
+        ON o.OrganizationID = m.OrganizationID
+        AND COALESCE(o.IsDeleted, FALSE) = FALSE
+
+
+      LEFT JOIN MOM_Entry_Action_Details a
+        ON a.MeetingID = m.MeetingID
+        AND a.IsDeleted = FALSE
+
+
+      ${whereClause}
+
+
+      GROUP BY
+        m.MeetingID,
+        m.OrganizationID,
+        o.ShortName,
+        m.Title,
+        m.MeetingDate,
+        m.NotesTaker,
+        m.NextReviewDate,
+        m.Status
+
+
+      ORDER BY
+        m.MeetingDate DESC,
+        m.MeetingID DESC
+
+
+      LIMIT $${limitIndex}
+      OFFSET $${offsetIndex};
+      `,
+      listValues,
+    );
+
+
+    // ============================================================ Mapping
+
+    const records =
+      result.rows.map(mapMOMList);
+
+
+    // ============================================================ Response
+
+    return ok(
+      "MOM list fetched successfully.",
+      records,
+      {
+        TotalCount: totalCount,
+        PageCount: records.length,
+        CurrentPage: page,
+        PageSize: pageSize,
+        TotalPages:
+          Math.ceil(totalCount / pageSize),
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch MOM list",
+    );
+  }
+};
+// ============================================================ Update MOM Status
+const updateMOMStatus = async (data) => {
+  try {
+    const {
+      MeetingID,
+      Status,
+      UserID,
+    } = data;
+
+    const result = await pool.query(
+      `
+      UPDATE MOM_Entry_Master
+      SET
+        Status = $1,
+        ModifiedBy = $2,
+        ModifiedDate = CURRENT_TIMESTAMP
+      WHERE MeetingID = $3
+        AND IsDeleted = FALSE
+      RETURNING MeetingID;
+      `,
+      [
+        Status,
+        UserID,
+        MeetingID,
+      ],
+    );
+
+    if (!result.rows.length) {
+      return fail(
+        "MOM record not found.",
+        404,
+      );
+    }
+
+    return ok(
+      Status === "Archive"
+        ? "Meeting archived successfully."
+        : "Meeting activated successfully.",
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Update MOM status",
+    );
+  }
+};
 
 
 module.exports = {
   createMOM,
   getMOMById,
   updateMOM,
+  deleteMOM,
+  getAllMOM,
+  updateMOMStatus
 };

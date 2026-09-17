@@ -9,9 +9,15 @@ const MOMHandler = async (message) => {
       // ====================================================== Create
       case "CREATE_MOM":
         return await MinutesOfMeetingService.createMOM(message.data);
+      // ====================================================== Update
       case "UPDATE_MOM":
         return await MinutesOfMeetingService.updateMOM(message.data);
-
+      // ====================================================== Delete
+      case "DELETE_MOM":
+        return await MinutesOfMeetingService.deleteMOM(message.data);
+      // ====================================================== Update Status
+      case "UPDATE_MOM_STATUS":
+        return await MinutesOfMeetingService.updateMOMStatus(message.data);
       // ====================================================== Invalid Action
       default:
         return {
