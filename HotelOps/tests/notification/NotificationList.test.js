@@ -71,6 +71,18 @@ test("Engineering warranty persistence atomically prevents duplicate database ro
   assert.ok(create.indexOf("pg_advisory_xact_lock") < create.indexOf("INSERT INTO notifications"));
 });
 
+test("scheduled Engineering maintenance and AMC summaries are persistence-idempotent", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../services/NotificationService/NotificationService.js"), "utf8"
+  );
+  const create = source.match(/const createNotification = async \(data\)[\s\S]*?const getNotifications/)?.[0] || "";
+  assert.match(source, /EquipmentMaintenanceSummary: new Set\(\["MAINTENANCE_DUE"\]\)/);
+  assert.match(source, /EquipmentAMCSummary: new Set\(\["AMC_EXPIRING_TODAY"\]\)/);
+  assert.match(create, /scheduledActions\?\.has\(data\.action\)/);
+  assert.match(create, /entity_type = \$3 AND entity_id = \$4 AND action = \$5/);
+  assert.ok(create.lastIndexOf("pg_advisory_xact_lock") < create.indexOf("INSERT INTO notifications"));
+});
+
 test("Guest Glitch create notification is organization-scoped to HOD, GM and CEO recipients", () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, "../../services/GuestGlitchService/GuestGlitchService.js"),

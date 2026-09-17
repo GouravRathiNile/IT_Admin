@@ -54,6 +54,7 @@ const NotificationHandler = require("./consumer/NotificationConsumer/Notificatio
 const { startEngineeringWarrantyNotificationJob } = require("./services/EngineeringService/EngineeringWarrantyNotificationJob");
 const MinutesOfMeetingHandler = require("./consumer/MinutesOfMeetingConsumer/MinutesOfMeetingHandler");
 const { startEngineeringMaintenanceNotificationJob } = require("./services/EngineeringService/EngineeringMaintenanceNotificationJob");
+const { startEngineeringAMCNotificationJob } = require("./services/EngineeringService/EngineeringAMCNotificationJob");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -209,6 +210,7 @@ const startServer = async () => {
     // concurrency-safe across multiple application instances.
     startEngineeringWarrantyNotificationJob();
     startEngineeringMaintenanceNotificationJob();
+    startEngineeringAMCNotificationJob();
     //=====================================Port
     const PORT = process.env.PORT || 5000;
     //=====================================Project Start
