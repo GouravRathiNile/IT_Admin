@@ -356,3 +356,309 @@ exports.updateMOMStatus = async (req, res) => {
     return handleError(error, res);
   }
 };
+// ============================================================ Get MOM Titles 
+exports.getMOMTitles = async (req, res) => {
+  try {
+    const { OrganizationID } = req.query;
+
+    if (!OrganizationID) {
+      throw new AppError(
+        "Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    const response =
+      await MinutesOfMeetingService.getMOMTitles({
+        OrganizationID,
+      });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch MOM titles",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================ Get MOM Actions
+exports.getMOMActions = async (req, res) => {
+  try {
+    const { OrganizationID } = req.query;
+
+    if (!OrganizationID) {
+      throw new AppError(
+        "Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    const response =
+      await MinutesOfMeetingService.getMOMActions({
+        OrganizationID,
+      });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch MOM actions",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ===================================================================== Report
+// ============================================================ MOM Summary Report
+exports.getMOMSummaryReport = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      FromDate,
+      ToDate,
+    } = req.query;
+
+    validateDateFormat(FromDate, "From Date");
+    validateDateFormat(ToDate, "To Date");
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    const response =
+      await MinutesOfMeetingService.getMOMSummaryReport({
+        OrganizationID,
+        FromDate,
+        ToDate,
+      });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch MOM summary report",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================ Responsible Person Wise Report
+exports.getMOMResponsiblePersonReport = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      ResponsiblePersonID,
+      FromDate,
+      ToDate,
+      page,
+      PageSize,
+    } = req.query;
+
+    validateDateFormat(FromDate, "From Date");
+    validateDateFormat(ToDate, "To Date");
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    const response =
+      await MinutesOfMeetingService.getMOMResponsiblePersonReport({
+        OrganizationID,
+        ResponsiblePersonID,
+        FromDate,
+        ToDate,
+        page,
+        PageSize,
+      });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch responsible person report",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ============================================================ Action Detail Report
+exports.getMOMActionDetailReport = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      ResponsiblePersonId,
+      ResponsiblePersonID,
+      Title,
+      Action,
+      Status,
+      FromDate,
+      ToDate,
+      page,
+      PageSize,
+    } = req.query;
+
+    validateDateFormat(FromDate, "From Date");
+    validateDateFormat(ToDate, "To Date");
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    const response =
+      await MinutesOfMeetingService.getMOMActionDetailReport({
+        OrganizationID,
+        ResponsiblePersonId:
+          ResponsiblePersonId || ResponsiblePersonID,
+        Title,
+        Action,
+        Status,
+        FromDate,
+        ToDate,
+        page,
+        PageSize,
+      });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message || "Unable to fetch MOM action detail report",
+        response.statusCode || STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(error, res);
+  }
+};
+// ===================================================================== Pdfs
+// ============================================================ MOM List PDF
+exports.getMOMListPdf = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      Status,
+      FromDate,
+      ToDate,
+    } = req.query;
+
+
+    // ============================================================ Date Validation
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    const data = {
+      OrganizationID:
+        OrganizationID || null,
+
+      Status:
+        Status || null,
+
+      FromDate:
+        FromDate || null,
+
+      ToDate:
+        ToDate || null,
+    };
+
+
+    const response =
+      await MinutesOfMeetingService
+        .generateMOMListPdf(data);
+
+
+    if (!response.success) {
+      return res
+        .status(
+          response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(response);
+    }
+
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType,
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .send(response.data);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
