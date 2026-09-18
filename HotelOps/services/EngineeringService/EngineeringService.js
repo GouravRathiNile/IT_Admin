@@ -35,6 +35,7 @@ const WARRANTY_NOTIFICATION_EVENTS = Object.freeze({
     title: "Equipment Warranty Expired - Take Action",
   },
 });
+const EXPIRED_WARRANTY_STATUS = "Expired";
 
 const uniquePositiveIDs = (values) => [...new Set(values
   .map((value) => Number(value))
@@ -72,6 +73,70 @@ const databaseFailure = (error, operation) => {
     retryableDatabaseResponse(error) ||
     fail(`Unable to ${operation.toLowerCase()} at this time.`, 500)
   );
+};
+
+// Update only the stored warranty status. Notification and email jobs remain
+// independent consumers of the resulting equipment data.
+const processWarrantyStatusUpdates = async ({ businessDate, poolOverride = pool } = {}) => {
+  const today = String(businessDate || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+    throw new Error("A valid warranty status business date is required.");
+  }
+
+  const client = await poolOverride.connect();
+  let transactionStarted = false;
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    const countsResult = await client.query(`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE WarrantyEndDate < $1::date
+            AND UPPER(TRIM(COALESCE(WarrantyStatus, ''))) <> 'EXPIRED'
+        )::integer AS Candidates,
+        COUNT(*) FILTER (
+          WHERE WarrantyEndDate < $1::date
+            AND UPPER(TRIM(COALESCE(WarrantyStatus, ''))) = 'EXPIRED'
+        )::integer AS AlreadyExpired,
+        COUNT(*) FILTER (
+          WHERE WarrantyEndDate IS NULL OR WarrantyEndDate >= $1::date
+        )::integer AS Skipped
+      FROM Engineering_Equipment_Entry_Master
+      WHERE IsDeleted = FALSE;`, [today]);
+
+    const updateResult = await client.query(`
+      UPDATE Engineering_Equipment_Entry_Master
+      SET WarrantyStatus = $2
+      WHERE IsDeleted = FALSE
+        AND WarrantyEndDate < $1::date
+        AND UPPER(TRIM(COALESCE(WarrantyStatus, ''))) <> 'EXPIRED'
+      RETURNING EquipmentID;`, [today, EXPIRED_WARRANTY_STATUS]);
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+    const counts = countsResult.rows[0] || {};
+    return {
+      businessDate: today,
+      candidates: Number(counts.candidates || 0),
+      updated: updateResult.rows.length,
+      alreadyExpired: Number(counts.alreadyexpired || 0),
+      skipped: Number(counts.skipped || 0),
+      failed: 0,
+    };
+  } catch (error) {
+    if (transactionStarted) {
+      try { await client.query("ROLLBACK"); }
+      catch (rollbackError) {
+        console.error("Engineering Warranty Status Rollback Failed:", rollbackError.message);
+      }
+    }
+    console.error("Engineering Warranty Status Update Failed:", error.message);
+    return { businessDate: today, candidates: 0, updated: 0,
+      alreadyExpired: 0, skipped: 0, failed: 1 };
+  } finally {
+    client.release();
+  }
 };
 
 // ============================================================================================Equipment Entries
@@ -19357,6 +19422,7 @@ module.exports = {
 
   generateBreakdownDetailPdf,
   generateAMCDetailPdf,
+  processWarrantyStatusUpdates,
   processEquipmentWarrantyNotifications,
   generateAllEquipmentQRCodes,
 };

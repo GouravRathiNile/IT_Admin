@@ -52,6 +52,7 @@ const ReportBuilderHandler = require("./consumer/ReportBuilderConsumer/ReportBui
 const EngineeringHandler = require("./consumer/EngineeringConsumer/EngineeringHandler");
 const NotificationHandler = require("./consumer/NotificationConsumer/NotificationHandler");
 const { startEngineeringWarrantyNotificationJob } = require("./services/EngineeringService/EngineeringWarrantyNotificationJob");
+const { startEngineeringWarrantyStatusJob } = require("./services/EngineeringService/EngineeringWarrantyStatusJob");
 const MinutesOfMeetingHandler = require("./consumer/MinutesOfMeetingConsumer/MinutesOfMeetingHandler");
 const { startEngineeringMaintenanceNotificationJob } = require("./services/EngineeringService/EngineeringMaintenanceNotificationJob");
 const { startEngineeringAMCNotificationJob } = require("./services/EngineeringService/EngineeringAMCNotificationJob");
@@ -208,6 +209,7 @@ const startServer = async () => {
       );
     // Start only after RabbitMQ consumers are ready; the job itself is
     // concurrency-safe across multiple application instances.
+    startEngineeringWarrantyStatusJob();
     startEngineeringWarrantyNotificationJob();
     startEngineeringMaintenanceNotificationJob();
     startEngineeringAMCNotificationJob();
