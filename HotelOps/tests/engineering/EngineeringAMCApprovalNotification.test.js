@@ -12,11 +12,11 @@ test("AMC approval notification content uses the exact approved formats", () => 
   const base = { equipmentName: "Chiller", organizationShortName: "HJU",
     actorName: "Approver Name", approverRole: "GM" };
   assert.deepEqual(amcApprovalNotificationContent({ ...base, kind: "CREATE", firstRole: "FC" }),
-    { title: "AMC - Chiller - HJU", message: "AMC created and pending with FC." });
+    { title: "AMC - Chiller - HJU", message: "AMC created and require your action." });
   assert.deepEqual(amcApprovalNotificationContent({ ...base, kind: "APPROVE", nextRole: "RD" }),
     { title: "AMC - Chiller - HJU", message: "Approved by Approver Name." });
   assert.equal(amcApprovalNotificationContent({ ...base, kind: "FINAL_APPROVE" }).message,
-    "Finally approved by Approver Name.");
+    "Approved by Approver Name.");
   assert.equal(amcApprovalNotificationContent({ ...base, kind: "RETURN" }).message,
     "Returned by Approver Name.");
   assert.equal(amcApprovalNotificationContent({ ...base, kind: "REJECT" }).message,
@@ -61,29 +61,29 @@ test("custom configured first and next roles are passed through without hardcodi
     roles: ["GM"], kind: "CREATE", firstRole: "GM", action: "CREATED",
     queryable: db, publishNotification: async (payload) => { payloads.push(payload); return { success: true }; } });
   await notifyAMCApproval({ organizationID: 20, amcID: 13, equipmentName: "Boiler",
-    roles: ["CEO"], directUserIds: [2], excludeUserID: 11, actorUserID: 11,
+    roles: ["CEO"], excludeUserID: 11, actorUserID: 11,
     kind: "APPROVE", approverRole: "GM", nextRole: "CEO", action: "APPROVED",
     queryable: db, publishNotification: async (payload) => { payloads.push(payload); return { success: true }; } });
-  assert.equal(payloads[0].message, "AMC created and pending with GM.");
+  assert.equal(payloads[0].message, "AMC created and require your action.");
   assert.equal(payloads[1].message, "Approved by GM User.");
 });
 
-test("FC to GM to RD to CEO approvals use next role plus creator and exclude actor", async () => {
+test("FC to GM to RD to CEO approvals notify only the next role and exclude actor", async () => {
   const transitions = [["FC", "GM"], ["GM", "RD"], ["RD", "CEO"]];
   for (const [actingRole, nextRole] of transitions) {
     const calls = [];
     const payloads = [];
     await notifyAMCApproval({ organizationID: actingRole === "RD" ? 10 : 20,
-      amcID: 15, equipmentName: "AHU", roles: [nextRole], directUserIds: [2],
+      amcID: 15, equipmentName: "AHU", roles: [nextRole],
       excludeUserID: 7, actorUserID: 7, kind: "APPROVE", approverRole: actingRole,
       nextRole, action: "APPROVED", queryable: { query: async (sql, params) => {
-        calls.push(params); return { rows: [{ userid: 2, organizationshortname: "HJU",
-          actorname: actingRole }, { userid: 9, organizationshortname: "HJU",
+        calls.push(params); return { rows: [{ userid: 9, organizationshortname: "HJU",
           actorname: actingRole }] };
       } }, publishNotification: async (payload) => { payloads.push(payload); return { success: true }; } });
     assert.deepEqual(calls[0][1], [nextRole]);
+    assert.deepEqual(calls[0][2], []);
     assert.equal(calls[0][3], "7");
-    assert.deepEqual(payloads[0].userIds, ["2", "9"]);
+    assert.deepEqual(payloads[0].userIds, ["9"]);
     assert.equal(payloads[0].message, `Approved by ${actingRole}.`);
   }
 });
@@ -101,24 +101,24 @@ test("final approval notifies only the creator", async () => {
   assert.deepEqual(calls[0][2], ["2"]);
   assert.equal(calls[0][3], null);
   assert.deepEqual(payloads[0].userIds, ["2"]);
-  assert.equal(payloads[0].message, "Finally approved by CEO Name.");
+  assert.equal(payloads[0].message, "Approved by CEO Name.");
 });
 
-test("RETURN and REJECT include creator and acting-role peers while excluding actor", async () => {
+test("RETURN and REJECT notify only the creator while excluding the actor", async () => {
   for (const [kind, action, label] of [["RETURN", "RETURNED", "Returned"],
     ["REJECT", "REJECTED", "Rejected"]]) {
     const calls = [];
     const payloads = [];
     await notifyAMCApproval({ organizationID: 20, amcID: 21, equipmentName: "Lift",
-      roles: ["GM"], directUserIds: [2], excludeUserID: 8, actorUserID: 8,
+      directUserIds: [2], excludeUserID: 8, actorUserID: 8,
       kind, approverRole: "GM", action, queryable: { query: async (sql, params) => {
         calls.push(params); return { rows: [{ userid: 2, organizationshortname: "HJU",
-          actorname: "GM User" }, { userid: 9, organizationshortname: "HJU",
           actorname: "GM User" }] };
       } }, publishNotification: async (payload) => { payloads.push(payload); return { success: true }; } });
-    assert.deepEqual(calls[0][1], ["GM"]);
+    assert.deepEqual(calls[0][1], []);
+    assert.deepEqual(calls[0][2], ["2"]);
     assert.equal(calls[0][3], "8");
-    assert.deepEqual(payloads[0].userIds, ["2", "9"]);
+    assert.deepEqual(payloads[0].userIds, ["2"]);
     assert.equal(payloads[0].message, `${label} by GM User.`);
     assert.equal(payloads[0].action, action);
   }
@@ -148,5 +148,13 @@ test("AMC create and actions dispatch only after commit and use configured stage
   assert.ok(approval.lastIndexOf('await client.query("COMMIT")') <
     approval.lastIndexOf("notifyCommittedAMCApproval"));
   assert.match(approval, /nextApprovalRole = approvalFlow\[currentIndex \+ 1\]\?\.ApprovalRole/);
+  assert.doesNotMatch(approval, /roles: \[approvalRole\]/);
+  assert.doesNotMatch(approval, /roles: \[nextApprovalRole\],[\s\S]{0,100}directUserIds/);
   assert.doesNotMatch(approval, /kind: "HOLD"|action: "HOLD"/);
+});
+
+test("approval messages never mention pending stages or final wording", () => {
+  const source = fs.readFileSync(path.resolve(__dirname,
+    "../../services/EngineeringService/EngineeringAMCApprovalNotificationService.js"), "utf8");
+  assert.doesNotMatch(source, /Pending with|pending with|Finally/);
 });

@@ -66,15 +66,15 @@ const resolveAMCApprovalNotificationRecipients = async ({ organizationID,
 };
 
 const amcApprovalNotificationContent = ({ kind, equipmentName,
-  organizationShortName, actorName, approverRole, firstRole, nextRole }) => {
+  organizationShortName, actorName, approverRole }) => {
   const title = `AMC - ${String(equipmentName || "Equipment").trim()} - ${organizationShortName}`;
   const actedBy = actorName || approverRole;
   if (kind === "CREATE") return { title,
-    message: `AMC created and pending with ${firstRole}.` };
+    message: "AMC created and require your action." };
   if (kind === "APPROVE") return { title,
     message: `Approved by ${actedBy}.` };
   if (kind === "FINAL_APPROVE") return { title,
-    message: `Finally approved by ${actedBy}.` };
+    message: `Approved by ${actedBy}.` };
   if (kind === "RETURN") return { title, message: `Returned by ${actedBy}.` };
   if (kind === "REJECT") return { title, message: `Rejected by ${actedBy}.` };
   throw new Error(`Unsupported AMC notification kind: ${kind}`);
@@ -82,14 +82,14 @@ const amcApprovalNotificationContent = ({ kind, equipmentName,
 
 const notifyAMCApproval = async ({ organizationID, amcID, equipmentName,
   roles = [], directUserIds = [], excludeUserID = null, actorUserID = null,
-  kind, approverRole, firstRole, nextRole, action,
+  kind, approverRole, action,
   queryable = pool, publishNotification } = {}) => {
   const context = await resolveAMCApprovalNotificationRecipients({ organizationID,
     roles, directUserIds, excludeUserID, actorUserID, queryable });
   if (!context.userIds.length) return { skipped: true, reason: "no-eligible-recipient" };
   const content = amcApprovalNotificationContent({ kind, equipmentName,
     organizationShortName: context.organizationShortName,
-    actorName: context.actorName, approverRole, firstRole, nextRole });
+    actorName: context.actorName, approverRole });
   const send = publishNotification || (async (data) => {
     const { sendMessage } = require("../../producer/producer");
     const QUEUE = require("../../config/queue");
