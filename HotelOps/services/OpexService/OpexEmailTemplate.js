@@ -21,13 +21,17 @@ const actionDate = (value) => {
     : "-";
 };
 
-const opexPageUrl = () => {
-  if (process.env.OPEX_FRONTEND_URL) return process.env.OPEX_FRONTEND_URL;
+const opexPageUrl = (entityId) => {
+  const encodedId = encodeURIComponent(String(entityId ?? "").trim());
+  if (process.env.OPEX_FRONTEND_URL) {
+    const separator = process.env.OPEX_FRONTEND_URL.includes("?") ? "&" : "?";
+    return `${process.env.OPEX_FRONTEND_URL}${separator}opexId=${encodedId}`;
+  }
   const configuredBase = String(process.env.FRONTEND_URL || "").trim().replace(/\/$/, "");
-  if (configuredBase) return `${configuredBase}/Hotelops/Pages/Opex/Pages`;
+  if (configuredBase) return `${configuredBase}/Hotelops/Pages/Opex/Pages/Details?opexId=${encodedId}`;
   return process.env.NODE_ENV === "production"
     ? ""
-    : "http://localhost:5173/Hotelops/Pages/Opex/Pages";
+    : `http://localhost:5173/Hotelops/Pages/Opex/Pages/Details?opexId=${encodedId}`;
 };
 
 const row = (label, value) => `
@@ -50,7 +54,7 @@ const buildOpexEmail = ({ notificationTitle, organizationName, logoUrl, details 
   const isCreate = kind === "CREATE";
   const title = `OPEX - ${display(details.item)}`;
   const message = introduction(kind, details.actionBy);
-  const requestUrl = opexPageUrl();
+  const requestUrl = opexPageUrl(details.entityId);
   const footerNote = "This is an automated notification. Please do not reply to this email.";
   const text = [
     title, "Dear Sir/Madam,", message,

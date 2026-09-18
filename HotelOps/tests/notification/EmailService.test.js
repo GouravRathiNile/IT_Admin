@@ -45,6 +45,7 @@ test("notification email uses the CAPEX notification content in the generic temp
       action: "CREATED",
       organization_name: "Howard Johnson Udaipur",
       logo_url: "https://assets.example.com/hju.png",
+      entity_id: "42/7",
       email_data: {
         kind: "CREATE", item: "Printer", department: "Finance", quantity: 2,
         rate: 19500, total: 39000, description: "Replacement printer",
@@ -66,7 +67,7 @@ test("notification email uses the CAPEX notification content in the generic temp
     assert.doesNotMatch(sent[0].html, /Action Details/);
     assert.doesNotMatch(sent[0].html, />Module</);
     assert.doesNotMatch(sent[0].html, />Status</);
-    assert.match(sent[0].html, /<a href="http:\/\/localhost:5173\/Hotelops\/Pages\/Capex\/Pages"[^>]*>VIEW CAPEX REQUEST<\/a>/);
+    assert.match(sent[0].html, /<a href="http:\/\/localhost:5173\/Hotelops\/Pages\/Capex\/Pages\/Details\?capexId=42%2F7"[^>]*>VIEW CAPEX REQUEST<\/a>/);
     assert.equal((sent[0].html.match(/Replacement printer/g) || []).length, 1);
     assert.match(sent[0].text, /automated notification from HotelOps/);
   });
@@ -81,6 +82,7 @@ test("CAPEX action email contains action details and configurable request link",
         title: "CAPEX - Printer - Finance - HJU",
         message: "Approved by GM",
         organization_name: "Howard Johnson Udaipur",
+        entity_id: 99,
         email_data: {
           kind: "APPROVE", item: "Printer", department: "Finance", quantity: 2,
           rate: 19500, total: 39000, description: "Replacement printer",
@@ -99,7 +101,7 @@ test("CAPEX action email contains action details and configurable request link",
       assert.match(sent[0].html, /Approved/);
       assert.match(sent[0].html, /General Manager/);
       assert.match(sent[0].html, /word-break:break-word;overflow-wrap:anywhere/);
-      assert.match(sent[0].html, /<a href="https:\/\/hotelops\.example\.com\/capex"/);
+      assert.match(sent[0].html, /<a href="https:\/\/hotelops\.example\.com\/capex\?capexId=99"/);
     });
   } finally {
     if (originalUrl === undefined) delete process.env.CAPEX_FRONTEND_URL;

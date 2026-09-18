@@ -6,6 +6,8 @@ const EMAIL_TYPE = "AMC_EXPIRING_TODAY";
 const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;")
   .replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 const display = (value) => value == null || String(value).trim() === "" ? "-" : String(value);
+const amcPageUrl = () => process.env.ENGINEERING_AMC_FRONTEND_URL
+  || `${String(process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "")}/Hotelops/Pages/AMCRenewal/Pages/List`;
 
 const ensureDeliveryLog = (queryable) => queryable.query(`
   CREATE TABLE IF NOT EXISTS Engineering_Email_Delivery_Log (
@@ -18,6 +20,7 @@ const ensureDeliveryLog = (queryable) => queryable.query(`
   );`);
 
 const buildAMCEmail = ({ organizationName, logoUrl, businessDate, rows }) => {
+  const requestUrl = amcPageUrl();
   const subject = `[HotelOps] AMC Expiring Today - ${organizationName}`;
   const logo = logoUrl
     ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organizationName)} logo" width="92" style="display:block;width:92px;max-height:58px;object-fit:contain;border:0;">`
@@ -39,6 +42,7 @@ const buildAMCEmail = ({ organizationName, logoUrl, businessDate, rows }) => {
     `AMC Expiry Date: ${businessDate}`, "Dear Sir/Madam,", introduction,
     `Total Equipment: ${rows.length}`,
     ...rows.map((row) => `${display(row.equipmentname)} | ${display(row.serialnumber)} | ${display(row.area)} | ${display(row.amctype)} | ${display(row.amcstartdate)} | ${display(row.amcenddate)} | ${display(row.amcstatus)} | ${display(row.amcamount ?? row.amcyearlyexpense)} | ${display(row.vendorname)}`),
+    `View AMC: ${requestUrl}`,
     "This is an automated notification from HotelOps. Please do not reply."].join("\n");
   const headers = ["Equipment", "Serial Number", "Make / Model", "Area", "AMC Type",
     "AMC From", "AMC To", "AMC Status", "Yearly Expense", "Vendor"];
@@ -47,6 +51,7 @@ const buildAMCEmail = ({ organizationName, logoUrl, businessDate, rows }) => {
     <tr><td style="padding:22px 24px 14px;"><div style="font-size:19px;font-weight:700;color:#b54708;">AMC Expiring Today</div><div style="margin-top:7px;color:#52647a;font-size:13px;">AMC Expiry Date: ${escapeHtml(businessDate)} &nbsp;|&nbsp; Total Equipment: ${rows.length}</div><div style="margin-top:18px;font-size:14px;">Dear Sir/Madam,</div></td></tr>
     <tr><td style="padding:0 24px 18px;"><div style="padding:12px 14px;background:#fff7ed;border-left:4px solid #b54708;font-size:13px;line-height:1.5;">${introduction}</div></td></tr>
     <tr><td style="padding:0 24px 24px;overflow-x:auto;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:11px;"><tr style="background:#eaf1f8;color:#082b5c;">${headers.map((label) => `<th style="padding:8px;border:1px solid #dbe5f0;text-align:left;">${label}</th>`).join("")}</tr>${tableRows}</table></td></tr>
+    <tr><td align="center" style="padding:0 24px 26px;"><a href="${escapeHtml(requestUrl)}" target="_blank" style="display:inline-block;padding:13px 24px;background:#0b5cab;color:#ffffff;text-decoration:none;border-radius:5px;font-size:13px;font-weight:700;letter-spacing:.3px;">View AMC</a></td></tr>
     <tr><td align="center" style="padding:15px 20px;background:#f3f6fa;border-top:1px solid #dbe5f0;color:#718096;font-size:11px;">This is an automated notification from HotelOps. Please do not reply.<br>HotelOps</td></tr>
   </table></td></tr></table></body></html>`;
   return { subject, text, html };

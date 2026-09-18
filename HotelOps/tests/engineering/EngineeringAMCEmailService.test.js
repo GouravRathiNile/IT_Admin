@@ -24,6 +24,8 @@ test("AMC email contains complete escaped table and plain-text fallback", () => 
   assert.match(message.html, /Vendor &amp; Co/);
   assert.match(message.html, /Yearly Expense/);
   assert.match(message.text, /Dear Sir\/Madam/);
+  assert.match(message.html, /href="http:\/\/localhost:5173\/Hotelops\/Pages\/AMCRenewal\/Pages\/List"[^>]*>View AMC<\/a>/);
+  assert.match(message.text, /View AMC: http:\/\/localhost:5173\/Hotelops\/Pages\/AMCRenewal\/Pages\/List/);
 });
 
 test("AMC email deduplicates recipients and writes persistent delivery markers", async () => {

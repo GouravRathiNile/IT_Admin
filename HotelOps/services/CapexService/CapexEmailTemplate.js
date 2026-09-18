@@ -11,10 +11,14 @@ const actionDate = (value) => {
   return date && !Number.isNaN(date.getTime())
     ? date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "-";
 };
-const capexPageUrl = () => {
-  if (process.env.CAPEX_FRONTEND_URL) return process.env.CAPEX_FRONTEND_URL;
+const capexPageUrl = (entityId) => {
+  const encodedId = encodeURIComponent(String(entityId ?? "").trim());
+  if (process.env.CAPEX_FRONTEND_URL) {
+    const separator = process.env.CAPEX_FRONTEND_URL.includes("?") ? "&" : "?";
+    return `${process.env.CAPEX_FRONTEND_URL}${separator}capexId=${encodedId}`;
+  }
   const base = String(process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
-  return `${base}/Hotelops/Pages/Capex/Pages`;
+  return `${base}/Hotelops/Pages/Capex/Pages/Details?capexId=${encodedId}`;
 };
 const row = (label, value) => `<tr><td style="width:38%;padding:9px 12px;border-bottom:1px solid #dbe5f0;background:#f5f8fc;color:#52647a;font-size:13px;font-weight:600;vertical-align:top;word-break:break-word;overflow-wrap:anywhere;">${escapeHtml(label)}</td><td style="padding:9px 12px;border-bottom:1px solid #dbe5f0;color:#172033;font-size:13px;vertical-align:top;word-break:break-word;overflow-wrap:anywhere;">${escapeHtml(display(value))}</td></tr>`;
 const introduction = (kind, actor) => ({
@@ -30,7 +34,7 @@ const sendNotificationEmail = async (email, notification) => {
   const details = notification?.email_data || {};
   const organizationName = String(notification?.organization_name || "HotelOps").trim();
   const logoUrl = String(notification?.logo_url || "").trim();
-  const requestUrl = capexPageUrl();
+  const requestUrl = capexPageUrl(notification?.entity_id);
   const kind = String(details.kind || "").toUpperCase();
   const isCreate = kind === "CREATE";
   const emailTitle = `CAPEX - ${display(details.item)}`;

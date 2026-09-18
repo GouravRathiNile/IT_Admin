@@ -6,8 +6,11 @@ const EMAIL_TYPE = "MAINTENANCE_DUE";
 const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;")
   .replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 const display = (value) => value == null || String(value).trim() === "" ? "-" : String(value);
+const equipmentPageUrl = () => process.env.ENGINEERING_EQUIPMENT_FRONTEND_URL
+  || `${String(process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "")}/Hotelops/Pages/EngineeringModule/Pages/List`;
 
 const buildMaintenanceEmail = ({ organizationName, logoUrl, maintenanceDate, rows }) => {
+  const requestUrl = equipmentPageUrl();
   const subject = `[HotelOps] Today's Scheduled Maintenance - ${organizationName}`;
   const logo = logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(organizationName)} logo" width="92" style="display:block;width:92px;max-height:58px;object-fit:contain;border:0;">`
     : `<div style="font-size:18px;font-weight:700;color:#fff;">HotelOps</div>`;
@@ -27,12 +30,14 @@ const buildMaintenanceEmail = ({ organizationName, logoUrl, maintenanceDate, row
     `Maintenance Date: ${maintenanceDate}`, "Dear Sir/Madam,", introduction,
     `Total Equipment: ${rows.length}`,
     ...rows.map((row) => `${display(row.equipmentname)} | ${display(row.serialnumber)} | ${display(row.area)} | ${display(row.scheduleofservicing)} | Day ${display(row.scheduleday)} | Pending`),
+    `View Equipment: ${requestUrl}`,
     "This is an automated notification from HotelOps. Please do not reply."].join("\n");
   const html = `<!doctype html><html><body style="margin:0;background:#eef3f8;font-family:Arial,sans-serif;color:#172033;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 10px;"><table role="presentation" width="920" cellspacing="0" cellpadding="0" style="width:100%;max-width:920px;background:#fff;border-collapse:collapse;">
     <tr><td style="padding:20px 24px;background:#082b5c;color:#fff;"><table role="presentation" width="100%"><tr><td width="112">${logo}</td><td><div style="font-size:20px;font-weight:700;">${escapeHtml(organizationName)}</div><div style="margin-top:4px;font-size:13px;color:#c9d9ec;">Engineering Maintenance</div></td></tr></table></td></tr>
     <tr><td style="padding:22px 24px 14px;"><div style="font-size:19px;font-weight:700;color:#0b5cab;">Today's Scheduled Maintenance</div><div style="margin-top:7px;color:#52647a;font-size:13px;">Maintenance Date: ${escapeHtml(maintenanceDate)} &nbsp;|&nbsp; Total Equipment: ${rows.length}</div><div style="margin-top:18px;font-size:14px;">Dear Sir/Madam,</div></td></tr>
     <tr><td style="padding:0 24px 18px;"><div style="padding:12px 14px;background:#edf6ff;border-left:4px solid #0b5cab;font-size:13px;line-height:1.5;">${introduction}</div></td></tr>
     <tr><td style="padding:0 24px 24px;overflow-x:auto;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:11px;"><tr style="background:#eaf1f8;color:#082b5c;">${["Equipment", "Serial Number", "Make / Model", "Area", "Schedule", "Schedule Day", "Maintenance / Task", "Assigned Engineer", "Status"].map((label) => `<th style="padding:8px;border:1px solid #dbe5f0;text-align:left;">${label}</th>`).join("")}</tr>${tableRows}</table></td></tr>
+    <tr><td align="center" style="padding:0 24px 26px;"><a href="${escapeHtml(requestUrl)}" target="_blank" style="display:inline-block;padding:13px 24px;background:#0b5cab;color:#ffffff;text-decoration:none;border-radius:5px;font-size:13px;font-weight:700;letter-spacing:.3px;">View Equipment</a></td></tr>
     <tr><td align="center" style="padding:15px 20px;background:#f3f6fa;border-top:1px solid #dbe5f0;color:#718096;font-size:11px;">This is an automated notification from HotelOps. Please do not reply.<br>HotelOps</td></tr>
   </table></td></tr></table></body></html>`;
   return { subject, text, html };

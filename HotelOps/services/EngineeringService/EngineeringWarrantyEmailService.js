@@ -13,6 +13,8 @@ const addDays = (date, days) => {
   value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
 };
+const equipmentPageUrl = () => process.env.ENGINEERING_EQUIPMENT_FRONTEND_URL
+  || `${String(process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "")}/Hotelops/Pages/EngineeringModule/Pages/List`;
 
 // A database marker makes successful deliveries restart-safe while failed
 // recipients remain eligible for a controlled retry on the next job run.
@@ -29,6 +31,7 @@ const ensureDeliveryLog = (queryable) => queryable.query(`
   );`);
 
 const buildWarrantyEmail = ({ organizationName, logoUrl, warrantyDate, rows, expired }) => {
+  const requestUrl = equipmentPageUrl();
   const heading = expired ? "Expired Warranty / Action Pending" : "Today's Warranty";
   const subject = expired
     ? `[HotelOps] Expired Warranty - Action Pending - ${organizationName}`
@@ -53,6 +56,7 @@ const buildWarrantyEmail = ({ organizationName, logoUrl, warrantyDate, rows, exp
   const text = [heading, `Organization: ${organizationName}`, `Warranty Date: ${warrantyDate}`,
     "Dear Sir/Madam,", introduction, `Total Equipment: ${rows.length}`,
     ...rows.map((row) => `${display(row.equipmentname)} | ${display(row.serialnumber)} | ${display(row.make)} / ${display(row.modelnumber)} | ${display(row.area)} | ${dateOnly(row.warrantystartdate) || "-"} | ${dateOnly(row.warrantyenddate) || "-"} | ${display(row.warrantystatus)}`),
+    `View Equipment: ${requestUrl}`,
     "This is an automated notification from HotelOps. Please do not reply."].join("\n");
   const html = `<!doctype html><html><body style="margin:0;background:#eef3f8;font-family:Arial,sans-serif;color:#172033;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:24px 10px;">
@@ -63,6 +67,7 @@ const buildWarrantyEmail = ({ organizationName, logoUrl, warrantyDate, rows, exp
       <tr><td style="padding:0 24px 24px;overflow-x:auto;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:12px;">
         <tr style="background:#eaf1f8;color:#082b5c;"><th style="padding:9px;border:1px solid #dbe5f0;text-align:left;">Equipment</th><th style="padding:9px;border:1px solid #dbe5f0;text-align:left;">Serial Number</th><th style="padding:9px;border:1px solid #dbe5f0;text-align:left;">Make / Model</th><th style="padding:9px;border:1px solid #dbe5f0;text-align:left;">Area</th><th style="padding:9px;border:1px solid #dbe5f0;text-align:left;">Warranty From</th><th style="padding:9px;border:1px solid #dbe5f0;text-align:left;">Warranty To</th><th style="padding:9px;border:1px solid #dbe5f0;text-align:left;">Warranty Status</th></tr>${rowsHtml}
       </table></td></tr>
+      <tr><td align="center" style="padding:0 24px 26px;"><a href="${escapeHtml(requestUrl)}" target="_blank" style="display:inline-block;padding:13px 24px;background:#0b5cab;color:#ffffff;text-decoration:none;border-radius:5px;font-size:13px;font-weight:700;letter-spacing:.3px;">View Equipment</a></td></tr>
       <tr><td align="center" style="padding:15px 20px;background:#f3f6fa;border-top:1px solid #dbe5f0;color:#718096;font-size:11px;">This is an automated notification from HotelOps. Please do not reply.<br>HotelOps</td></tr>
     </table></td></tr></table></body></html>`;
   return { subject, text, html };

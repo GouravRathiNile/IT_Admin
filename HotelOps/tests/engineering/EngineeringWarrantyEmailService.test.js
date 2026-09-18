@@ -103,6 +103,8 @@ test("business date query uses today and yesterday and HTML values are escaped",
   assert.match(email.html, /https:\/\/assets\.example\.com\/hotel-logo\.png/);
   assert.match(email.html, /Dear Sir\/Madam,/);
   assert.match(email.text, /Dear Sir\/Madam,/);
+  assert.match(email.html, /href="http:\/\/localhost:5173\/Hotelops\/Pages\/EngineeringModule\/Pages\/List"[^>]*>View Equipment<\/a>/);
+  assert.match(email.text, /View Equipment: http:\/\/localhost:5173\/Hotelops\/Pages\/EngineeringModule\/Pages\/List/);
   for (const label of ["Equipment", "Serial Number", "Make / Model", "Area", "Warranty From", "Warranty To", "Warranty Status"])
     assert.match(email.html, new RegExp(label.replace("/", "\\/")));
 });

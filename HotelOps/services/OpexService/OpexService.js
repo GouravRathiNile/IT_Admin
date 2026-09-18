@@ -156,7 +156,7 @@ const notifyOpex = async ({ organizationID, opexID, department, roles, directUse
   Promise.resolve().then(() => sendOpexEmails({
     emails: context.emails, organizationID, organizationName: context.organizationName,
     notificationTitle: content.title,
-    details: { kind, item, department, quantity: qty, rate, total, description,
+    details: { entityId: opexID, kind, item, department, quantity: qty, rate, total, description,
       actionQuantity, remark, actionBy: context.actorName || approverRole || "-", actionDate },
   })).catch((error) => console.error("OPEX email dispatch failed:", error.message));
 };
