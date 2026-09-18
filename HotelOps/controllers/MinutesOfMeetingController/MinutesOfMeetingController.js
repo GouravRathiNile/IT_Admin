@@ -868,3 +868,69 @@ exports.getMOMActionDetailReportPdf = async (
     );
   }
 };
+// ============================================================ MOM Detail PDF
+exports.generateMOMDetailPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const { MeetingID } = req.params;
+
+    const { Status } = req.query;
+
+
+    if (!MeetingID) {
+      throw new AppError(
+        "Meeting ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    const result =
+      await MinutesOfMeetingService
+        .generateMOMDetailPdf({
+          MeetingID,
+          Status:
+            Status || null,
+        });
+
+
+    if (!result.success) {
+      return res
+        .status(
+          result.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(result);
+    }
+
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.data.length,
+    );
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .send(result.data);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};

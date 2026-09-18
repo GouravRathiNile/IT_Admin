@@ -5,7 +5,7 @@ const { formatDate } = require("../../utils/dateFormatter");
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
 const PdfPrinter = require("pdfmake");
 const path = require("path");
-const  MOM_DETAIL_PDF_FONTS = {
+const MOM_DETAIL_PDF_FONTS = {
   Roboto: {
     normal: path.join(process.cwd(), "fonts/Roboto-Regular.ttf"),
     bold: path.join(process.cwd(), "fonts/Roboto-Medium.ttf"),
@@ -2909,6 +2909,1545 @@ const generateMOMActionDetailReportPdf = async (data) => {
     };
   }
 };
+// ============================================================ MOM Detail PDF
+const generateMOMDetailPdf = async (data) => {
+  try {
+    const meetingID =
+      Number(data.MeetingID);
+
+    if (
+      !Number.isInteger(meetingID) ||
+      meetingID <= 0
+    ) {
+      return fail(
+        "Valid MeetingID is required.",
+        400,
+      );
+    }
+
+
+    // =========================================================
+    // SAME GET BY ID API
+    // Same Query
+    // Same Conditions
+    // Same Mapper
+    // =========================================================
+
+    const momResult =
+      await getMOMById({
+        MeetingID:
+          meetingID,
+      });
+
+    if (!momResult.success) {
+      return momResult;
+    }
+
+    const detail =
+      momResult.data;
+
+
+    // =========================================================
+    // ACTION STATUS FILTER
+    // Blank = All
+    // Pending = Pending only
+    // Completed = Completed only
+    // =========================================================
+
+    const allActions =
+      detail.Actions || [];
+
+    let actions = allActions;
+
+    if (
+      data.Status &&
+      String(data.Status).trim()
+    ) {
+      const status =
+        String(data.Status)
+          .trim()
+          .toLowerCase();
+
+      actions =
+        actions.filter(
+          (item) =>
+            String(
+              item.Status || "",
+            )
+              .trim()
+              .toLowerCase() ===
+            status,
+        );
+    }
+
+
+    // =========================================================
+    // PDF DESIGN
+    // =========================================================
+
+    const COLORS = {
+      navy:
+        "#082B5C",
+
+      label:
+        "#082B5C",
+
+      text:
+        "#172033",
+
+      muted:
+        "#64748B",
+
+      border:
+        "#CFD7E3",
+
+      labelBackground:
+        "#F4F6F9",
+    };
+
+
+    const displayValue = (value) =>
+      value === null ||
+      value === undefined ||
+      String(value).trim() === ""
+        ? "-"
+        : String(value);
+
+
+    // =========================================================
+    // Canvas Helpers
+    // =========================================================
+
+    const line = (
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth = 1.1,
+    ) => ({
+      type: "line",
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth,
+      lineColor:
+        COLORS.navy,
+    });
+
+
+    const rect = (
+      x,
+      y,
+      w,
+      h,
+      r = 0,
+    ) => ({
+      type: "rect",
+      x,
+      y,
+      w,
+      h,
+      r,
+      lineWidth: 1.1,
+      lineColor:
+        COLORS.navy,
+    });
+
+
+    const ellipse = (
+      x,
+      y,
+      r1,
+      r2 = r1,
+    ) => ({
+      type: "ellipse",
+      x,
+      y,
+      r1,
+      r2,
+      lineWidth: 1.1,
+      lineColor:
+        COLORS.navy,
+    });
+
+
+    // =========================================================
+    // Icons
+    // =========================================================
+
+    const fieldIcon = (type) => {
+      const icons = {
+
+        organization: [
+          rect(
+            4,
+            2,
+            10,
+            15,
+            1,
+          ),
+
+          line(
+            1,
+            17,
+            17,
+            17,
+          ),
+
+          line(
+            7,
+            6,
+            7,
+            8,
+          ),
+
+          line(
+            11,
+            6,
+            11,
+            8,
+          ),
+
+          line(
+            7,
+            11,
+            7,
+            13,
+          ),
+
+          line(
+            11,
+            11,
+            11,
+            13,
+          ),
+        ],
+
+
+        calendar: [
+          rect(
+            1,
+            4,
+            16,
+            13,
+            1,
+          ),
+
+          line(
+            1,
+            8,
+            17,
+            8,
+          ),
+
+          line(
+            5,
+            2,
+            5,
+            6,
+          ),
+
+          line(
+            13,
+            2,
+            13,
+            6,
+          ),
+        ],
+
+
+        person: [
+          ellipse(
+            9,
+            5,
+            3,
+          ),
+
+          {
+            type:
+              "polyline",
+
+            points: [
+              {
+                x: 2,
+                y: 17,
+              },
+              {
+                x: 3,
+                y: 13,
+              },
+              {
+                x: 6,
+                y: 11,
+              },
+              {
+                x: 12,
+                y: 11,
+              },
+              {
+                x: 15,
+                y: 13,
+              },
+              {
+                x: 16,
+                y: 17,
+              },
+            ],
+
+            lineWidth:
+              1.1,
+
+            lineColor:
+              COLORS.navy,
+          },
+        ],
+
+
+        status: [
+          ellipse(
+            9,
+            9,
+            7,
+          ),
+
+          line(
+            5,
+            9,
+            8,
+            12,
+          ),
+
+          line(
+            8,
+            12,
+            14,
+            6,
+          ),
+        ],
+
+
+        title: [
+          rect(
+            2,
+            2,
+            14,
+            14,
+            1,
+          ),
+
+          line(
+            5,
+            6,
+            13,
+            6,
+          ),
+
+          line(
+            5,
+            9,
+            13,
+            9,
+          ),
+
+          line(
+            5,
+            12,
+            11,
+            12,
+          ),
+        ],
+
+
+        time: [
+          ellipse(
+            9,
+            9,
+            7,
+          ),
+
+          line(
+            9,
+            9,
+            9,
+            5,
+          ),
+
+          line(
+            9,
+            9,
+            13,
+            11,
+          ),
+        ],
+
+
+        percentage: [
+          ellipse(
+            5,
+            5,
+            2,
+          ),
+
+          ellipse(
+            13,
+            13,
+            2,
+          ),
+
+          line(
+            5,
+            14,
+            13,
+            4,
+          ),
+        ],
+      };
+
+
+      const iconScale =
+        0.82;
+
+
+      return (
+        icons[type] ||
+        icons.title
+      ).map((shape) => {
+
+        const scaledShape = {
+          ...shape,
+
+          lineWidth:
+            (
+              shape.lineWidth ||
+              1
+            ) *
+            iconScale,
+        };
+
+
+        for (
+          const coordinate
+          of [
+            "x",
+            "y",
+            "x1",
+            "y1",
+            "x2",
+            "y2",
+            "w",
+            "h",
+            "r",
+            "r1",
+            "r2",
+          ]
+        ) {
+          if (
+            typeof scaledShape[
+              coordinate
+            ] ===
+            "number"
+          ) {
+            scaledShape[
+              coordinate
+            ] *=
+              iconScale;
+          }
+        }
+
+
+        if (
+          Array.isArray(
+            scaledShape.points,
+          )
+        ) {
+          scaledShape.points =
+            scaledShape.points.map(
+              (point) => ({
+                x:
+                  point.x *
+                  iconScale,
+
+                y:
+                  point.y *
+                  iconScale,
+              }),
+            );
+        }
+
+
+        return scaledShape;
+      });
+    };
+
+
+    // =========================================================
+    // Cell Helpers
+    // =========================================================
+
+    const labelCell = (
+      label,
+      icon,
+    ) => ({
+      columns: [
+        {
+          width: 22,
+
+          canvas:
+            fieldIcon(icon),
+
+          margin: [
+            0,
+            0,
+            0,
+            0,
+          ],
+        },
+
+        {
+          width: "*",
+
+          text:
+            label,
+
+          style:
+            "fieldLabel",
+
+          margin: [
+            2,
+            3,
+            0,
+            0,
+          ],
+        },
+      ],
+
+      fillColor:
+        COLORS.labelBackground,
+
+      margin: [
+        8,
+        6,
+        5,
+        6,
+      ],
+    });
+
+
+    const valueCell = (
+      value,
+    ) => ({
+      text:
+        displayValue(
+          value,
+        ),
+
+      style:
+        "fieldValue",
+
+      margin: [
+        9,
+        8,
+        7,
+        7,
+      ],
+    });
+
+
+    const tableLayout = {
+      hLineColor: () =>
+        COLORS.border,
+
+      vLineColor: () =>
+        COLORS.border,
+
+      hLineWidth: () =>
+        0.7,
+
+      vLineWidth: () =>
+        0.7,
+
+      paddingLeft: () =>
+        0,
+
+      paddingRight: () =>
+        0,
+
+      paddingTop: () =>
+        0,
+
+      paddingBottom: () =>
+        0,
+    };
+
+
+    // =========================================================
+    // Section Heading
+    // =========================================================
+
+    const sectionHeading = (
+      title,
+    ) => ({
+      text:
+        title,
+
+      fontSize:
+        11,
+
+      bold:
+        true,
+
+      color:
+        COLORS.navy,
+
+      margin: [
+        0,
+        4,
+        0,
+        7,
+      ],
+    });
+
+
+    // =========================================================
+    // Display Values
+    // =========================================================
+
+    const noteTakers =
+      detail.NotesTakerNames?.length
+        ? detail.NotesTakerNames.join(
+            ", ",
+          )
+        : "-";
+
+
+    const attendees =
+      detail.AttendeeNames?.length
+        ? detail.AttendeeNames.join(
+            ", ",
+          )
+        : "-";
+
+
+    const absentees =
+      detail.AbsenteeNames?.length
+        ? detail.AbsenteeNames.join(
+            ", ",
+          )
+        : "-";
+
+
+    const completedActionCount =
+      allActions.filter(
+        (item) =>
+          String(item.Status || "")
+            .trim()
+            .toLowerCase() === "completed",
+      ).length;
+
+    const completionPercentage =
+      allActions.length > 0
+        ? (completedActionCount / allActions.length) * 100
+        : 0;
+
+    const completion =
+      `${completionPercentage.toFixed(2)}%`;
+
+
+    // =========================================================
+    // Logo
+    // =========================================================
+
+    const logo =
+      await loadLogo(
+        detail.OrganizationID,
+        data.logoUrl,
+      );
+
+
+    const generatedOn =
+      formatDate(
+        new Date(),
+        "DD MMM YYYY hh:mm A",
+      );
+
+
+    // =========================================================
+    // ACTION TABLE BODY
+    // Same Style As Breakdown Spare Parts Table
+    // =========================================================
+
+    const actionTableBody = [
+      [
+        {
+          text:
+            "Sr.No.",
+
+          style:
+            "tableHeader",
+
+          alignment:
+            "center",
+        },
+
+        {
+          text:
+            "Action",
+
+          style:
+            "tableHeader",
+        },
+
+        {
+          text:
+            "Responsible Person",
+
+          style:
+            "tableHeader",
+        },
+
+        {
+          text:
+            "Deadline",
+
+          style:
+            "tableHeader",
+
+          alignment:
+            "center",
+        },
+
+        {
+          text:
+            "Status",
+
+          style:
+            "tableHeader",
+
+          alignment:
+            "center",
+        },
+      ],
+    ];
+
+
+    if (
+      actions.length > 0
+    ) {
+      actions.forEach(
+        (
+          item,
+          index,
+        ) => {
+
+          actionTableBody.push([
+            {
+              text:
+                displayValue(
+                  item.SrNo ||
+                  index + 1,
+                ),
+
+              style:
+                "tableValue",
+
+              alignment:
+                "center",
+            },
+
+            {
+              text:
+                displayValue(
+                  item.Action,
+                ),
+
+              style:
+                "tableValue",
+            },
+
+            {
+              text:
+                item
+                  .ResponsiblePersonNames
+                  ?.length
+                  ? item
+                      .ResponsiblePersonNames
+                      .join(
+                        ", ",
+                      )
+                  : "-",
+
+              style:
+                "tableValue",
+            },
+
+            {
+              text:
+                displayValue(
+                  item.Deadline,
+                ),
+
+              style:
+                "tableValue",
+
+              alignment:
+                "center",
+            },
+
+            {
+              text:
+                displayValue(
+                  item.Status,
+                ),
+
+              style:
+                "tableValue",
+
+              alignment:
+                "center",
+            },
+          ]);
+        },
+      );
+    } else {
+
+      actionTableBody.push([
+        {
+          text:
+            data.Status
+              ? `No ${data.Status} actions found.`
+              : "No action details found.",
+
+          colSpan:
+            5,
+
+          alignment:
+            "center",
+
+          color:
+            COLORS.muted,
+
+          margin: [
+            0,
+            8,
+            0,
+            8,
+          ],
+        },
+
+        {},
+        {},
+        {},
+        {},
+      ]);
+    }
+
+
+    // =========================================================
+    // DOCUMENT DEFINITION
+    // =========================================================
+
+    const documentDefinition = {
+
+      pageSize:
+        "A4",
+
+      pageOrientation:
+        "portrait",
+
+      pageMargins: [
+        22,
+        26,
+        22,
+        72,
+      ],
+
+
+      defaultStyle: {
+        font:
+          "Roboto",
+
+        fontSize:
+          9,
+
+        color:
+          COLORS.text,
+      },
+
+
+      content: [
+
+        // =====================================================
+        // HEADER
+        // =====================================================
+
+        {
+          table: {
+            widths: [
+              130,
+              "*",
+              80,
+            ],
+
+            body: [
+              [
+                logo
+                  ? {
+                      image:
+                        logo,
+
+                      fit: [
+                        88,
+                        50,
+                      ],
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    }
+                  : {
+                      text:
+                        "",
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    },
+
+
+                {
+                  text:
+                    "Meeting Details",
+
+                  style:
+                    "title",
+
+                  alignment:
+                    "center",
+
+                  margin: [
+                    0,
+                    18,
+                    0,
+                    0,
+                  ],
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+
+
+                {
+                  text:
+                    "",
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            "noBorders",
+        },
+
+
+        // =====================================================
+        // HEADER LINE
+        // =====================================================
+
+        {
+          canvas: [
+            {
+              type:
+                "line",
+
+              x1:
+                0,
+
+              y1:
+                0,
+
+              x2:
+                551,
+
+              y2:
+                0,
+
+              lineWidth:
+                0.8,
+
+              lineColor:
+                COLORS.navy,
+            },
+          ],
+
+          margin: [
+            0,
+            7,
+            0,
+            14,
+          ],
+        },
+
+
+        // =====================================================
+        // MEETING DETAILS
+        // =====================================================
+
+        sectionHeading(
+          "Meeting Details",
+        ),
+
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+
+              // =================================================
+              // ROW 1
+              // =================================================
+
+              [
+                labelCell(
+                  "Organization",
+                  "organization",
+                ),
+
+                valueCell(
+                  detail
+                    .OrganizationShortName,
+                ),
+
+                labelCell(
+                  "Created Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.CreatedDate,
+                ),
+              ],
+
+
+              // =================================================
+              // ROW 2
+              // =================================================
+
+              [
+                labelCell(
+                  "Meeting Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail
+                    .MeetingDate,
+                ),
+
+                labelCell(
+                  "Meeting Time",
+                  "time",
+                ),
+
+                valueCell(
+                  detail
+                    .MeetingTime,
+                ),
+              ],
+
+
+              // =================================================
+              // ROW 3
+              // =================================================
+
+              [
+                labelCell(
+                  "Next Review Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail
+                    .NextReviewDate,
+                ),
+
+                labelCell(
+                  "Status",
+                  "status",
+                ),
+
+                valueCell(
+                  detail.Status,
+                ),
+              ],
+
+
+              // =================================================
+              // ROW 4
+              // =================================================
+
+              [
+                labelCell(
+                  "Note Taker",
+                  "person",
+                ),
+
+                valueCell(
+                  noteTakers,
+                ),
+
+                labelCell(
+                  "Completion%",
+                  "percentage",
+                ),
+
+                valueCell(
+                  completion,
+                ),
+              ],
+
+
+              // =================================================
+              // TITLE - FULL WIDTH
+              // =================================================
+
+              [
+                labelCell(
+                  "Title",
+                  "title",
+                ),
+
+                {
+                  ...valueCell(
+                    detail.Title,
+                  ),
+
+                  colSpan:
+                    3,
+                },
+
+                {},
+
+                {},
+              ],
+
+
+              // =================================================
+              // ATTENDEES - FULL WIDTH
+              // =================================================
+
+              [
+                labelCell(
+                  "Attendees",
+                  "person",
+                ),
+
+                {
+                  ...valueCell(
+                    attendees,
+                  ),
+
+                  colSpan:
+                    3,
+                },
+
+                {},
+
+                {},
+              ],
+
+
+              // =================================================
+              // ABSENTEES - FULL WIDTH
+              // =================================================
+
+              [
+                labelCell(
+                  "Absentees",
+                  "person",
+                ),
+
+                {
+                  ...valueCell(
+                    absentees,
+                  ),
+
+                  colSpan:
+                    3,
+                },
+
+                {},
+
+                {},
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+
+        // =====================================================
+        // ACTION DETAILS
+        // =====================================================
+
+        sectionHeading(
+          data.Status
+            ? `Action Details - ${data.Status}`
+            : "Action Details",
+        ),
+
+
+        {
+          table: {
+            headerRows:
+              1,
+
+            dontBreakRows:
+              true,
+
+            widths: [
+              38,
+              "*",
+              125,
+              72,
+              65,
+            ],
+
+            body:
+              actionTableBody,
+          },
+
+
+          // ===================================================
+          // SAME TYPE TABLE AS BREAKDOWN SPARE PARTS
+          // ===================================================
+
+          layout: {
+            hLineColor: () =>
+              COLORS.border,
+
+            vLineColor: () =>
+              COLORS.border,
+
+            hLineWidth: () =>
+              0.7,
+
+            vLineWidth: () =>
+              0.7,
+
+            paddingLeft: () =>
+              8,
+
+            paddingRight: () =>
+              8,
+
+            paddingTop: () =>
+              7,
+
+            paddingBottom: () =>
+              7,
+          },
+        },
+      ],
+
+
+      // =======================================================
+      // FOOTER
+      // Same As Breakdown PDF
+      // =======================================================
+
+      footer: () => ({
+        margin: [
+          22,
+          8,
+          22,
+          0,
+        ],
+
+        stack: [
+          {
+            canvas: [
+              {
+                type:
+                  "line",
+
+                x1:
+                  0,
+
+                y1:
+                  0,
+
+                x2:
+                  551,
+
+                y2:
+                  0,
+
+                lineWidth:
+                  0.7,
+
+                lineColor:
+                  COLORS.navy,
+              },
+            ],
+
+            margin: [
+              0,
+              0,
+              0,
+              8,
+            ],
+          },
+
+
+          {
+            columns: [
+              {
+                stack: [
+                  {
+                    text:
+                      "Powered by HotelOps",
+
+                    bold:
+                      true,
+
+                    color:
+                      COLORS.navy,
+
+                    fontSize:
+                      8,
+                  },
+                ],
+              },
+
+
+              {
+                width:
+                  130,
+
+                stack: [
+                  {
+                    text:
+                      `Generated On   :  ${generatedOn}`,
+
+                    fontSize:
+                      7,
+
+                    color:
+                      COLORS.label,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+
+
+      // =======================================================
+      // STYLES
+      // =======================================================
+
+      styles: {
+
+        title: {
+          fontSize:
+            18,
+
+          bold:
+            true,
+
+          color:
+            COLORS.navy,
+        },
+
+
+        fieldLabel: {
+          fontSize:
+            8.5,
+
+          bold:
+            true,
+
+          color:
+            COLORS.label,
+        },
+
+
+        fieldValue: {
+          fontSize:
+            9,
+
+          color:
+            COLORS.text,
+        },
+
+
+        tableHeader: {
+          fontSize:
+            8.5,
+
+          bold:
+            true,
+
+          color:
+            COLORS.navy,
+
+          fillColor:
+            COLORS.labelBackground,
+
+          margin: [
+            0,
+            2,
+            0,
+            2,
+          ],
+        },
+
+
+        tableValue: {
+          fontSize:
+            8.5,
+
+          color:
+            COLORS.text,
+
+          margin: [
+            0,
+            2,
+            0,
+            2,
+          ],
+        },
+      },
+    };
+
+
+    // =========================================================
+    // GENERATE PDF BUFFER
+    // =========================================================
+
+    const pdfBuffer =
+      await new Promise(
+        (
+          resolve,
+          reject,
+        ) => {
+          try {
+            const pdfDocument =
+              new PdfPrinter(
+                MOM_DETAIL_PDF_FONTS,
+              )
+                .createPdfKitDocument(
+                  documentDefinition,
+                );
+
+
+            const chunks = [];
+
+
+            pdfDocument.on(
+              "data",
+              (chunk) =>
+                chunks.push(
+                  chunk,
+                ),
+            );
+
+
+            pdfDocument.on(
+              "end",
+              () =>
+                resolve(
+                  Buffer.concat(
+                    chunks,
+                  ),
+                ),
+            );
+
+
+            pdfDocument.on(
+              "error",
+              reject,
+            );
+
+
+            pdfDocument.end();
+
+          } catch (error) {
+            reject(error);
+          }
+        },
+      );
+
+
+    // =========================================================
+    // RETURN
+    // =========================================================
+
+    return {
+      success:
+        true,
+
+      message:
+        "MOM detail PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `MOM-Detail-${meetingID}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "Generate MOM detail PDF error:",
+      error,
+    );
+
+    return databaseFailure(
+      error,
+      "Unable to generate MOM detail PDF.",
+    );
+  }
+};
+
+
 module.exports = {
   createMOM,
   getMOMById,
@@ -2923,5 +4462,6 @@ module.exports = {
   getMOMActions,
   generateMOMListPdf,
   generateMOMResponsiblePersonReportPdf,
-  generateMOMActionDetailReportPdf
+  generateMOMActionDetailReportPdf,
+  generateMOMDetailPdf
 };
