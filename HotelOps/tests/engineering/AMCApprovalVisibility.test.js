@@ -20,6 +20,7 @@ test("AMC detail approval flag respects new records, stages and existing access 
     retryableDatabaseResponse: () => null,
     databaseFailure: (error) => { throw error; },
     pool: { query: async (sql) => {
+      if (sql.includes("FROM user_master um")) return { rows: [] };
       assert.doesNotMatch(sql, /COALESCE\(\s*aa\.AMCApprovalID/i);
       if (sql.includes("FROM Engineering_AMC_Master")) {
         assert.match(sql.slice(0, sql.indexOf("FROM Engineering_AMC_Master")), /aa\.AMCApprovalID,/);
@@ -58,7 +59,8 @@ test("AMC detail approval flag respects new records, stages and existing access 
   }
 });
 
-async function getRecords({ userType = "HOD", department = "Finance", organization = 20, config = [], rows }) {
+async function getRecords({ userType = "HOD", department = "Finance", organization = 20,
+  config = [], rows, centralRD = false, mapped = true }) {
   const context = {
     console,
     formatDate: () => null,
@@ -67,11 +69,15 @@ async function getRecords({ userType = "HOD", department = "Finance", organizati
     retryableDatabaseResponse: () => null,
     databaseFailure: (error) => { throw error; },
     pool: { query: async (sql, values) => {
+      if (sql.includes("FROM user_master um")) return { rows: centralRD ? [{ one: 1 }] : [] };
+      if (sql.includes("FROM user_org_mapping uom") && !sql.includes("user_master")) {
+        return { rows: mapped ? [{ one: 1 }] : [] };
+      }
       assert.doesNotMatch(sql, /COALESCE\(\s*aa\.AMCApprovalID/i);
       if (sql.includes("FROM Engineering_AMC_Documents")) return { rows: [] };
       if (sql.includes("FROM Engineering_AMC_Approval_Config") && !sql.includes("Engineering_AMC_Master")) {
-        assert.equal(values[0], organization);
-        return { rows: config.map((role, i) => ({ amcapprovalconfigid: i + 1, approvallevel: i + 1,
+        return { rows: config.map((role, i) => ({ amcapprovalconfigid: i + 1,
+          organizationid: organization, approvallevel: i + 1,
           approvalorder: i + 1, approvalrole: role, ismandatory: true })) };
       }
       if (sql.includes("COUNT(*)")) return { rows: [{ totalcount: rows.length }] };
@@ -83,7 +89,8 @@ async function getRecords({ userType = "HOD", department = "Finance", organizati
   };
   vm.createContext(context);
   vm.runInContext(source.slice(defaultsStart, defaultsEnd) + source.slice(start, end) + "\nthis.run = getAllAMC;", context);
-  const result = await context.run({ OrganizationID: organization, UserID: 3, UserType: userType, DepartmentName: department });
+  const result = await context.run({ OrganizationID: organization, UserID: 3,
+    UserType: userType, DepartmentName: department });
   assert.equal(result.success, true);
   assert.equal(result.data.TotalCount, rows.length);
   return result.data.data;
@@ -127,6 +134,53 @@ test("configured order/subset and JWT role determine visibility", async () => {
   assert.equal((await getRecords({ config: ["GM", "FC"], rows: [{ gmstatus: "Pending", fcstatus: "Pending" }] }))[0].CanApprove, false);
   assert.equal((await getRecords({ userType: "GM", rows: [{ fcstatus: "Approved", gmstatus: "Pending" }] }))[0].CanApprove, true);
   assert.equal((await getRecords({ userType: "Employee", rows: [{ fcstatus: "Pending" }] }))[0].CanApprove, false);
-  assert.equal((await getRecords({ organization: 10, config: ["RD", "CEO"], rows: [{ rdstatus: "Pending" }] }))[0].CanApprove, true);
+  assert.equal((await getRecords({ organization: 10, centralRD: true,
+    config: ["RD", "CEO"], rows: [{ rdstatus: "Pending" }] }))[0].CanApprove, true);
   assert.equal((await getRecords({ userType: "CEO", config: ["GM"], rows: [{ gmstatus: "Pending" }] }))[0].CanApprove, false);
+});
+
+test("central RD uses org 10 as global view and requires mapping for a specific organization", async () => {
+  const context = { console, fail: (message, statusCode) => ({ success: false, message, statusCode }) };
+  vm.createContext(context);
+  const accessEnd = source.indexOf("// ===============Get AMC Approval Flow Helper", start);
+  vm.runInContext(source.slice(start, accessEnd) + "\nthis.resolve = resolveAMCAccess;", context);
+  const global = await context.resolve({ UserID: 8, UserType: "HOD",
+    DepartmentName: "Finance", OrganizationID: 10 },
+  { query: async () => ({ rows: [{ one: 1 }] }) }, { requireSelectedMapping: true });
+  assert.equal(global.approvalRole, "RD");
+  assert.equal(global.globalView, true);
+
+  let queryNumber = 0;
+  const denied = await context.resolve({ UserID: 8, UserType: "HOD",
+    DepartmentName: "Finance", OrganizationID: 20 }, { query: async () => {
+    queryNumber += 1;
+    return { rows: queryNumber === 1 ? [{ one: 1 }] : [] };
+  } }, { requireSelectedMapping: true });
+  assert.equal(denied.error.statusCode, 403);
+});
+
+test("RD pending and approved filters use the RD status column", async () => {
+  const context = { console, fail: (message, statusCode) => ({ success: false, message, statusCode }) };
+  vm.createContext(context);
+  const accessEnd = source.indexOf("// ===============Get AMC Approval Flow Helper", start);
+  vm.runInContext(source.slice(start, accessEnd) + "\nthis.resolve = resolveAMCAccess;", context);
+  const db = { query: async () => ({ rows: [{ one: 1 }] }) };
+  assert.equal((await context.resolve({ UserID: 8, UserType: "HOD",
+    DepartmentName: "Finance", OrganizationID: 20 }, db)).approvalRole, "RD");
+  assert.match(source.slice(start, end), /RD:\s*"aa\.RDStatus"/);
+});
+
+test("RD approval actions update only the RD approval columns", () => {
+  const approvalStart = source.indexOf("const processAMCApproval = async");
+  const approvalEnd = source.indexOf("// ============================================================AMC Approval Config List", approvalStart);
+  const approvalSource = source.slice(approvalStart, approvalEnd);
+  assert.match(approvalSource, /RD:\s*\{\s*Status:\s*"RDStatus",[\s\S]*?DateTime:\s*"RDStatusDateTime",[\s\S]*?ApprovedBy:\s*"RDStatusApprovedBy",[\s\S]*?Remarks:\s*"RDRemarks"/);
+  assert.match(approvalSource, /resolveAMCAccess\(\{[\s\S]*?UserID/);
+});
+
+test("AMC document paths are returned through the Engineering Azure URL helper", () => {
+  const attachStart = source.indexOf("const attachAMCRelatedData =");
+  const attachEnd = source.indexOf("// ===================Get All AMC Function", attachStart);
+  assert.match(source.slice(attachStart, attachEnd),
+    /FilePath:\s*row\.filepath \? generateUrl\(row\.filepath\) : null/);
 });

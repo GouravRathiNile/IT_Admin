@@ -35,6 +35,7 @@ const WARRANTY_NOTIFICATION_EVENTS = Object.freeze({
     title: "Equipment Warranty Expired - Take Action",
   },
 });
+const EXPIRED_WARRANTY_STATUS = "Expired";
 
 const uniquePositiveIDs = (values) => [...new Set(values
   .map((value) => Number(value))
@@ -72,6 +73,70 @@ const databaseFailure = (error, operation) => {
     retryableDatabaseResponse(error) ||
     fail(`Unable to ${operation.toLowerCase()} at this time.`, 500)
   );
+};
+
+// Update only the stored warranty status. Notification and email jobs remain
+// independent consumers of the resulting equipment data.
+const processWarrantyStatusUpdates = async ({ businessDate, poolOverride = pool } = {}) => {
+  const today = String(businessDate || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+    throw new Error("A valid warranty status business date is required.");
+  }
+
+  const client = await poolOverride.connect();
+  let transactionStarted = false;
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    const countsResult = await client.query(`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE WarrantyEndDate < $1::date
+            AND UPPER(TRIM(COALESCE(WarrantyStatus, ''))) <> 'EXPIRED'
+        )::integer AS Candidates,
+        COUNT(*) FILTER (
+          WHERE WarrantyEndDate < $1::date
+            AND UPPER(TRIM(COALESCE(WarrantyStatus, ''))) = 'EXPIRED'
+        )::integer AS AlreadyExpired,
+        COUNT(*) FILTER (
+          WHERE WarrantyEndDate IS NULL OR WarrantyEndDate >= $1::date
+        )::integer AS Skipped
+      FROM Engineering_Equipment_Entry_Master
+      WHERE IsDeleted = FALSE;`, [today]);
+
+    const updateResult = await client.query(`
+      UPDATE Engineering_Equipment_Entry_Master
+      SET WarrantyStatus = $2
+      WHERE IsDeleted = FALSE
+        AND WarrantyEndDate < $1::date
+        AND UPPER(TRIM(COALESCE(WarrantyStatus, ''))) <> 'EXPIRED'
+      RETURNING EquipmentID;`, [today, EXPIRED_WARRANTY_STATUS]);
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+    const counts = countsResult.rows[0] || {};
+    return {
+      businessDate: today,
+      candidates: Number(counts.candidates || 0),
+      updated: updateResult.rows.length,
+      alreadyExpired: Number(counts.alreadyexpired || 0),
+      skipped: Number(counts.skipped || 0),
+      failed: 0,
+    };
+  } catch (error) {
+    if (transactionStarted) {
+      try { await client.query("ROLLBACK"); }
+      catch (rollbackError) {
+        console.error("Engineering Warranty Status Rollback Failed:", rollbackError.message);
+      }
+    }
+    console.error("Engineering Warranty Status Update Failed:", error.message);
+    return { businessDate: today, candidates: 0, updated: 0,
+      alreadyExpired: 0, skipped: 0, failed: 1 };
+  } finally {
+    client.release();
+  }
 };
 
 // ============================================================================================Equipment Entries
@@ -11872,13 +11937,7 @@ const createAMC = async (data) => {
 };
 // ============================================================AMC List
 //================Resolve Logged-In User AMC Approval Role Helper
-const resolveAMCApprovalRole = ({
-  OrganizationID,
-  UserType,
-  DepartmentName,
-}) => {
-  const organizationID = Number(OrganizationID);
-
+const resolveAMCApprovalRole = ({ UserType, DepartmentName }) => {
   const userType = String(UserType || "")
     .trim()
     .toUpperCase();
@@ -11886,24 +11945,6 @@ const resolveAMCApprovalRole = ({
   const departmentName = String(DepartmentName || "")
     .trim()
     .toUpperCase();
-
-  // ============================================================
-  // RD
-  // OrganizationID = 10
-  // UserType = HOD
-  // Department = Finance
-  //
-  // IMPORTANT:
-  // RD must be checked before FC
-  // ============================================================
-
-  if (
-    organizationID === 10 &&
-    userType === "HOD" &&
-    departmentName === "FINANCE"
-  ) {
-    return "RD";
-  }
 
   // ============================================================
   // FC
@@ -11935,6 +11976,58 @@ const resolveAMCApprovalRole = ({
   }
 
   return null;
+};
+const AMC_RD_ORGANIZATION_ID = 10;
+
+// Central RD authority comes from live user/mapping data, not from the
+// organization currently selected in the UI.
+const resolveAMCAccess = async ({ UserID, UserType, DepartmentName,
+  OrganizationID }, db = pool, { requireSelectedMapping = false } = {}) => {
+  const userID = Number(UserID);
+  const selectedOrganizationID = Number(OrganizationID);
+  let isCentralRD = false;
+
+  if (Number.isSafeInteger(userID) && userID > 0) {
+    const rdResult = await db.query(`
+      SELECT 1
+      FROM user_master um
+      INNER JOIN department_master dm ON dm.DepartmentID = um.DepartmentID
+      INNER JOIN user_org_mapping uom ON uom.UserID = um.UserID
+      INNER JOIN organization_master om ON om.OrganizationID = uom.OrganizationID
+      WHERE um.UserID = $1
+        AND UPPER(TRIM(um.UserType)) = 'HOD'
+        AND UPPER(TRIM(COALESCE(dm.DepartmentName, ''))) = 'FINANCE'
+        AND um.IsActive = TRUE AND um.IsDeleted = FALSE AND um.IsLocked = FALSE
+        AND dm.IsDeleted = FALSE
+        AND uom.OrganizationID = $2
+        AND uom.IsActive = TRUE AND uom.IsDeleted = FALSE
+        AND om.IsActive = TRUE AND om.ActivationStatus = TRUE AND om.IsDeleted = FALSE
+      LIMIT 1;
+    `, [userID, AMC_RD_ORGANIZATION_ID]);
+    isCentralRD = rdResult.rows.length > 0;
+  }
+
+  if (isCentralRD && requireSelectedMapping &&
+      selectedOrganizationID !== AMC_RD_ORGANIZATION_ID) {
+    const mappingResult = await db.query(`
+      SELECT 1
+      FROM user_org_mapping uom
+      INNER JOIN organization_master om ON om.OrganizationID = uom.OrganizationID
+      WHERE uom.UserID = $1 AND uom.OrganizationID = $2
+        AND uom.IsActive = TRUE AND uom.IsDeleted = FALSE
+        AND om.IsActive = TRUE AND om.ActivationStatus = TRUE AND om.IsDeleted = FALSE
+      LIMIT 1;
+    `, [userID, selectedOrganizationID]);
+    if (mappingResult.rows.length === 0) {
+      return { error: fail("You are not mapped to the selected organization.", 403) };
+    }
+  }
+
+  return {
+    approvalRole: isCentralRD ? "RD" : resolveAMCApprovalRole({ UserType, DepartmentName }),
+    isCentralRD,
+    globalView: isCentralRD && selectedOrganizationID === AMC_RD_ORGANIZATION_ID,
+  };
 };
 // ===============Get AMC Approval Flow Helper
 const getAMCApprovalFlow = async (
@@ -12141,7 +12234,6 @@ const mapAMC = (row) => ({
 //=================Attach AMC Documents + Approval Array Helper
 const attachAMCRelatedData = async (
   rows,
-  OrganizationID,
 ) => {
   if (!Array.isArray(rows) || rows.length === 0) {
     return [];
@@ -12180,10 +12272,31 @@ const attachAMCRelatedData = async (
   // Approval Flow
   // ============================================================
 
-  const approvalFlow =
-    await getAMCApprovalFlow(
-      OrganizationID,
-    );
+  const organizationIDs = [...new Set(rows.map((row) => Number(row.organizationid)))];
+  const configResult = await pool.query(`
+    SELECT AMCApprovalConfigID, OrganizationID, ApprovalLevel, ApprovalRole,
+      ApprovalOrder, IsMandatory
+    FROM Engineering_AMC_Approval_Config
+    WHERE OrganizationID = ANY($1::bigint[]) AND IsDeleted = FALSE
+    ORDER BY OrganizationID ASC, ApprovalOrder ASC, ApprovalLevel ASC,
+      AMCApprovalConfigID ASC;
+  `, [organizationIDs]);
+  const flowsByOrganization = new Map();
+  for (const row of configResult.rows) {
+    const organizationID = Number(row.organizationid);
+    if (!flowsByOrganization.has(organizationID)) flowsByOrganization.set(organizationID, []);
+    flowsByOrganization.get(organizationID).push({
+      AMCApprovalConfigID: Number(row.amcapprovalconfigid),
+      LevelNo: Number(row.approvallevel),
+      ApprovalRole: String(row.approvalrole || "").trim().toUpperCase(),
+      ApprovalOrder: Number(row.approvalorder),
+      IsMandatory: Boolean(row.ismandatory),
+    });
+  }
+  const defaultFlow = DEFAULT_AMC_APPROVALS.map((item, index) => ({
+    AMCApprovalConfigID: null, LevelNo: item.LevelNo,
+    ApprovalRole: item.ApprovalRole, ApprovalOrder: index + 1, IsMandatory: true,
+  }));
 
   // ============================================================
   // Map AMC Rows
@@ -12191,6 +12304,7 @@ const attachAMCRelatedData = async (
 
   const mapped = rows.map((row) => {
     const item = mapAMC(row);
+    const approvalFlow = flowsByOrganization.get(Number(row.organizationid)) || defaultFlow;
 
     const statusMap = {
       FC: {
@@ -12310,7 +12424,7 @@ const attachAMCRelatedData = async (
         row.filename,
 
       FilePath:
-        row.filepath,
+        row.filepath ? generateUrl(row.filepath) : null,
 
       FileType:
         row.filetype,
@@ -12451,16 +12565,12 @@ const getAllAMC = async (data) => {
     // Logged-In User Approval Role
     // ============================================================
 
-    const approvalRole =
-      resolveAMCApprovalRole({
-        OrganizationID,
-
-        UserType:
-          data.UserType,
-
-        DepartmentName:
-          data.DepartmentName,
-      });
+    const access = await resolveAMCAccess({
+      UserID: data.UserID, UserType: data.UserType,
+      DepartmentName: data.DepartmentName, OrganizationID,
+    }, pool, { requireSelectedMapping: true });
+    if (access.error) return access.error;
+    const approvalRole = access.approvalRole;
 
     // ============================================================
     // Base From Query
@@ -12610,12 +12720,19 @@ const getAllAMC = async (data) => {
 
     let whereClause = `
       WHERE am.IsDeleted = FALSE
-        AND am.OrganizationID = $1
     `;
 
-    const params = [
-      OrganizationID,
-    ];
+    const params = [];
+    // Organization 10 is the central RD's explicit global-view selection.
+    if (access.globalView) {
+      whereClause += `
+        AND om.IsActive = TRUE
+        AND om.ActivationStatus = TRUE
+      `;
+    } else {
+      params.push(OrganizationID);
+      whereClause += ` AND am.OrganizationID = $${params.length}\n`;
+    }
 
     // ============================================================
     // Equipment Filter
@@ -13198,11 +13315,7 @@ const getAllAMC = async (data) => {
     // Attach Documents + Approvals
     // ============================================================
 
-    const records =
-      await attachAMCRelatedData(
-        result.rows,
-        OrganizationID,
-      );
+    const records = await attachAMCRelatedData(result.rows);
 
     const approvalRowsByID = new Map(
       result.rows.map((row) => [Number(row.amcid), row]),
@@ -13916,16 +14029,12 @@ const getAMCById = async (data) => {
         row.organizationid,
       );
 
-    const approvalRole =
-      resolveAMCApprovalRole({
-        OrganizationID,
-
-        UserType:
-          data.UserType,
-
-        DepartmentName:
-          data.DepartmentName,
-      });
+    const access = await resolveAMCAccess({
+      UserID: data.UserID, UserType: data.UserType,
+      DepartmentName: data.DepartmentName, OrganizationID,
+    });
+    if (access.error) return access.error;
+    const approvalRole = access.approvalRole;
 
     // ============================================================
     // Approval Access Check
@@ -13995,11 +14104,7 @@ const getAMCById = async (data) => {
     // Attach Documents + Approvals
     // ============================================================
 
-    const records =
-      await attachAMCRelatedData(
-        result.rows,
-        OrganizationID,
-      );
+    const records = await attachAMCRelatedData(result.rows);
 
     const AMC =
       records[0];
@@ -14750,13 +14855,11 @@ const processAMCApproval = async (data) => {
     // Resolve logged-in user's AMC approval role
     // ============================================================
 
-    const approvalRole =
-      resolveAMCApprovalRole({
-        OrganizationID,
-        UserType: data.UserType,
-        DepartmentName:
-          data.DepartmentName,
-      });
+    const access = await resolveAMCAccess({
+      UserID, UserType: data.UserType,
+      DepartmentName: data.DepartmentName, OrganizationID,
+    }, client);
+    const approvalRole = access.approvalRole;
 
     if (!approvalRole) {
       await client.query("ROLLBACK");
@@ -19357,6 +19460,7 @@ module.exports = {
 
   generateBreakdownDetailPdf,
   generateAMCDetailPdf,
+  processWarrantyStatusUpdates,
   processEquipmentWarrantyNotifications,
   generateAllEquipmentQRCodes,
 };
