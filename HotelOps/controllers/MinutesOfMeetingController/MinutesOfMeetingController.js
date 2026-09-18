@@ -662,3 +662,275 @@ exports.getMOMListPdf = async (req, res) => {
     );
   }
 };
+// ============================================================ Responsible Person Report PDF
+exports.getMOMResponsiblePersonReportPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const {
+      OrganizationID,
+      ResponsiblePersonID,
+      FromDate,
+      ToDate,
+    } = req.query;
+
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    const data = {
+      OrganizationID:
+        OrganizationID || null,
+
+      ResponsiblePersonID:
+        ResponsiblePersonID || null,
+
+      FromDate:
+        FromDate || null,
+
+      ToDate:
+        ToDate || null,
+    };
+
+
+    const response =
+      await MinutesOfMeetingService
+        .generateMOMResponsiblePersonReportPdf(
+          data,
+        );
+
+
+    if (!response.success) {
+      return res
+        .status(
+          response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(response);
+    }
+
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType,
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .send(response.data);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================ MOM Action Detail Report PDF
+exports.getMOMActionDetailReportPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const {
+      OrganizationID,
+      Title,
+      Action,
+      Status,
+      ResponsiblePersonId,
+      FromDate,
+      ToDate,
+    } = req.query;
+
+
+    // ============================================================ Date Validation
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    const data = {
+      OrganizationID:
+        OrganizationID || null,
+
+      Title:
+        Title || null,
+
+      Action:
+        Action || null,
+
+      Status:
+        Status || null,
+
+      ResponsiblePersonId:
+        ResponsiblePersonId || null,
+
+      FromDate:
+        FromDate || null,
+
+      ToDate:
+        ToDate || null,
+    };
+
+
+    const response =
+      await MinutesOfMeetingService
+        .generateMOMActionDetailReportPdf(
+          data,
+        );
+
+
+    if (!response.success) {
+      return res
+        .status(
+          response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(response);
+    }
+
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType,
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .send(response.data);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================ MOM Detail PDF
+exports.generateMOMDetailPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const { MeetingID } = req.params;
+
+    const { Status } = req.query;
+
+
+    if (!MeetingID) {
+      throw new AppError(
+        "Meeting ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    const result =
+      await MinutesOfMeetingService
+        .generateMOMDetailPdf({
+          MeetingID,
+          Status:
+            Status || null,
+        });
+
+
+    if (!result.success) {
+      return res
+        .status(
+          result.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(result);
+    }
+
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.data.length,
+    );
+
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .send(result.data);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
