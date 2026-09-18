@@ -44,7 +44,7 @@ test("more than three items produces count-only content", async () => {
     dueItems: [row(1), row(2), row(3), row(4)],
     recipientRows: [{ organizationid: 20, userid: 8 }], queryable: notificationDb(),
     publishNotification: async (payload) => { payloads.push(payload); return { success: true }; } });
-  assert.equal(payloads[0].message, "4 Maintenance Items Due Today.");
+  assert.equal(payloads[0].message, "Four Maintenance Items Due Today.");
 });
 
 test("existing organization event and missing HOD safely skip", async () => {

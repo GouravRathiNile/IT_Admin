@@ -53,7 +53,7 @@ test("only TODAY creates one today notification", async () => {
   const { result, sent } = await runEventScenario([equipment(1, 20, "TODAY", "2026-09-16")]);
   assert.equal(result.sent, 1);
   assert.equal(sent[0].action, "WARRANTY_EXPIRING_TODAY");
-  assert.match(sent[0].message, /^1 Warranty Expires Today\./);
+  assert.match(sent[0].message, /^One Warranty Expires Today\./);
 });
 
 test("17-Sep TODAY displays 17-Sep and 16-Sep expired stays in EXPIRED", async () => {
@@ -78,7 +78,7 @@ test("only EXPIRED creates one expired notification", async () => {
   const { result, sent } = await runEventScenario([equipment(1, 20, "EXPIRED", "2026-09-15")]);
   assert.equal(result.sent, 1);
   assert.equal(sent[0].action, "WARRANTY_EXPIRED");
-  assert.match(sent[0].message, /^1 Warranty has Expired and Require Action\./);
+  assert.match(sent[0].message, /^One Warranty has Expired and Require Action\./);
 });
 
 test("TOMORROW and TODAY create two separate notifications", async () => {

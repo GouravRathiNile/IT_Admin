@@ -6,7 +6,7 @@ const base = {
   notificationTitle: "OPEX - Printer (2) - Finance - HJU",
   organizationName: "Howard Johnson Udaipur",
   logoUrl: "https://assets.example.com/hju.png",
-  details: { item: "Printer", department: "Finance", quantity: 2, rate: 100,
+  details: { entityId: "42/7", item: "Printer", department: "Finance", quantity: 2, rate: 100,
     total: 200, description: "Replacement printer", actionQuantity: 1,
     remark: "Reviewed", actionBy: "General Manager", actionDate: "2026-09-15T06:30:00.000Z" },
 };
@@ -21,7 +21,7 @@ test("OPEX CREATE email has branding, one description, details and no action tab
   assert.match(email.html, /OPEX Details/);
   assert.equal((email.html.match(/Replacement printer/g) || []).length, 1);
   assert.doesNotMatch(email.html, /Action Details/);
-  assert.match(email.html, /<a href="http:\/\/localhost:5173\/Hotelops\/Pages\/Opex\/Pages"[^>]*>VIEW OPEX REQUEST<\/a>/);
+  assert.match(email.html, /<a href="http:\/\/localhost:5173\/Hotelops\/Pages\/Opex\/Pages\/Details\?opexId=42%2F7"[^>]*>VIEW OPEX REQUEST<\/a>/);
 });
 
 for (const [kind, expected] of Object.entries({
@@ -47,7 +47,7 @@ test("OPEX URL supports a configurable full-page override and logo text fallback
   process.env.OPEX_FRONTEND_URL = "https://hotelops.example.com/opex";
   try {
     const email = buildOpexEmail({ ...base, logoUrl: null, details: { ...base.details, kind: "CREATE" } });
-    assert.match(email.html, /<a href="https:\/\/hotelops\.example\.com\/opex"/);
+    assert.match(email.html, /<a href="https:\/\/hotelops\.example\.com\/opex\?opexId=42%2F7"/);
     assert.match(email.html, />HotelOps<\/div>/);
   } finally {
     if (previous === undefined) delete process.env.OPEX_FRONTEND_URL;

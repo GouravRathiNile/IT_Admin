@@ -3,7 +3,9 @@ const {
   retryableDatabaseResponse,
 } = require("../../utils/retryableDatabaseError");
 const { formatDate } = require("../../utils/dateFormatter");
+const { numberToWords } = require("../../utils/numberToWords");
 const generateUrl = require("../../AzurConfigration/Engineering/AzureGetData");
+const { notifyCommittedAMCApproval } = require("./EngineeringAMCApprovalNotificationService");
 // ===============================================Pdf Helper
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
 const PdfPrinter = require("pdfmake");
@@ -11505,7 +11507,8 @@ const createAMC = async (data) => {
       `
       SELECT
         EquipmentID,
-        OrganizationID
+        OrganizationID,
+        Description
       FROM Engineering_Equipment_Entry_Master
       WHERE EquipmentID = $1
         AND OrganizationID = $2
@@ -11788,6 +11791,25 @@ const createAMC = async (data) => {
 
     await client.query("COMMIT");
     transactionStarted = false;
+
+    const configuredFlow = approvalConfigResult.rows.length
+      ? approvalConfigResult.rows.map((row) => ({
+        ApprovalRole: String(row.approvalrole || "").trim().toUpperCase(),
+      }))
+      : DEFAULT_AMC_APPROVALS;
+    const firstApprovalRole = configuredFlow[0]?.ApprovalRole;
+
+    // CREATE notifies only the effective first approval stage. The creator is
+    // included naturally only when they themselves satisfy that role query.
+    notifyCommittedAMCApproval({
+      organizationID: data.OrganizationID,
+      amcID: AMCID,
+      equipmentName: equipmentResult.rows[0].description,
+      roles: firstApprovalRole ? [firstApprovalRole] : [],
+      kind: "CREATE",
+      firstRole: firstApprovalRole,
+      action: "CREATED",
+    });
 
     return {
       success: true,
@@ -14694,13 +14716,18 @@ const processAMCApproval = async (data) => {
     const amcResult = await client.query(
       `
       SELECT
-        AMCID,
-        OrganizationID,
-        EquipmentID
-      FROM Engineering_AMC_Master
-      WHERE AMCID = $1
-        AND IsDeleted = FALSE
-      FOR UPDATE;
+        am.AMCID,
+        am.OrganizationID,
+        am.EquipmentID,
+        am.CreatedBy,
+        e.Description AS EquipmentName
+      FROM Engineering_AMC_Master am
+      INNER JOIN Engineering_Equipment_Entry_Master e
+        ON e.EquipmentID = am.EquipmentID
+       AND e.IsDeleted = FALSE
+      WHERE am.AMCID = $1
+        AND am.IsDeleted = FALSE
+      FOR UPDATE OF am;
       `,
       [AMCID],
     );
@@ -14714,8 +14741,9 @@ const processAMCApproval = async (data) => {
       );
     }
 
+    const AMC = amcResult.rows[0];
     const OrganizationID = Number(
-      amcResult.rows[0].organizationid,
+      AMC.organizationid,
     );
 
     // ============================================================
@@ -15166,6 +15194,28 @@ const processAMCApproval = async (data) => {
     }
 
     await client.query("COMMIT");
+
+    const nextApprovalRole = approvalFlow[currentIndex + 1]?.ApprovalRole;
+    if (Action === "APPROVE" && isFinalStage) {
+      notifyCommittedAMCApproval({ organizationID: OrganizationID, amcID: AMCID,
+        equipmentName: AMC.equipmentname, directUserIds: [AMC.createdby],
+        actorUserID: UserID, kind: "FINAL_APPROVE", approverRole: approvalRole,
+        action: "APPROVED" });
+    } else if (Action === "APPROVE") {
+      notifyCommittedAMCApproval({ organizationID: OrganizationID, amcID: AMCID,
+        equipmentName: AMC.equipmentname, roles: [nextApprovalRole],
+        directUserIds: [AMC.createdby], excludeUserID: UserID,
+        actorUserID: UserID, kind: "APPROVE", approverRole: approvalRole,
+        nextRole: nextApprovalRole, action: "APPROVED" });
+    } else {
+      // RETURN/REJECT notify the creator and other users of the acting stage,
+      // while the user who performed the action is deliberately excluded.
+      notifyCommittedAMCApproval({ organizationID: OrganizationID, amcID: AMCID,
+        equipmentName: AMC.equipmentname, roles: [approvalRole],
+        directUserIds: [AMC.createdby], excludeUserID: UserID,
+        actorUserID: UserID, kind: Action, approverRole: approvalRole,
+        action: Action === "RETURN" ? "RETURNED" : "REJECTED" });
+    }
 
     return ok(
       `AMC ${newStatus.toLowerCase()} successfully.`
@@ -19132,11 +19182,12 @@ const processEquipmentWarrantyNotifications = async ({
         continue;
       }
       const count = group.items.length;
+      const countLabel = numberToWords(count);
       const message = group.type === "TOMORROW"
-        ? `${count} Warranty ${count === 1 ? "Expires" : "Expire"} Tomorrow.`
+        ? `${countLabel} Warranty ${count === 1 ? "Expires" : "Expire"} Tomorrow.`
         : group.type === "TODAY"
-          ? `${count} Warranty ${count === 1 ? "Expires" : "Expire"} Today.`
-          : `${count} ${count === 1 ? "Warranty has" : "Warranties have"} Expired and Require Action.`;
+          ? `${countLabel} Warranty ${count === 1 ? "Expires" : "Expire"} Today.`
+          : `${countLabel} ${count === 1 ? "Warranty has" : "Warranties have"} Expired and Require Action.`;
 
     // Keep detailed equipment information only for small batches.
     // For larger batches, the notification remains summary-only

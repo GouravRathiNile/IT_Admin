@@ -79,6 +79,8 @@ test("template contains branding, required table columns, and escaped values", (
   assert.doesNotMatch(email.html, /<script>/);
   assert.match(email.html, /Dear Sir\/Madam/);
   assert.match(email.html, /https:\/\/logo\.test\/a\.png/);
+  assert.match(email.html, /href="http:\/\/localhost:5173\/Hotelops\/Pages\/EngineeringModule\/Pages\/List"[^>]*>View Equipment<\/a>/);
+  assert.match(email.text, /View Equipment: http:\/\/localhost:5173\/Hotelops\/Pages\/EngineeringModule\/Pages\/List/);
   for (const label of ["Equipment", "Serial Number", "Make / Model", "Area", "Schedule",
     "Schedule Day", "Maintenance / Task", "Assigned Engineer", "Status"])
     assert.match(email.html, new RegExp(label.replace("/", "\\/")));

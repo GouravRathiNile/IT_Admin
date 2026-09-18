@@ -38,6 +38,11 @@ const warrantyDuplicateActions = (action) => action === "WARRANTY_DAILY_SUMMARY"
     ? ENGINEERING_WARRANTY_ACTIONS
     : ["WARRANTY_DAILY_SUMMARY", action];
 
+const ENGINEERING_SCHEDULED_EVENTS = Object.freeze({
+    EquipmentMaintenanceSummary: new Set(["MAINTENANCE_DUE"]),
+    EquipmentAMCSummary: new Set(["AMC_EXPIRING_TODAY"]),
+});
+
 const normalizeNotificationModuleName = (moduleName) => {
     if (moduleName === undefined || moduleName === null) return moduleName;
     const trimmed = String(moduleName).trim();
@@ -263,6 +268,30 @@ const createNotification = async (data) => {
                     message: "Notification already exists.",
                     data: { id: Number(duplicateResult.rows[0].id) },
                 };
+            }
+        }
+
+        // Scheduled Engineering summaries may be published concurrently by
+        // multiple app instances. Serialize the final insert so one event per
+        // organization/business-date is persisted even under that race.
+        const scheduledActions = ENGINEERING_SCHEDULED_EVENTS[data.entityType];
+        if (moduleName === "Engineering" && scheduledActions?.has(data.action) &&
+            data.entityId !== undefined && data.entityId !== null) {
+            const entityId = String(data.entityId);
+            const lockKey = `${moduleName}:${data.organizationId}:${data.entityType}:${data.action}:${entityId}`;
+            await client.query("SELECT pg_advisory_xact_lock(hashtext($1));", [lockKey]);
+            const duplicateResult = await client.query(`
+                SELECT id FROM notifications
+                WHERE organization_id = $1 AND module_name = $2
+                  AND entity_type = $3 AND entity_id = $4 AND action = $5
+                ORDER BY id ASC LIMIT 1;`,
+            [data.organizationId, moduleName, data.entityType, entityId, data.action]);
+            if (duplicateResult.rows.length) {
+                await client.query("COMMIT");
+                transactionStarted = false;
+                return { success: true, statusCode: 200,
+                    message: "Notification already exists.",
+                    data: { id: Number(duplicateResult.rows[0].id) } };
             }
         }
 

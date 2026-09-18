@@ -1,5 +1,6 @@
 const { pool } = require("../../db");
 const MaintenanceEmailService = require("./EngineeringMaintenanceEmailService");
+const { numberToWords } = require("../../utils/numberToWords");
 
 const TIME_ZONE = "Asia/Kolkata";
 const LOCK_KEY = "engineering-equipment-maintenance-job";
@@ -104,7 +105,7 @@ const processMaintenanceNotifications = async ({ businessDate, dueItems,
       Number(row.organizationid) === organizationID).map((row) => String(row.userid)))];
     if (!userIds.length || existingOrganizations.has(organizationID)) { summary.skipped += 1; continue; }
     const count = items.length;
-    let message = `${count} Maintenance ${count === 1 ? "Item" : "Items"} Due Today.`;
+    let message = `${numberToWords(count)} Maintenance ${count === 1 ? "Item" : "Items"} Due Today.`;
     if (count <= 3) message += `\n\nScheduled Equipment:\n${items.map((row) => {
       const details = [String(row.equipmentname || "Equipment").trim()];
       if (String(row.area || "").trim()) details.push(`Area: ${String(row.area).trim()}`);
