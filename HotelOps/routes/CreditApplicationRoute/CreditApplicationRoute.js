@@ -14,6 +14,9 @@ const {
   deleteCreditApplicationApprovalConfig,
   getCompanyWiseReport,
   getOrganizationWiseReport,
+  generateCreditApplicationListPdf,
+  generateCompanyWiseReportPdf,
+  generateOrganizationWiseReportPdf
 } = require("../../controllers/CreditApplicationController/CreditApplicationController");
 const router = express.Router();
 
@@ -34,6 +37,9 @@ router.delete("/DeleteApprovalConfig",authenticateToken,deleteCreditApplicationA
 // ============================================================ Reports
 router.get("/CompanyWiseReport",authenticateToken,getCompanyWiseReport,);
 router.get("/OrganizationWiseReport",authenticateToken,getOrganizationWiseReport,);
-
+// ============================================================ Reports
+router.get("/CreditApplicationListPdf",authenticateToken,generateCreditApplicationListPdf,);
+router.get("/CompanyWiseReportPdf",authenticateToken,generateCompanyWiseReportPdf,);
+router.get("/OrganizationWiseReportPdf",authenticateToken,generateOrganizationWiseReportPdf,);
 
 module.exports = router;
