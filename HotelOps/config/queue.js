@@ -71,4 +71,8 @@ module.exports = {
   REQUEST: "mom_request_queue",
   RESPONSE: "mom_response_queue",
 },
+ CREDIT_APPLICATION: {
+    REQUEST: "credit_application_request_queue",
+    RESPONSE: "credit_application_response_queue",
+  },
 };
