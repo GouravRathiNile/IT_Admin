@@ -10,3 +10,6 @@ npm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Firebase Admin service-account credentials must stay local.
+config/*firebase-adminsdk*.json

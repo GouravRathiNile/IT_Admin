@@ -16,11 +16,12 @@ const NOTIFICATION_MODULE_NAMES = Object.freeze({
     incidentreport: "Incident Report",
     opex: "Opex",
     engineering: "Engineering",
+    minutesofmeeting: "Minutes of Meeting",
 });
 
 // Modules using the shared Firebase dispatcher. Recipient selection remains in
 // each module service; this set only enables generic post-persistence delivery.
-const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Report", "Opex", "Engineering"]);
+const PUSH_NOTIFICATION_MODULES = new Set(["Capex", "Guest Glitch", "Incident Report", "Opex", "Engineering", "Minutes of Meeting"]);
 
 // Email rollout is intentionally limited to CAPEX. Other modules keep their
 // existing notification delivery until they are explicitly enabled here.

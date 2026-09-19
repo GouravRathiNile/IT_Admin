@@ -1,7 +1,7 @@
 const { initializeApp, cert, getApps } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
 
-const serviceAccount = require("./hotelops-8df99-firebase-adminsdk-opn7v-cc6148a975.json");
+const serviceAccount = require("./new-hotelops-firebase-adminsdk-fbsvc-88ef88f26c.json");
 
 // ============================================================
 // Firebase Admin Initialization

@@ -31,8 +31,11 @@ test("recipient query keeps local roles scoped and resolves RD from organization
   assert.match(calls[0].sql, /direct_uom\.OrganizationID = \$1/);
   assert.match(calls[0].sql, /um\.IsActive = TRUE AND um\.IsDeleted = FALSE AND um\.IsLocked = FALSE/);
   assert.match(calls[0].sql, /fc_uom\.OrganizationID = \$1/);
+  assert.match(calls[0].sql, /'FC' = ANY[\s\S]*NOT EXISTS \([\s\S]*central_rd_uom\.OrganizationID = \$6/);
+  assert.match(calls[0].sql, /central_rd_om\.IsActive = TRUE[\s\S]*central_rd_om\.ActivationStatus = TRUE[\s\S]*central_rd_om\.IsDeleted = FALSE/);
   assert.match(calls[0].sql, /'RD' = ANY[\s\S]*rd_uom\.OrganizationID = \$6/);
   assert.match(calls[0].sql, /rd_uom\.IsActive = TRUE AND rd_uom\.IsDeleted = FALSE/);
+  assert.match(calls[0].sql, /rd_om\.IsActive = TRUE AND rd_om\.ActivationStatus = TRUE[\s\S]*rd_om\.IsDeleted = FALSE/);
   assert.doesNotMatch(calls[0].sql, /UserType\)\) = 'RD'/);
   assert.deepEqual(calls[0].params, [20, ["FC"], ["5"], "7", "7", 10]);
 });
@@ -66,6 +69,40 @@ test("custom configured first and next roles are passed through without hardcodi
     queryable: db, publishNotification: async (payload) => { payloads.push(payload); return { success: true }; } });
   assert.equal(payloads[0].message, "AMC created and require your action.");
   assert.equal(payloads[1].message, "Approved by GM User.");
+});
+
+test("Org 20 CREATE resolves only local FC and excludes a central RD with Org 20 access", async () => {
+  const payloads = [];
+  const result = await notifyAMCApproval({ organizationID: 20, amcID: 22,
+    equipmentName: "Chiller", roles: ["FC"], kind: "CREATE", action: "CREATED",
+    queryable: { query: async (sql, params) => {
+      assert.deepEqual(params[1], ["FC"]);
+      assert.match(sql, /fc_uom\.OrganizationID = \$1[\s\S]*NOT EXISTS \([\s\S]*central_rd_uom\.OrganizationID = \$6/);
+      // The database applies the role predicate: local FC remains, central RD does not.
+      return { rows: [{ userid: 6, organizationshortname: "HJU" }] };
+    } },
+    publishNotification: async (payload) => { payloads.push(payload); return { success: true }; } });
+
+  assert.equal(result.skipped, false);
+  assert.deepEqual(payloads[0].userIds, ["6"]);
+});
+
+test("GM approval resolves central RD dynamically through Organization 10", async () => {
+  const payloads = [];
+  await notifyAMCApproval({ organizationID: 20, amcID: 23,
+    equipmentName: "Generator", roles: ["RD"], excludeUserID: 8,
+    actorUserID: 8, kind: "APPROVE", approverRole: "GM", action: "APPROVED",
+    queryable: { query: async (sql, params) => {
+      assert.deepEqual(params[1], ["RD"]);
+      assert.equal(params[5], 10);
+      assert.match(sql, /rd_uom\.UserID = um\.UserID AND rd_uom\.OrganizationID = \$6/);
+      assert.doesNotMatch(sql, /um\.UserID\s*=\s*9/);
+      return { rows: [{ userid: 12, organizationshortname: "HJU", actorname: "GM User" }] };
+    } },
+    publishNotification: async (payload) => { payloads.push(payload); return { success: true }; } });
+
+  assert.deepEqual(payloads[0].userIds, ["12"]);
+  assert.equal(payloads[0].message, "Approved by GM User.");
 });
 
 test("FC to GM to RD to CEO approvals notify only the next role and exclude actor", async () => {
