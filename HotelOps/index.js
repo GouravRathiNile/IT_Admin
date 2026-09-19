@@ -33,6 +33,7 @@ const EngineeringRoutes = require("./routes/EngineeringRoutes/EngineeringRoutes"
 const PublicEquipmentRoutes = require("./routes/EngineeringRoutes/PublicEquipmentRoutes");
 const NotificationRoutes = require("./routes/NotificationRoute/NotificationRoutes");
 const MinutesOfMeetingRoutes = require("./routes/MinutesOfMeetingRoutes/MinutesOfMeetingRoutes");
+const CreditApplicationRoutes = require("./routes/CreditApplicationRoute/CreditApplicationRoute");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
 const OrganizationHandler = require("./consumer/ITAdminConsumer/OrganizationHandler");
@@ -56,6 +57,7 @@ const { startEngineeringWarrantyStatusJob } = require("./services/EngineeringSer
 const MinutesOfMeetingHandler = require("./consumer/MinutesOfMeetingConsumer/MinutesOfMeetingHandler");
 const { startEngineeringMaintenanceNotificationJob } = require("./services/EngineeringService/EngineeringMaintenanceNotificationJob");
 const { startEngineeringAMCNotificationJob } = require("./services/EngineeringService/EngineeringAMCNotificationJob");
+const CreditApplicationHandler = require("./consumer/CreditApplicationConsumer/CreditApplicationHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -83,6 +85,7 @@ app.use("/api/Engineering", EngineeringRoutes);
 app.use("/public", PublicEquipmentRoutes);
 app.use("/api/Notification", NotificationRoutes);
 app.use("/api/MinutesOfMeeting", MinutesOfMeetingRoutes);
+app.use("/api/CreditApplication",CreditApplicationRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -206,6 +209,12 @@ const startServer = async () => {
       QUEUE.MOM.REQUEST,
       QUEUE.MOM.RESPONSE,
       MinutesOfMeetingHandler
+      );
+      // ===================================== Credit Application Consumer
+    await startConsumer(
+     QUEUE.CREDIT_APPLICATION.REQUEST,
+     QUEUE.CREDIT_APPLICATION.RESPONSE,
+     CreditApplicationHandler
       );
     // Start only after RabbitMQ consumers are ready; the job itself is
     // concurrency-safe across multiple application instances.
