@@ -1424,7 +1424,6 @@ exports.deleteCreditApplicationApprovalConfig = async (
     );
   }
 };
-
 // ========================================================================Reports
 // ============================================================COMPANY WISE REPORT
 exports.getCompanyWiseReport = async (
