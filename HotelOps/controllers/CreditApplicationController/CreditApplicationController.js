@@ -1504,3 +1504,233 @@ exports.getOrganizationWiseReport = async (
     );
   }
 };
+// ========================================================================Reports
+// ============================================================CREDIT APPLICATION LIST PDF
+exports.generateCreditApplicationListPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await CreditApplicationService
+        .generateCreditApplicationListPdf({
+          // ======================================================
+          // Same Filters As List GET
+          // ======================================================
+
+          OrganizationID:
+            req.query.OrganizationID,
+
+          CompanyName:
+            req.query.CompanyName,
+
+          Status:
+            req.query.Status,
+
+          FromDate:
+            req.query.FromDate,
+
+          ToDate:
+            req.query.ToDate,
+
+          // ======================================================
+          // Same Logged-In User Context As GET
+          // ======================================================
+
+          UserID:
+            req.user.UserID,
+
+          UserType:
+            req.user.UserType,
+
+          DepartmentName:
+            req.user.DepartmentName,
+
+          LoginType:
+            req.user.LoginType,
+
+          AllOrganizationAccess:
+            req.user.AllOrganizationAccess,
+        });
+
+    // ============================================================
+    // Error
+    // ============================================================
+
+    if (
+      !result.success
+    ) {
+      return res
+        .status(
+          result.statusCode ||
+            400,
+        )
+        .json(result);
+    }
+
+    // ============================================================
+    // PDF Headers
+    // ============================================================
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${result.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.data.length,
+    );
+
+    // ============================================================
+    // Send PDF Buffer
+    // ============================================================
+
+    return res.send(
+      result.data,
+    );
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================COMPANY WISE REPORT PDf
+exports.generateCompanyWiseReportPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await CreditApplicationService
+        .generateCompanyWiseReportPdf({
+          OrganizationID:
+            req.query.OrganizationID,
+
+          CompanyName:
+            req.query.CompanyName,
+
+          FromDate:
+            req.query.FromDate,
+
+          ToDate:
+            req.query.ToDate,
+        });
+
+    // ============================================================
+    // ERROR
+    // ============================================================
+
+    if (
+      !result.success
+    ) {
+      return res
+        .status(
+          result.statusCode ||
+            400,
+        )
+        .json(result);
+    }
+
+    // ============================================================
+    // PDF HEADERS
+    // ============================================================
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${result.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.data.length,
+    );
+
+    return res.send(
+      result.data,
+    );
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================ORGANIZATION WISE REPORT PDF
+exports.generateOrganizationWiseReportPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await CreditApplicationService
+        .generateOrganizationWiseReportPdf({
+          // Same filters as GET report
+          OrganizationID:
+            req.query.OrganizationID,
+
+          FromDate:
+            req.query.FromDate,
+
+          ToDate:
+            req.query.ToDate,
+        });
+
+    // ============================================================
+    // ERROR
+    // ============================================================
+
+    if (!result.success) {
+      return res
+        .status(
+          result.statusCode || 400,
+        )
+        .json(result);
+    }
+
+    // ============================================================
+    // PDF RESPONSE
+    // ============================================================
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${result.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.data.length,
+    );
+
+    return res.send(
+      result.data,
+    );
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};

@@ -5362,6 +5362,7 @@ const getOrganizationWiseReport = async (data) => {
     );
   }
 };
+// ========================================================================PDFs
 // ============================================================CREDIT APPLICATION LIST PDF
 const generateCreditApplicationListPdf = async (data) => {
   try {
@@ -5370,10 +5371,53 @@ const generateCreditApplicationListPdf = async (data) => {
     // Same rows fetched from getCreditApplicationList
     // ============================================================
 
-    const creditApplicationRows =
+    let creditApplicationRows =
       Array.isArray(data.PreparedRows)
         ? data.PreparedRows
-        : [];
+        : null;
+
+    // PDF aur list API ko ek hi source of truth par rakho. Isse role-based
+    // visibility, Status/Date filters, GM access aur FC ARID-pending state
+    // dono responses mein exactly same rahenge.
+    if (!creditApplicationRows) {
+      creditApplicationRows = [];
+
+      const firstPageResult =
+        await getCreditApplicationList({
+          ...data,
+          page: 1,
+          PageSize: 100,
+        });
+
+      if (!firstPageResult.success) {
+        return firstPageResult;
+      }
+
+      creditApplicationRows.push(
+        ...(firstPageResult.data?.data || []),
+      );
+
+      const totalPages = Number(
+        firstPageResult.data?.TotalPages || 0,
+      );
+
+      for (let page = 2; page <= totalPages; page += 1) {
+        const pageResult =
+          await getCreditApplicationList({
+            ...data,
+            page,
+            PageSize: 100,
+          });
+
+        if (!pageResult.success) {
+          return pageResult;
+        }
+
+        creditApplicationRows.push(
+          ...(pageResult.data?.data || []),
+        );
+      }
+    }
 
     // ============================================================
     // Organization
@@ -5485,7 +5529,7 @@ const generateCreditApplicationListPdf = async (data) => {
         value: (row) =>
           row.ExportSerialNumber,
 
-        width: 28,
+        width: 30,
 
         align: "center",
       },
@@ -5496,7 +5540,7 @@ const generateCreditApplicationListPdf = async (data) => {
         value: (row) =>
           row.ApplicationDate,
 
-        width: 62,
+        width: 65,
       },
 
       {
@@ -5505,7 +5549,7 @@ const generateCreditApplicationListPdf = async (data) => {
         value: (row) =>
           row.CompanyName,
 
-        width: 115,
+        width: 155,
       },
 
       {
@@ -5514,7 +5558,7 @@ const generateCreditApplicationListPdf = async (data) => {
         value: (row) =>
           row.Position,
 
-        width: 75,
+        width: 95,
       },
 
       {
@@ -5524,7 +5568,7 @@ const generateCreditApplicationListPdf = async (data) => {
         value: (row) =>
           row.CreditReferenceCheckedBy,
 
-        width: 115,
+        width: 155,
       },
 
       {
@@ -5539,7 +5583,7 @@ const generateCreditApplicationListPdf = async (data) => {
             ],
           ),
 
-        width: 68,
+        width: 70,
       },
 
       {
@@ -5553,7 +5597,7 @@ const generateCreditApplicationListPdf = async (data) => {
             ],
           ),
 
-        width: 68,
+        width: 70,
       },
 
       {
@@ -5562,21 +5606,9 @@ const generateCreditApplicationListPdf = async (data) => {
         value: (row) =>
           row.ARID,
 
-        width: 72,
+        width: 80,
       },
 
-      {
-        header: "ACTION",
-
-        value: (row) =>
-          row.CanApprove
-            ? "Approve"
-            : "-",
-
-        width: 58,
-
-        align: "center",
-      },
     ];
 
     // ============================================================
@@ -5699,6 +5731,593 @@ const generateCreditApplicationListPdf = async (data) => {
     );
   }
 };
+// ============================================================COMPANY WISE REPORT PDf
+const generateCompanyWiseReportPdf = async (data) => {
+  try {
+    // ============================================================
+    // GET ALL RECORDS FROM SAME GET API
+    // ============================================================
+
+    const rows = [];
+
+    const exportPageSize = 100;
+
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const result =
+        await getCompanyWiseReport({
+          OrganizationID:
+            data.OrganizationID,
+
+          CompanyName:
+            data.CompanyName,
+
+          FromDate:
+            data.FromDate,
+
+          ToDate:
+            data.ToDate,
+
+          page,
+
+          PageSize:
+            exportPageSize,
+        });
+
+      if (!result.success) {
+        return result;
+      }
+
+      const pageRows =
+        Array.isArray(
+          result.data?.data,
+        )
+          ? result.data.data
+          : [];
+
+      rows.push(
+        ...pageRows,
+      );
+
+      totalPages =
+        Number(
+          result.data?.TotalPages,
+        ) || 0;
+
+      page += 1;
+
+    } while (
+      page <= totalPages
+    );
+
+    // ============================================================
+    // ORGANIZATION FULL NAME
+    // ============================================================
+
+    const organizationResult = await pool.query(
+      `
+      SELECT OrganizationName
+      FROM Organization_Master
+      WHERE OrganizationID = $1
+        AND IsDeleted = FALSE
+      LIMIT 1;
+      `,
+      [Number(data.OrganizationID)],
+    );
+
+    const organizationName =
+      organizationResult.rows[0]?.organizationname || "-";
+
+    // ============================================================
+    // PDF ROWS
+    // ============================================================
+
+    const pdfRows =
+      rows.map(
+        (row, index) => ({
+          ...row,
+
+          SerialNumber:
+            index + 1,
+        }),
+      );
+
+    // ============================================================
+    // PDF COLUMNS
+    // SAME DATA AS GET API
+    // ============================================================
+
+    const columns = [
+      {
+        header: "#",
+        value: (row) =>
+          row.SerialNumber,
+        width: 30,
+        align: "center",
+      },
+
+      {
+        header: "COMPANY NAME",
+        value: (row) =>
+          row.CompanyName,
+        width: "*",
+      },
+
+      {
+        header: "TOTAL AMOUNT",
+        value: (row) =>
+          Number(
+            row.TotalCreditAmount || 0,
+          ).toLocaleString(
+            "en-IN",
+            {
+              maximumFractionDigits: 2,
+            },
+          ),
+        width: 80,
+      },
+
+      {
+        header: "TOTAL",
+        value: (row) =>
+          row.TotalApplications,
+        width: 65,
+        align: "center",
+      },
+
+      {
+        header: "PENDING",
+        value: (row) =>
+          row.PendingCount,
+        width: 48,
+        align: "center",
+      },
+
+      {
+        header: "APPROVED",
+        value: (row) =>
+          row.ApprovedCount,
+        width: 48,
+        align: "center",
+      },
+
+      {
+        header: "REJECTED",
+        value: (row) =>
+          row.RejectedCount,
+        width: 48,
+        align: "center",
+      },
+
+      {
+        header: "RETURNED",
+        value: (row) =>
+          row.ReturnedCount,
+        width: 48,
+        align: "center",
+      },
+
+      {
+        header: "AR CREATED",
+        value: (row) =>
+          row.ARCreatedCount,
+        width: 50,
+        align: "center",
+      },
+
+      {
+        header: "AR PENDING",
+        value: (row) =>
+          row.ARPendingCount,
+        width: 50,
+        align: "center",
+      },
+    ];
+
+    // ============================================================
+    // METADATA
+    // SAME FILTERS
+    // ============================================================
+
+    const metadata = [
+      {
+        label: "Organization",
+        value:
+          organizationName,
+      },
+
+      {
+        label: "Company",
+        value:
+          data.CompanyName ||
+          "All",
+      },
+
+      {
+        label: "From Date",
+        value:
+          data.FromDate
+            ? formatDate(
+                data.FromDate,
+              )
+            : "All",
+      },
+
+      {
+        label: "To Date",
+        value:
+          data.ToDate
+            ? formatDate(
+                data.ToDate,
+              )
+            : "All",
+      },
+
+    ];
+
+    // ============================================================
+    // GENERATE PDF
+    // ============================================================
+
+    const pdfBuffer =
+      await generatePdf({
+        title:
+          "COMPANY WISE CREDIT APPLICATION REPORT",
+
+        reportName:
+          "Company Wise Credit Application Report",
+
+        organizationId:
+          Number(
+            data.OrganizationID,
+          ) || null,
+
+        logoUrl:
+          data.logoUrl,
+
+        orientation:
+          "landscape",
+
+        metadata,
+
+        columns,
+
+        rows:
+          pdfRows,
+
+        pageMargins: [
+          18,
+          25,
+          18,
+          35,
+        ],
+      });
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
+    return {
+      success: true,
+
+      message:
+        "Company-wise Credit Application PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Company_Wise_Credit_Application_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "Generate Company Wise Credit Application PDF Error:",
+      error.message,
+    );
+
+    return fail(
+      "Unable to generate Company-wise Credit Application PDF.",
+      503,
+    );
+  }
+};
+// ============================================================ORGANIZATION WISE REPORT PDF
+const generateOrganizationWiseReportPdf = async (data) => {
+  try {
+    // ============================================================
+    // GET ALL RECORDS FROM SAME GET API
+    // ============================================================
+
+    const rows = [];
+
+    // getOrganizationWiseReport max PageSize = 100
+    const exportPageSize = 100;
+
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const result =
+        await getOrganizationWiseReport({
+          OrganizationID:
+            data.OrganizationID,
+
+          FromDate:
+            data.FromDate,
+
+          ToDate:
+            data.ToDate,
+
+          page,
+
+          PageSize:
+            exportPageSize,
+        });
+
+      if (!result.success) {
+        return result;
+      }
+
+      const pageRows =
+        Array.isArray(
+          result.data?.data,
+        )
+          ? result.data.data
+          : [];
+
+      rows.push(
+        ...pageRows,
+      );
+
+      totalPages =
+        Number(
+          result.data?.TotalPages,
+        ) || 0;
+
+      page += 1;
+
+    } while (
+      page <= totalPages
+    );
+
+    // ============================================================
+    // PDF ROWS
+    // ============================================================
+
+    const pdfRows =
+      rows.map(
+        (row, index) => ({
+          ...row,
+
+          SerialNumber:
+            index + 1,
+        }),
+      );
+
+    // ============================================================
+    // PDF COLUMNS
+    // SAME FIELDS AS GET API
+    // ============================================================
+
+    const columns = [
+      {
+        header: "#",
+        value: (row) =>
+          row.SerialNumber,
+        width: 30,
+        align: "center",
+      },
+
+      {
+        header: "HTL",
+        value: (row) =>
+          row.OrganizationShortName,
+        width: 120,
+        align: "left",
+      },
+
+      {
+        header: "TOTAL AMOUNT",
+        value: (row) =>
+          Number(
+            row.TotalCreditAmount || 0,
+          ).toLocaleString(
+            "en-IN",
+            {
+              maximumFractionDigits: 2,
+            },
+          ),
+        width: 130,
+        align: "center",
+      },
+
+      {
+        header: "TOTAL",
+        value: (row) =>
+          row.TotalApplications,
+        width: 85,
+        align: "center",
+      },
+
+      {
+        header: "PENDING",
+        value: (row) =>
+          row.PendingCount,
+        width: 70,
+        align: "center",
+      },
+
+      {
+        header: "APPROVED",
+        value: (row) =>
+          row.ApprovedCount,
+        width: 70,
+        align: "center",
+      },
+
+      {
+        header: "REJECTED",
+        value: (row) =>
+          row.RejectedCount,
+        width: 70,
+        align: "center",
+      },
+
+      {
+        header: "AR CREATED",
+        value: (row) =>
+          row.ARCreatedCount,
+        width: 80,
+        align: "center",
+      },
+
+      {
+        header: "AR PENDING",
+        value: (row) =>
+          row.ARPendingCount,
+        width: 80,
+        align: "center",
+      },
+    ];
+
+    // ============================================================
+    // ORGANIZATION
+    // Same GET data se
+    // ============================================================
+
+    const organizationId =
+      data.OrganizationID !== undefined &&
+      data.OrganizationID !== null &&
+      String(
+        data.OrganizationID,
+      ).trim() !== ""
+        ? Number(
+            data.OrganizationID,
+          )
+        : null;
+
+    const organizationName =
+      organizationId
+        ? (
+            rows[0]?.OrganizationName ||
+            rows[0]?.OrganizationShortName ||
+            "-"
+          )
+        : "All Organizations";
+
+    // ============================================================
+    // METADATA
+    // SAME FILTERS AS GET API
+    // ============================================================
+
+    const metadata = [
+      {
+        label: "Organization",
+        value:
+          organizationName,
+      },
+
+      {
+        label: "From Date",
+        value:
+          data.FromDate
+            ? formatDate(
+                data.FromDate,
+              )
+            : "All",
+      },
+
+      {
+        label: "To Date",
+        value:
+          data.ToDate
+            ? formatDate(
+                data.ToDate,
+              )
+            : "All",
+      },
+
+      {
+        label: "Total Organizations",
+        value:
+          rows.length,
+      },
+    ];
+
+    // ============================================================
+    // GENERATE PDF
+    // ============================================================
+
+    const pdfBuffer =
+      await generatePdf({
+        title:
+          "ORGANIZATION WISE CREDIT APPLICATION REPORT",
+
+        reportName:
+          "Organization Wise Credit Application Report",
+
+        organizationId,
+
+        logoUrl:
+          data.logoUrl,
+
+        orientation:
+          "landscape",
+
+        metadata,
+
+        columns,
+
+        rows:
+          pdfRows,
+
+        pageMargins: [
+          20,
+          25,
+          20,
+          35,
+        ],
+      });
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
+    return {
+      success: true,
+
+      message:
+        "Organization-wise Credit Application PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Organization_Wise_Credit_Application_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "Generate Organization Wise Credit Application PDF Error:",
+      error.message,
+    );
+
+    return fail(
+      "Unable to generate Organization-wise Credit Application PDF.",
+      503,
+    );
+  }
+};
+
 // ============================================================
 // Exports
 // ============================================================
@@ -5715,5 +6334,7 @@ module.exports = {
   deleteCreditApplicationApprovalConfig,
   getCompanyWiseReport,
   getOrganizationWiseReport,
-  generateCreditApplicationListPdf
+  generateCreditApplicationListPdf,
+  generateCompanyWiseReportPdf,
+  generateOrganizationWiseReportPdf
 };
