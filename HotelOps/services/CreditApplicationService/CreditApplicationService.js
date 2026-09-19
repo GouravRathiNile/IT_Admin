@@ -5715,4 +5715,5 @@ module.exports = {
   deleteCreditApplicationApprovalConfig,
   getCompanyWiseReport,
   getOrganizationWiseReport,
+  generateCreditApplicationListPdf
 };
