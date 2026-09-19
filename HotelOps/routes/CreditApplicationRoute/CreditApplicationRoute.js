@@ -11,7 +11,9 @@ const {
   updateCreditApplicationARID,
   createCreditApplicationApprovalConfig,
   getCreditApplicationApprovalConfigList,
-  deleteCreditApplicationApprovalConfig
+  deleteCreditApplicationApprovalConfig,
+  getCompanyWiseReport,
+  getOrganizationWiseReport,
 } = require("../../controllers/CreditApplicationController/CreditApplicationController");
 const router = express.Router();
 
@@ -29,5 +31,9 @@ router.put("/UpdateARId",authenticateToken,updateCreditApplicationARID,);
 router.post("/CreateApprovalConfig",authenticateToken, createCreditApplicationApprovalConfig,);
 router.get("/ApprovalConfigList",authenticateToken,getCreditApplicationApprovalConfigList,);
 router.delete("/DeleteApprovalConfig",authenticateToken,deleteCreditApplicationApprovalConfig,);
+// ============================================================ Reports
+router.get("/CompanyWiseReport",authenticateToken,getCompanyWiseReport,);
+router.get("/OrganizationWiseReport",authenticateToken,getOrganizationWiseReport,);
+
 
 module.exports = router;

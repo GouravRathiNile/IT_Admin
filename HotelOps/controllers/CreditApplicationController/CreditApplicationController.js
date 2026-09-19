@@ -1409,19 +1409,57 @@ exports.deleteCreditApplicationApprovalConfig = async (
 
 // ========================================================================Reports
 // ============================================================COMPANY WISE REPORT
-exports.getCompanyWiseCreditApplicationReport = async (
+exports.getCompanyWiseReport = async (
   req,
   res,
 ) => {
   try {
     const result =
       await CreditApplicationService
-        .getCompanyWiseCreditApplicationReport({
+        .getCompanyWiseReport({
           OrganizationID:
             req.query.OrganizationID,
 
           CompanyName:
             req.query.CompanyName,
+
+          FromDate:
+            req.query.FromDate,
+
+          ToDate:
+            req.query.ToDate,
+
+          page:
+            req.query.page,
+
+          PageSize:
+            req.query.PageSize,
+        });
+
+    return res
+      .status(
+        result.statusCode || 200,
+      )
+      .json(result);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================ORGANIZATION WISE REPORT
+exports.getOrganizationWiseReport = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await CreditApplicationService
+        .getOrganizationWiseReport({
+          OrganizationID:
+            req.query.OrganizationID,
 
           FromDate:
             req.query.FromDate,

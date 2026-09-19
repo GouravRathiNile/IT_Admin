@@ -4300,21 +4300,17 @@ const deleteCreditApplicationApprovalConfig = async (data) => {
 };
 // ========================================================================Reports
 // ============================================================COMPANY WISE REPORT
-const getCompanyWiseCreditApplicationReport = async (data) => {
+const getCompanyWiseReport = async (data) => {
   try {
     // ============================================================
     // Organization
     // ============================================================
 
     const OrganizationID =
-      Number(
-        data.OrganizationID,
-      );
+      Number(data.OrganizationID);
 
     if (
-      !Number.isSafeInteger(
-        OrganizationID,
-      ) ||
+      !Number.isSafeInteger(OrganizationID) ||
       OrganizationID <= 0
     ) {
       return fail(
@@ -4365,27 +4361,21 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
       data.CompanyName !== undefined &&
       data.CompanyName !== null &&
       String(data.CompanyName).trim() !== ""
-        ? String(
-            data.CompanyName,
-          ).trim()
+        ? String(data.CompanyName).trim()
         : null;
 
     const FromDate =
       data.FromDate !== undefined &&
       data.FromDate !== null &&
       String(data.FromDate).trim() !== ""
-        ? String(
-            data.FromDate,
-          ).trim()
+        ? String(data.FromDate).trim()
         : null;
 
     const ToDate =
       data.ToDate !== undefined &&
       data.ToDate !== null &&
       String(data.ToDate).trim() !== ""
-        ? String(
-            data.ToDate,
-          ).trim()
+        ? String(data.ToDate).trim()
         : null;
 
     // ============================================================
@@ -4427,7 +4417,7 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
     }
 
     // ============================================================
-    // Common WHERE
+    // WHERE
     // ============================================================
 
     let whereClause = `
@@ -4489,32 +4479,43 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
     }
 
     // ============================================================
-    // Count
-    // Count = Number Of Companies
+    // Count Companies
     // ============================================================
 
     const countResult =
       await pool.query(
         `
         SELECT
-          COUNT(
-            DISTINCT
+          COUNT(*)::bigint
+            AS TotalCount
+
+        FROM
+        (
+          SELECT
             UPPER(
               TRIM(
                 ca.CompanyName
               )
             )
-          )::bigint AS TotalCount
 
-        FROM Credit_Application_Entry_Master ca
+          FROM Credit_Application_Entry_Master ca
 
-        LEFT JOIN Credit_Application_Approval approval
-          ON approval.CreditApplicationID =
-             ca.CreditApplicationID
+          LEFT JOIN Credit_Application_Approval approval
+            ON approval.CreditApplicationID =
+               ca.CreditApplicationID
 
-         AND approval.IsDeleted = FALSE
+           AND approval.IsDeleted = FALSE
 
-        ${whereClause};
+          ${whereClause}
+
+          GROUP BY
+            UPPER(
+              TRIM(
+                ca.CompanyName
+              )
+            )
+
+        ) company_group;
         `,
         params,
       );
@@ -4549,7 +4550,11 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
       await pool.query(
         `
         SELECT
-          ca.CompanyName,
+          MIN(
+            TRIM(
+              ca.CompanyName
+            )
+          ) AS CompanyName,
 
           COUNT(
             ca.CreditApplicationID
@@ -4572,6 +4577,10 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
           )
             AS TotalExpectedBusinessFY,
 
+          -- ======================================================
+          -- Pending
+          -- ======================================================
+
           COUNT(*) FILTER
           (
             WHERE UPPER(
@@ -4584,6 +4593,10 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
             ) = 'PENDING'
           )::bigint
             AS PendingCount,
+
+          -- ======================================================
+          -- Approved
+          -- ======================================================
 
           COUNT(*) FILTER
           (
@@ -4598,6 +4611,10 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
           )::bigint
             AS ApprovedCount,
 
+          -- ======================================================
+          -- Rejected
+          -- ======================================================
+
           COUNT(*) FILTER
           (
             WHERE UPPER(
@@ -4610,6 +4627,10 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
             ) = 'REJECTED'
           )::bigint
             AS RejectedCount,
+
+          -- ======================================================
+          -- Returned
+          -- ======================================================
 
           COUNT(*) FILTER
           (
@@ -4624,51 +4645,41 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
           )::bigint
             AS ReturnedCount,
 
+          -- ======================================================
+          -- AR CREATED
+          -- ARID available
+          -- ======================================================
+
           COUNT(*) FILTER
           (
-            WHERE
-              UPPER(
-                TRIM(
-                  COALESCE(
-                    approval.FinalStatus,
-                    ''
-                  )
+            WHERE NULLIF(
+              TRIM(
+                COALESCE(
+                  ca.ARID,
+                  ''
                 )
-              ) = 'APPROVED'
-
-              AND NULLIF(
-                TRIM(
-                  COALESCE(
-                    ca.ARID,
-                    ''
-                  )
-                ),
-                ''
-              ) IS NOT NULL
+              ),
+              ''
+            ) IS NOT NULL
           )::bigint
             AS ARCreatedCount,
 
+          -- ======================================================
+          -- AR PENDING
+          -- ARID null / blank
+          -- ======================================================
+
           COUNT(*) FILTER
           (
-            WHERE
-              UPPER(
-                TRIM(
-                  COALESCE(
-                    approval.FinalStatus,
-                    ''
-                  )
+            WHERE NULLIF(
+              TRIM(
+                COALESCE(
+                  ca.ARID,
+                  ''
                 )
-              ) = 'APPROVED'
-
-              AND NULLIF(
-                TRIM(
-                  COALESCE(
-                    ca.ARID,
-                    ''
-                  )
-                ),
-                ''
-              ) IS NULL
+              ),
+              ''
+            ) IS NULL
           )::bigint
             AS ARPendingCount
 
@@ -4683,10 +4694,14 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
         ${whereClause}
 
         GROUP BY
-          ca.CompanyName
+          UPPER(
+            TRIM(
+              ca.CompanyName
+            )
+          )
 
         ORDER BY
-          ca.CompanyName ASC
+          CompanyName ASC
 
         LIMIT $${limitIndex}
         OFFSET $${offsetIndex};
@@ -4751,6 +4766,10 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
         }),
       );
 
+    // ============================================================
+    // Pagination
+    // ============================================================
+
     const TotalPages =
       TotalCount > 0
         ? Math.ceil(
@@ -4758,6 +4777,10 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
               PageSize,
           )
         : 0;
+
+    // ============================================================
+    // Response
+    // ============================================================
 
     return ok(
       "Company-wise Credit Application report fetched successfully.",
@@ -4786,8 +4809,469 @@ const getCompanyWiseCreditApplicationReport = async (data) => {
     );
   }
 };
+// ============================================================ORGANIZATION WISE REPORT
+const getOrganizationWiseReport = async (data) => {
+  try {
+    // ============================================================
+    // Organization
+    // Optional
+    // ============================================================
 
+    const OrganizationID =
+      data.OrganizationID !== undefined &&
+      data.OrganizationID !== null &&
+      String(data.OrganizationID).trim() !== ""
+        ? Number(
+            data.OrganizationID,
+          )
+        : null;
 
+    if (
+      OrganizationID !== null &&
+      (
+        !Number.isSafeInteger(
+          OrganizationID,
+        ) ||
+        OrganizationID <= 0
+      )
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+
+    const page =
+      Number(data.page) || 1;
+
+    const PageSize =
+      Number(data.PageSize) || 10;
+
+    if (
+      !Number.isInteger(page) ||
+      page <= 0
+    ) {
+      return fail(
+        "page must be a positive integer.",
+        400,
+      );
+    }
+
+    if (
+      !Number.isInteger(PageSize) ||
+      PageSize <= 0 ||
+      PageSize > 100
+    ) {
+      return fail(
+        "PageSize must be between 1 and 100.",
+        400,
+      );
+    }
+
+    const offset =
+      (page - 1) * PageSize;
+
+    // ============================================================
+    // Dates
+    // ============================================================
+
+    const FromDate =
+      data.FromDate !== undefined &&
+      data.FromDate !== null &&
+      String(data.FromDate).trim() !== ""
+        ? String(data.FromDate).trim()
+        : null;
+
+    const ToDate =
+      data.ToDate !== undefined &&
+      data.ToDate !== null &&
+      String(data.ToDate).trim() !== ""
+        ? String(data.ToDate).trim()
+        : null;
+
+    const dateFormat =
+      /^\d{4}-\d{2}-\d{2}$/;
+
+    if (
+      FromDate &&
+      !dateFormat.test(FromDate)
+    ) {
+      return fail(
+        "FromDate must be in YYYY-MM-DD format.",
+        400,
+      );
+    }
+
+    if (
+      ToDate &&
+      !dateFormat.test(ToDate)
+    ) {
+      return fail(
+        "ToDate must be in YYYY-MM-DD format.",
+        400,
+      );
+    }
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      return fail(
+        "FromDate cannot be greater than ToDate.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // WHERE
+    // ============================================================
+
+    let whereClause = `
+      WHERE ca.IsDeleted = FALSE
+    `;
+
+    const params = [];
+
+    // ============================================================
+    // Organization Filter
+    // ============================================================
+
+    if (
+      OrganizationID !== null
+    ) {
+      params.push(
+        OrganizationID,
+      );
+
+      whereClause += `
+        AND ca.OrganizationID =
+            $${params.length}
+      `;
+    }
+
+    // ============================================================
+    // From Date
+    // ============================================================
+
+    if (FromDate) {
+      params.push(
+        FromDate,
+      );
+
+      whereClause += `
+        AND ca.ApplicationDate >=
+            $${params.length}::date
+      `;
+    }
+
+    // ============================================================
+    // To Date
+    // ============================================================
+
+    if (ToDate) {
+      params.push(
+        ToDate,
+      );
+
+      whereClause += `
+        AND ca.ApplicationDate <=
+            $${params.length}::date
+      `;
+    }
+
+    // ============================================================
+    // Count Organizations
+    // ============================================================
+
+    const countResult =
+      await pool.query(
+        `
+        SELECT
+          COUNT(
+            DISTINCT ca.OrganizationID
+          )::bigint
+            AS TotalCount
+
+        FROM Credit_Application_Entry_Master ca
+
+        ${whereClause};
+        `,
+        params,
+      );
+
+    const TotalCount =
+      Number(
+        countResult.rows[0]
+          ?.totalcount || 0,
+      );
+
+    // ============================================================
+    // Pagination Params
+    // ============================================================
+
+    const listParams = [
+      ...params,
+      PageSize,
+      offset,
+    ];
+
+    const limitIndex =
+      params.length + 1;
+
+    const offsetIndex =
+      params.length + 2;
+
+    // ============================================================
+    // Organization Wise Report
+    // ============================================================
+
+    const result =
+      await pool.query(
+        `
+        SELECT
+          ca.OrganizationID,
+
+          om.OrganizationName,
+
+          om.ShortName
+            AS OrganizationShortName,
+
+          COUNT(
+            ca.CreditApplicationID
+          )::bigint
+            AS TotalApplications,
+
+          COALESCE(
+            SUM(
+              ca.CreditAmountAllowed
+            ),
+            0
+          )
+            AS TotalCreditAmount,
+
+          -- ======================================================
+          -- Pending
+          -- ======================================================
+
+          COUNT(*) FILTER
+          (
+            WHERE UPPER(
+              TRIM(
+                COALESCE(
+                  approval.FinalStatus,
+                  'Pending'
+                )
+              )
+            ) = 'PENDING'
+          )::bigint
+            AS PendingCount,
+
+          -- ======================================================
+          -- Approved
+          -- ======================================================
+
+          COUNT(*) FILTER
+          (
+            WHERE UPPER(
+              TRIM(
+                COALESCE(
+                  approval.FinalStatus,
+                  ''
+                )
+              )
+            ) = 'APPROVED'
+          )::bigint
+            AS ApprovedCount,
+
+          -- ======================================================
+          -- Rejected
+          -- ======================================================
+
+          COUNT(*) FILTER
+          (
+            WHERE UPPER(
+              TRIM(
+                COALESCE(
+                  approval.FinalStatus,
+                  ''
+                )
+              )
+            ) = 'REJECTED'
+          )::bigint
+            AS RejectedCount,
+
+          -- ======================================================
+          -- AR CREATED
+          -- ARID available
+          -- ======================================================
+
+          COUNT(*) FILTER
+          (
+            WHERE NULLIF(
+              TRIM(
+                COALESCE(
+                  ca.ARID,
+                  ''
+                )
+              ),
+              ''
+            ) IS NOT NULL
+          )::bigint
+            AS ARCreatedCount,
+
+          -- ======================================================
+          -- AR PENDING
+          -- ARID null / blank
+          -- ======================================================
+
+          COUNT(*) FILTER
+          (
+            WHERE NULLIF(
+              TRIM(
+                COALESCE(
+                  ca.ARID,
+                  ''
+                )
+              ),
+              ''
+            ) IS NULL
+          )::bigint
+            AS ARPendingCount
+
+        FROM Credit_Application_Entry_Master ca
+
+        LEFT JOIN Organization_Master om
+          ON om.OrganizationID =
+             ca.OrganizationID
+
+         AND om.IsDeleted = FALSE
+
+        LEFT JOIN Credit_Application_Approval approval
+          ON approval.CreditApplicationID =
+             ca.CreditApplicationID
+
+         AND approval.IsDeleted = FALSE
+
+        ${whereClause}
+
+        GROUP BY
+          ca.OrganizationID,
+          om.OrganizationName,
+          om.ShortName
+
+        ORDER BY
+          om.OrganizationName ASC,
+          ca.OrganizationID ASC
+
+        LIMIT $${limitIndex}
+        OFFSET $${offsetIndex};
+        `,
+        listParams,
+      );
+
+    // ============================================================
+    // Mapping
+    // ============================================================
+
+    const records =
+      result.rows.map(
+        (row) => ({
+          OrganizationID:
+            Number(
+              row.organizationid,
+            ),
+
+          OrganizationName:
+            row.organizationname,
+
+          OrganizationShortName:
+            row.organizationshortname,
+
+          TotalApplications:
+            Number(
+              row.totalapplications,
+            ),
+
+          TotalCreditAmount:
+            Number(
+              row.totalcreditamount,
+            ),
+
+          PendingCount:
+            Number(
+              row.pendingcount,
+            ),
+
+          ApprovedCount:
+            Number(
+              row.approvedcount,
+            ),
+
+          RejectedCount:
+            Number(
+              row.rejectedcount,
+            ),
+
+          ARCreatedCount:
+            Number(
+              row.arcreatedcount,
+            ),
+
+          ARPendingCount:
+            Number(
+              row.arpendingcount,
+            ),
+        }),
+      );
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+
+    const TotalPages =
+      TotalCount > 0
+        ? Math.ceil(
+            TotalCount /
+              PageSize,
+          )
+        : 0;
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "Organization-wise Credit Application report fetched successfully.",
+      {
+        TotalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize,
+
+        TotalPages,
+
+        data:
+          records,
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch organization-wise Credit Application report",
+    );
+  }
+};
 
 // ============================================================
 // Exports
@@ -4803,5 +5287,6 @@ module.exports = {
   createCreditApplicationApprovalConfig,
   getCreditApplicationApprovalConfigList,
   deleteCreditApplicationApprovalConfig,
-  getCompanyWiseCreditApplicationReport
+  getCompanyWiseReport,
+  getOrganizationWiseReport,
 };
