@@ -1533,6 +1533,22 @@ const getCreditApplicationList = async (data) => {
           ) =
           $${params.length}
         `;
+
+        // GM approval ke baad AR ID pending record FC ka pending task hai,
+        // isliye use FC Approved history mein include nahi karna hai.
+        if (
+          approvalRole === "FC" &&
+          Status === "APPROVED"
+        ) {
+          whereClause += `
+            AND NOT
+            (
+              UPPER(TRIM(COALESCE(approval.FinanceStatus, ''))) = 'APPROVED'
+              AND UPPER(TRIM(COALESCE(approval.GMStatus, ''))) = 'APPROVED'
+              AND NULLIF(TRIM(COALESCE(ca.ARID, '')), '') IS NULL
+            )
+          `;
+        }
       }
 
 
@@ -1885,6 +1901,18 @@ const getCreditApplicationList = async (data) => {
     for (
       const record of records
     ) {
+      const fcApproval = record.Approvals.find(
+        (stage) => stage.ApprovalRole === "FC",
+      );
+      const gmApproval = record.Approvals.find(
+        (stage) => stage.ApprovalRole === "GM",
+      );
+      const isFCARPending =
+        approvalRole === "FC" &&
+        normalizeCreditApprovalStatus(fcApproval?.Status) === "APPROVED" &&
+        normalizeCreditApprovalStatus(gmApproval?.Status) === "APPROVED" &&
+        String(record.ARID || "").trim() === "";
+
       const currentStage =
         record.Approvals.find(
           (stage) =>
@@ -1912,6 +1940,12 @@ const getCreditApplicationList = async (data) => {
           ) ===
             "PENDING"
         );
+
+      if (isFCARPending) {
+        record.CurrentApprovalRole = "FC";
+        record.CurrentStatus = "Pending";
+        record.CanApprove = false;
+      }
     }
 
 
@@ -5328,7 +5362,343 @@ const getOrganizationWiseReport = async (data) => {
     );
   }
 };
+// ============================================================CREDIT APPLICATION LIST PDF
+const generateCreditApplicationListPdf = async (data) => {
+  try {
+    // ============================================================
+    // Prepared Rows
+    // Same rows fetched from getCreditApplicationList
+    // ============================================================
 
+    const creditApplicationRows =
+      Array.isArray(data.PreparedRows)
+        ? data.PreparedRows
+        : [];
+
+    // ============================================================
+    // Organization
+    // ============================================================
+
+    const organizationId =
+      Number(data.OrganizationID) ||
+      creditApplicationRows[0]?.OrganizationID ||
+      null;
+
+    // ============================================================
+    // Organization Name
+    // ============================================================
+
+    let organizationName = null;
+
+    if (organizationId) {
+      const organizationResult =
+        await pool.query(
+          `
+          SELECT
+            OrganizationName
+
+          FROM Organization_Master
+
+          WHERE OrganizationID = $1
+            AND IsDeleted = FALSE
+
+          LIMIT 1;
+          `,
+          [
+            organizationId,
+          ],
+        );
+
+      organizationName =
+        organizationResult.rows[0]
+          ?.organizationname ||
+        null;
+    }
+
+    organizationName ||=
+      creditApplicationRows[0]
+        ?.OrganizationShortName ||
+      "All Organizations";
+
+    // ============================================================
+    // Serial Number
+    // ============================================================
+
+    const pdfRows =
+      creditApplicationRows.map(
+        (row, index) => ({
+          ...row,
+
+          ExportSerialNumber:
+            index + 1,
+        }),
+      );
+
+    // ============================================================
+    // Approval Status Helper
+    //
+    // FC column:
+    // supports FC / FINANCE role name
+    // ============================================================
+
+    const approvalStatus = (
+      row,
+      roles,
+    ) => {
+      const normalizedRoles =
+        roles.map(
+          (role) =>
+            String(role)
+              .trim()
+              .toUpperCase(),
+        );
+
+      const approval =
+        (row.Approvals || []).find(
+          (item) =>
+            normalizedRoles.includes(
+              String(
+                item.ApprovalRole ||
+                  "",
+              )
+                .trim()
+                .toUpperCase(),
+            ),
+        );
+
+      return (
+        approval?.Status ||
+        "Pending"
+      );
+    };
+
+    // ============================================================
+    // PDF Columns
+    //
+    // Same Fields As Credit Approval List UI
+    // ============================================================
+
+    const columns = [
+      {
+        header: "#Sr",
+
+        value: (row) =>
+          row.ExportSerialNumber,
+
+        width: 28,
+
+        align: "center",
+      },
+
+      {
+        header: "DATE",
+
+        value: (row) =>
+          row.ApplicationDate,
+
+        width: 62,
+      },
+
+      {
+        header: "COMPANY / FIRM NAME",
+
+        value: (row) =>
+          row.CompanyName,
+
+        width: 115,
+      },
+
+      {
+        header: "POSITION",
+
+        value: (row) =>
+          row.Position,
+
+        width: 75,
+      },
+
+      {
+        header:
+          "CREDIT & REFERENCE CHECKED BY",
+
+        value: (row) =>
+          row.CreditReferenceCheckedBy,
+
+        width: 115,
+      },
+
+      {
+        header: "FC STATUS",
+
+        value: (row) =>
+          approvalStatus(
+            row,
+            [
+              "FC",
+              "FINANCE",
+            ],
+          ),
+
+        width: 68,
+      },
+
+      {
+        header: "GM STATUS",
+
+        value: (row) =>
+          approvalStatus(
+            row,
+            [
+              "GM",
+            ],
+          ),
+
+        width: 68,
+      },
+
+      {
+        header: "ARID",
+
+        value: (row) =>
+          row.ARID,
+
+        width: 72,
+      },
+
+      {
+        header: "ACTION",
+
+        value: (row) =>
+          row.CanApprove
+            ? "Approve"
+            : "-",
+
+        width: 58,
+
+        align: "center",
+      },
+    ];
+
+    // ============================================================
+    // Metadata
+    // Same Filters As GET API
+    // ============================================================
+
+    const metadata = [
+      {
+        label: "Organization",
+        value:
+          organizationName,
+      },
+
+      {
+        label: "Company",
+        value:
+          data.CompanyName ||
+          "All",
+      },
+
+      {
+        label: "Status",
+        value:
+          data.Status ||
+          "All",
+      },
+
+      {
+        label: "From Date",
+        value:
+          data.FromDate
+            ? formatDate(
+                data.FromDate,
+              )
+            : "All",
+      },
+
+      {
+        label: "To Date",
+        value:
+          data.ToDate
+            ? formatDate(
+                data.ToDate,
+              )
+            : "All",
+      },
+
+      {
+        label: "Total Records",
+        value:
+          creditApplicationRows.length,
+      },
+    ];
+
+    // ============================================================
+    // Generate PDF
+    // ============================================================
+
+    const pdfBuffer =
+      await generatePdf({
+        title:
+          "CREDIT APPROVAL LIST",
+
+        reportName:
+          "Credit Approval List",
+
+        organizationId,
+
+        logoUrl:
+          data.logoUrl,
+
+        orientation:
+          "landscape",
+
+        metadata,
+
+        columns,
+
+        rows:
+          pdfRows,
+
+        pageMargins: [
+          20,
+          25,
+          20,
+          35,
+        ],
+      });
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return {
+      success: true,
+
+      message:
+        "Credit Application list PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Credit_Approval_List_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "Generate Credit Application List PDF Document Error:",
+      error.message,
+    );
+
+    return fail(
+      "Unable to generate Credit Application list PDF.",
+      503,
+    );
+  }
+};
 // ============================================================
 // Exports
 // ============================================================
