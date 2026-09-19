@@ -548,6 +548,8 @@ exports.getCreditApplicationList = async (req, res) => {
       OrganizationID,
       CompanyName,
       Status,
+      FromDate,
+      ToDate,
       page = 1,
       PageSize = 10,
     } = req.query;
@@ -569,6 +571,16 @@ exports.getCreditApplicationList = async (req, res) => {
       );
     }
 
+    validateDateFormat(FromDate, "From Date");
+    validateDateFormat(ToDate, "To Date");
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
     const response =
       await CreditApplicationService.getCreditApplicationList({
         OrganizationID: Number(OrganizationID),
@@ -578,6 +590,12 @@ exports.getCreditApplicationList = async (req, res) => {
 
         Status:
           Status?.trim() || null,
+
+        FromDate:
+          FromDate?.trim() || null,
+
+        ToDate:
+          ToDate?.trim() || null,
 
         page: Number(page) || 1,
         PageSize: Number(PageSize) || 10,

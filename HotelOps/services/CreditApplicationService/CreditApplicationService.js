@@ -1217,6 +1217,41 @@ const getCreditApplicationList = async (data) => {
 
 
     // ============================================================
+    // Application Date Range
+    // ============================================================
+
+    const normalizeDateFilter = (value) =>
+      value !== undefined &&
+      value !== null &&
+      String(value).trim() !== ""
+        ? String(value).trim()
+        : null;
+
+    const FromDate = normalizeDateFilter(data.FromDate);
+    const ToDate = normalizeDateFilter(data.ToDate);
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+    const isValidDateFilter = (value) => {
+      if (!value || !datePattern.test(value)) return false;
+      const parsedDate = new Date(`${value}T00:00:00.000Z`);
+      return !Number.isNaN(parsedDate.getTime()) &&
+        parsedDate.toISOString().slice(0, 10) === value;
+    };
+
+    if (FromDate && !isValidDateFilter(FromDate)) {
+      return fail("FromDate must be a valid date in YYYY-MM-DD format.", 400);
+    }
+
+    if (ToDate && !isValidDateFilter(ToDate)) {
+      return fail("ToDate must be a valid date in YYYY-MM-DD format.", 400);
+    }
+
+    if (FromDate && ToDate && FromDate > ToDate) {
+      return fail("FromDate cannot be greater than ToDate.", 400);
+    }
+
+
+    // ============================================================
     // Logged-In User Approval Role
     // ============================================================
 
@@ -1308,6 +1343,25 @@ const getCreditApplicationList = async (data) => {
         ) ILIKE '%' ||
           $${params.length} ||
           '%'
+      `;
+    }
+
+
+    // ============================================================
+    // Application Date Filters (Inclusive)
+    // ============================================================
+
+    if (FromDate) {
+      params.push(FromDate);
+      whereClause += `
+        AND ca.ApplicationDate >= $${params.length}::date
+      `;
+    }
+
+    if (ToDate) {
+      params.push(ToDate);
+      whereClause += `
+        AND ca.ApplicationDate <= $${params.length}::date
       `;
     }
 
@@ -1881,10 +1935,6 @@ const getCreditApplicationList = async (data) => {
           "AccountsContactEmail",
 
           "RecommendedBy",
-          "Position",
-
-          "CreditReferenceCheckedBy",
-          "CreditReferenceCheckedDate",
 
           "FinalStatusDateTime",
 
