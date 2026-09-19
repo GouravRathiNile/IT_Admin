@@ -1289,10 +1289,13 @@ const getCreditApplicationList = async (data) => {
     // ============================================================
 
     const searchOnlyViewer =
-      userType === "CEO" ||
-      departmentName ===
-        "FRONT OFFICE" ||
-      departmentName === "FO";
+      !approvalRole &&
+      (
+        userType === "CEO" ||
+        departmentName ===
+          "FRONT OFFICE" ||
+        departmentName === "FO"
+      );
 
     if (
       searchOnlyViewer &&
@@ -2167,10 +2170,13 @@ const getCreditApplicationById = async (data) => {
     // ============================================================
 
     const searchOnlyViewer =
-      userType === "CEO" ||
-      departmentName ===
-        "FRONT OFFICE" ||
-      departmentName === "FO";
+      !approvalRole &&
+      (
+        userType === "CEO" ||
+        departmentName ===
+          "FRONT OFFICE" ||
+        departmentName === "FO"
+      );
 
     if (searchOnlyViewer) {
       const fcApproved =
