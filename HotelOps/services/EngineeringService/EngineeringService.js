@@ -15307,15 +15307,14 @@ const processAMCApproval = async (data) => {
     } else if (Action === "APPROVE") {
       notifyCommittedAMCApproval({ organizationID: OrganizationID, amcID: AMCID,
         equipmentName: AMC.equipmentname, roles: [nextApprovalRole],
-        directUserIds: [AMC.createdby], excludeUserID: UserID,
+        excludeUserID: UserID,
         actorUserID: UserID, kind: "APPROVE", approverRole: approvalRole,
         nextRole: nextApprovalRole, action: "APPROVED" });
     } else {
-      // RETURN/REJECT notify the creator and other users of the acting stage,
-      // while the user who performed the action is deliberately excluded.
+      // RETURN/REJECT are creator-only events; exclude the actor if both IDs match.
       notifyCommittedAMCApproval({ organizationID: OrganizationID, amcID: AMCID,
-        equipmentName: AMC.equipmentname, roles: [approvalRole],
-        directUserIds: [AMC.createdby], excludeUserID: UserID,
+        equipmentName: AMC.equipmentname, directUserIds: [AMC.createdby],
+        excludeUserID: UserID,
         actorUserID: UserID, kind: Action, approverRole: approvalRole,
         action: Action === "RETURN" ? "RETURNED" : "REJECTED" });
     }

@@ -39,14 +39,32 @@ const resolveAMCApprovalNotificationRecipients = async ({ organizationID,
           AND dm.OrganizationID = $1 AND dm.IsDeleted = FALSE
           AND EXISTS (SELECT 1 FROM user_org_mapping fc_uom
             WHERE fc_uom.UserID = um.UserID AND fc_uom.OrganizationID = $1
-              AND fc_uom.IsActive = TRUE AND fc_uom.IsDeleted = FALSE))
+              AND fc_uom.IsActive = TRUE AND fc_uom.IsDeleted = FALSE)
+          -- A Finance HOD with active Organization 10 authority is RD, even
+          -- when that user is also mapped to the AMC organization.
+          AND NOT EXISTS (
+            SELECT 1
+            FROM user_org_mapping central_rd_uom
+            INNER JOIN organization_master central_rd_om
+              ON central_rd_om.OrganizationID = central_rd_uom.OrganizationID
+            WHERE central_rd_uom.UserID = um.UserID
+              AND central_rd_uom.OrganizationID = $6
+              AND central_rd_uom.IsActive = TRUE
+              AND central_rd_uom.IsDeleted = FALSE
+              AND central_rd_om.IsActive = TRUE
+              AND central_rd_om.ActivationStatus = TRUE
+              AND central_rd_om.IsDeleted = FALSE))
         OR ('RD' = ANY($2::text[])
           AND UPPER(TRIM(um.UserType)) = 'HOD'
           AND UPPER(TRIM(COALESCE(dm.DepartmentName, ''))) = 'FINANCE'
           AND dm.IsDeleted = FALSE
           AND EXISTS (SELECT 1 FROM user_org_mapping rd_uom
+            INNER JOIN organization_master rd_om
+              ON rd_om.OrganizationID = rd_uom.OrganizationID
             WHERE rd_uom.UserID = um.UserID AND rd_uom.OrganizationID = $6
-              AND rd_uom.IsActive = TRUE AND rd_uom.IsDeleted = FALSE))
+              AND rd_uom.IsActive = TRUE AND rd_uom.IsDeleted = FALSE
+              AND rd_om.IsActive = TRUE AND rd_om.ActivationStatus = TRUE
+              AND rd_om.IsDeleted = FALSE))
         OR ('GM' = ANY($2::text[]) AND UPPER(TRIM(um.UserType)) = 'GM'
           AND EXISTS (SELECT 1 FROM user_org_mapping gm_uom
             WHERE gm_uom.UserID = um.UserID AND gm_uom.OrganizationID = $1
@@ -66,15 +84,15 @@ const resolveAMCApprovalNotificationRecipients = async ({ organizationID,
 };
 
 const amcApprovalNotificationContent = ({ kind, equipmentName,
-  organizationShortName, actorName, approverRole, firstRole, nextRole }) => {
+  organizationShortName, actorName, approverRole }) => {
   const title = `AMC - ${String(equipmentName || "Equipment").trim()} - ${organizationShortName}`;
   const actedBy = actorName || approverRole;
   if (kind === "CREATE") return { title,
-    message: `AMC created and pending with ${firstRole}.` };
+    message: "AMC created and require your action." };
   if (kind === "APPROVE") return { title,
     message: `Approved by ${actedBy}.` };
   if (kind === "FINAL_APPROVE") return { title,
-    message: `Finally approved by ${actedBy}.` };
+    message: `Approved by ${actedBy}.` };
   if (kind === "RETURN") return { title, message: `Returned by ${actedBy}.` };
   if (kind === "REJECT") return { title, message: `Rejected by ${actedBy}.` };
   throw new Error(`Unsupported AMC notification kind: ${kind}`);
@@ -82,14 +100,14 @@ const amcApprovalNotificationContent = ({ kind, equipmentName,
 
 const notifyAMCApproval = async ({ organizationID, amcID, equipmentName,
   roles = [], directUserIds = [], excludeUserID = null, actorUserID = null,
-  kind, approverRole, firstRole, nextRole, action,
+  kind, approverRole, action,
   queryable = pool, publishNotification } = {}) => {
   const context = await resolveAMCApprovalNotificationRecipients({ organizationID,
     roles, directUserIds, excludeUserID, actorUserID, queryable });
   if (!context.userIds.length) return { skipped: true, reason: "no-eligible-recipient" };
   const content = amcApprovalNotificationContent({ kind, equipmentName,
     organizationShortName: context.organizationShortName,
-    actorName: context.actorName, approverRole, firstRole, nextRole });
+    actorName: context.actorName, approverRole });
   const send = publishNotification || (async (data) => {
     const { sendMessage } = require("../../producer/producer");
     const QUEUE = require("../../config/queue");

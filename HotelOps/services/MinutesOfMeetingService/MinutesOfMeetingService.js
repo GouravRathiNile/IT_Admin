@@ -1,6 +1,8 @@
 const { pool } = require("../../db");
 const { retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
 const { formatDate } = require("../../utils/dateFormatter");
+const { normalizeResponsibleUserIds, addedResponsibleUserIds,
+  notifyCommittedMOMAssignment } = require("./MinutesOfMeetingNotificationService");
 // ===============================================Pdf Helper
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
 const PdfPrinter = require("pdfmake");
@@ -116,6 +118,7 @@ const createMOM = async (data) => {
 
     const meetingID =
       masterResult.rows[0].meetingid;
+    const assignedUserIDs = [];
 
 
     // ============================================================ Insert Action Details
@@ -166,12 +169,17 @@ const createMOM = async (data) => {
           UserID,
         ],
       );
+      assignedUserIDs.push(...normalizeResponsibleUserIds(item.ResponsiblePerson));
     }
 
 
     // ============================================================ Commit
 
     await client.query("COMMIT");
+
+    notifyCommittedMOMAssignment({ organizationID: OrganizationID,
+      meetingID, meetingTitle: Title,
+      responsibleUserIds: assignedUserIDs, action: "ACTION_ASSIGNED" });
 
     return ok(
       "Meeting created successfully."
@@ -502,6 +510,18 @@ const updateMOM = async (data) => {
       );
     }
 
+    // Lock and snapshot current assignments before any action row changes.
+    const beforeActionsResult = await client.query(
+      `
+      SELECT ActionID, ResponsiblePerson
+      FROM MOM_Entry_Action_Details
+      WHERE MeetingID = $1 AND IsDeleted = FALSE
+      ORDER BY ActionID ASC
+      FOR UPDATE;
+      `,
+      [MeetingID],
+    );
+
 
     // ============================================================ Update Master
 
@@ -673,10 +693,31 @@ const updateMOM = async (data) => {
       [MeetingID],
     );
 
+    // Read the persisted final state so notification comparison never relies
+    // solely on untrusted request arrays.
+    const afterActionsResult = await client.query(
+      `
+      SELECT ActionID, ResponsiblePerson
+      FROM MOM_Entry_Action_Details
+      WHERE MeetingID = $1 AND IsDeleted = FALSE
+      ORDER BY ActionID ASC;
+      `,
+      [MeetingID],
+    );
+    const newlyAssignedUserIDs = addedResponsibleUserIds(
+      beforeActionsResult.rows,
+      afterActionsResult.rows,
+    );
+
 
     // ============================================================ Commit
 
     await client.query("COMMIT");
+
+    notifyCommittedMOMAssignment({ organizationID: OrganizationID,
+      meetingID: MeetingID, meetingTitle: Title,
+      responsibleUserIds: newlyAssignedUserIDs,
+      action: "RESPONSIBLE_PERSON_ADDED" });
 
     return ok(
       "Meeting updated successfully.",
