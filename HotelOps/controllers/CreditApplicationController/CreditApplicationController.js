@@ -447,7 +447,7 @@ exports.createCreditApplication = async (req, res) => {
     // sendQueueResponse JWT se automatically add karega.
     //
     // ARID create ke time nahi bhejni.
-    // ARID later Finance update karega after Finance + GM approval.
+    // ARID later FC update karega after FC + GM approval.
     // ============================================================
 
     const data = {
@@ -1254,7 +1254,7 @@ exports.updateCreditApplicationARID = async (req, res) => {
     } = req.body || {};
 
     // ============================================================
-    // Finance Permission
+    // FC Permission
     // ============================================================
 
     const userType = String(
@@ -1271,10 +1271,10 @@ exports.updateCreditApplicationARID = async (req, res) => {
 
     if (
       userType !== "HOD" ||
-      departmentName !== "FINANCE"
+      !["FC", "FINANCE"].includes(departmentName)
     ) {
       throw new AppError(
-        "Only Finance can update AR ID.",
+        "Only FC can update AR ID.",
         STATUS_CODES.FORBIDDEN,
       );
     }
@@ -1398,6 +1398,49 @@ exports.deleteCreditApplicationApprovalConfig = async (
             .CreditApplicationApprovalConfigID,
       },
     );
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+
+// ========================================================================Reports
+// ============================================================COMPANY WISE REPORT
+exports.getCompanyWiseCreditApplicationReport = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await CreditApplicationService
+        .getCompanyWiseCreditApplicationReport({
+          OrganizationID:
+            req.query.OrganizationID,
+
+          CompanyName:
+            req.query.CompanyName,
+
+          FromDate:
+            req.query.FromDate,
+
+          ToDate:
+            req.query.ToDate,
+
+          page:
+            req.query.page,
+
+          PageSize:
+            req.query.PageSize,
+        });
+
+    return res
+      .status(
+        result.statusCode || 200,
+      )
+      .json(result);
 
   } catch (error) {
     return handleError(

@@ -45,13 +45,17 @@ const databaseFailure = (error, action) => {
 };
 // ======================== Default Credit Application Approval Levels
 const DEFAULT_CREDIT_APPLICATION_APPROVALS = Object.freeze([
-  { LevelNo: 1, ApprovalRole: "FINANCE" },
+  { LevelNo: 1, ApprovalRole: "FC" },
   { LevelNo: 2, ApprovalRole: "GM" },
 ]);
 const CREDIT_APPLICATION_APPROVAL_ROLES = new Set([
-  "FINANCE",
+  "FC",
   "GM",
 ]);
+const normalizeCreditApplicationApprovalRole = (value) => {
+  const role = String(value || "").trim().toUpperCase();
+  return role === "FINANCE" ? "FC" : role;
+};
 // ============================================================ CREATE CREDIT APPLICATION
 const createCreditApplication = async (data) => {
   const client = await pool.connect();
@@ -375,15 +379,15 @@ const resolveCreditApplicationApprovalRole = ({
     .toUpperCase();
 
   // ============================================================
-  // FINANCE
-  // Finance approval = Finance HOD
+  // FC
+  // FC approval = FC HOD
   // ============================================================
 
   if (
     userType === "HOD" &&
-    departmentName === "FINANCE"
+    ["FC", "FINANCE"].includes(departmentName)
   ) {
-    return "FINANCE";
+    return "FC";
   }
 
   // ============================================================
@@ -443,11 +447,9 @@ const getCreditApplicationApprovalFlow = async (
           ),
 
         ApprovalRole:
-          String(
-            row.approvalrole || "",
-          )
-            .trim()
-            .toUpperCase(),
+          normalizeCreditApplicationApprovalRole(
+            row.approvalrole,
+          ),
 
         ApprovalOrder:
           Number(
@@ -464,7 +466,7 @@ const getCreditApplicationApprovalFlow = async (
 
   // ============================================================
   // Default Flow
-  // FINANCE -> GM
+  // FC -> GM
   // ============================================================
 
   return DEFAULT_CREDIT_APPLICATION_APPROVALS.map(
@@ -731,11 +733,9 @@ const attachCreditApplicationRelatedData = async (
           ),
 
         ApprovalRole:
-          String(
-            row.approvalrole || "",
-          )
-            .trim()
-            .toUpperCase(),
+          normalizeCreditApplicationApprovalRole(
+            row.approvalrole,
+          ),
 
         ApprovalOrder:
           Number(
@@ -751,7 +751,7 @@ const attachCreditApplicationRelatedData = async (
 
 
   // ============================================================
-  // Default FINANCE -> GM
+  // Default FC -> GM
   // ============================================================
 
   const defaultFlow =
@@ -796,7 +796,7 @@ const attachCreditApplicationRelatedData = async (
 
 
       const statusMap = {
-        FINANCE: {
+        FC: {
           Status:
             row.financestatus ||
             "Pending",
@@ -989,7 +989,7 @@ const CREDIT_APPLICATION_BASE_FROM = `
 
       CASE
         WHEN approval_flow.ApprovalRole =
-             'FINANCE'
+             'FC'
         THEN COALESCE(
           approval.FinanceStatus,
           'Pending'
@@ -1010,11 +1010,11 @@ const CREDIT_APPLICATION_BASE_FROM = `
     FROM
     (
       SELECT
-        UPPER(
-          TRIM(
-            config.ApprovalRole
-          )
-        ) AS ApprovalRole,
+        CASE
+          WHEN UPPER(TRIM(config.ApprovalRole)) = 'FINANCE'
+          THEN 'FC'
+          ELSE UPPER(TRIM(config.ApprovalRole))
+        END AS ApprovalRole,
 
         config.ApprovalOrder,
 
@@ -1042,7 +1042,7 @@ const CREDIT_APPLICATION_BASE_FROM = `
       FROM
       (
         VALUES
-          ('FINANCE', 1, 1),
+          ('FC', 1, 1),
           ('GM', 2, 2)
 
       ) AS default_flow(
@@ -1070,7 +1070,7 @@ const CREDIT_APPLICATION_BASE_FROM = `
       TRIM(
         CASE
           WHEN approval_flow.ApprovalRole =
-               'FINANCE'
+               'FC'
           THEN COALESCE(
             approval.FinanceStatus,
             'Pending'
@@ -1355,7 +1355,7 @@ const getCreditApplicationList = async (data) => {
 
     else if (approvalRole) {
       const roleStatusColumns = {
-        FINANCE:
+        FC:
           "approval.FinanceStatus",
 
         GM:
@@ -1403,10 +1403,10 @@ const getCreditApplicationList = async (data) => {
             )
         `;
 
-        // Finance ko ARID pending records bhi dikhne hain
+        // FC ko ARID pending records bhi dikhne hain
         if (
           approvalRole ===
-          "FINANCE"
+          "FC"
         ) {
           whereClause += `
             OR
@@ -2123,7 +2123,7 @@ const getCreditApplicationById = async (data) => {
       departmentName === "FO";
 
     if (searchOnlyViewer) {
-      const financeApproved =
+      const fcApproved =
         normalizeCreditApprovalStatus(
           result.rows[0]
             .financestatus,
@@ -2142,7 +2142,7 @@ const getCreditApplicationById = async (data) => {
         ).trim() !== "";
 
       if (
-        !financeApproved ||
+        !fcApproved ||
         !gmApproved ||
         !hasARID
       ) {
@@ -2195,10 +2195,10 @@ const getCreditApplicationById = async (data) => {
         approvalRole;
 
 
-      // Finance ko ARID pending state me access rahega
-      const financeARPending =
+      // FC ko ARID pending state me access rahega
+      const fcARPending =
         approvalRole ===
-          "FINANCE" &&
+          "FC" &&
 
         normalizeCreditApprovalStatus(
           result.rows[0]
@@ -2221,7 +2221,7 @@ const getCreditApplicationById = async (data) => {
       if (
         !isCurrentStage &&
         !hasAlreadyActed &&
-        !financeARPending
+        !fcARPending
       ) {
         return fail(
           "You are not authorized to view this Credit Application at the current approval stage.",
@@ -2868,7 +2868,7 @@ const processCreditApplicationApproval = async (data) => {
     // use config
     //
     // No config:
-    // FINANCE -> GM
+    // FC -> GM
     // ============================================================
 
     const approvalFlow =
@@ -2901,7 +2901,7 @@ const processCreditApplicationApproval = async (data) => {
     // ============================================================
 
     const statusMap = {
-      FINANCE:
+      FC:
         row.financestatus ||
         "Pending",
 
@@ -2989,7 +2989,7 @@ const processCreditApplicationApproval = async (data) => {
     // ============================================================
 
     const roleColumns = {
-      FINANCE: {
+      FC: {
         Status:
           "FinanceStatus",
 
@@ -3254,7 +3254,7 @@ const updateCreditApplicationARID = async (data) => {
     }
 
     // ============================================================
-    // Logged-In User Must Be Finance
+    // Logged-In User Must Be FC
     // ============================================================
 
     const approvalRole =
@@ -3264,12 +3264,12 @@ const updateCreditApplicationARID = async (data) => {
       });
 
     if (
-      approvalRole !== "FINANCE"
+      approvalRole !== "FC"
     ) {
       await client.query("ROLLBACK");
 
       return fail(
-        "Only Finance can update AR ID.",
+        "Only FC can update AR ID.",
         403,
       );
     }
@@ -3359,7 +3359,7 @@ const updateCreditApplicationARID = async (data) => {
     //      → Config Flow
     //
     // Config Not Available
-    //      → Default FINANCE -> GM
+    //      → Default FC -> GM
     // ============================================================
 
     const approvalFlow =
@@ -3406,7 +3406,7 @@ const updateCreditApplicationARID = async (data) => {
     // ============================================================
 
     const statusMap = {
-      FINANCE:
+      FC:
         row.financestatus ||
         "Pending",
 
@@ -3597,12 +3597,9 @@ const createCreditApplicationApprovalConfig = async (data) => {
             ),
 
           ApprovalRole:
-            String(
-              approval.ApprovalRole ||
-                "",
-            )
-              .trim()
-              .toUpperCase(),
+            normalizeCreditApplicationApprovalRole(
+              approval.ApprovalRole,
+            ),
 
           ApprovalOrder:
             Number(
@@ -3667,7 +3664,7 @@ const createCreditApplicationApprovalConfig = async (data) => {
         )
       ) {
         return fail(
-          "ApprovalRole must be FINANCE or GM.",
+          "ApprovalRole must be FC or GM.",
           400,
         );
       }
@@ -4176,7 +4173,9 @@ const getCreditApplicationApprovalConfigList = async (data) => {
             ),
 
           ApprovalRole:
-            row.approvalrole,
+            normalizeCreditApplicationApprovalRole(
+              row.approvalrole,
+            ),
 
           ApprovalOrder:
             Number(
@@ -4299,6 +4298,497 @@ const deleteCreditApplicationApprovalConfig = async (data) => {
     );
   }
 };
+// ========================================================================Reports
+// ============================================================COMPANY WISE REPORT
+const getCompanyWiseCreditApplicationReport = async (data) => {
+  try {
+    // ============================================================
+    // Organization
+    // ============================================================
+
+    const OrganizationID =
+      Number(
+        data.OrganizationID,
+      );
+
+    if (
+      !Number.isSafeInteger(
+        OrganizationID,
+      ) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+
+    const page =
+      Number(data.page) || 1;
+
+    const PageSize =
+      Number(data.PageSize) || 10;
+
+    if (
+      !Number.isInteger(page) ||
+      page <= 0
+    ) {
+      return fail(
+        "page must be a positive integer.",
+        400,
+      );
+    }
+
+    if (
+      !Number.isInteger(PageSize) ||
+      PageSize <= 0 ||
+      PageSize > 100
+    ) {
+      return fail(
+        "PageSize must be between 1 and 100.",
+        400,
+      );
+    }
+
+    const offset =
+      (page - 1) * PageSize;
+
+    // ============================================================
+    // Filters
+    // ============================================================
+
+    const CompanyName =
+      data.CompanyName !== undefined &&
+      data.CompanyName !== null &&
+      String(data.CompanyName).trim() !== ""
+        ? String(
+            data.CompanyName,
+          ).trim()
+        : null;
+
+    const FromDate =
+      data.FromDate !== undefined &&
+      data.FromDate !== null &&
+      String(data.FromDate).trim() !== ""
+        ? String(
+            data.FromDate,
+          ).trim()
+        : null;
+
+    const ToDate =
+      data.ToDate !== undefined &&
+      data.ToDate !== null &&
+      String(data.ToDate).trim() !== ""
+        ? String(
+            data.ToDate,
+          ).trim()
+        : null;
+
+    // ============================================================
+    // Date Validation
+    // ============================================================
+
+    const dateFormat =
+      /^\d{4}-\d{2}-\d{2}$/;
+
+    if (
+      FromDate &&
+      !dateFormat.test(FromDate)
+    ) {
+      return fail(
+        "FromDate must be in YYYY-MM-DD format.",
+        400,
+      );
+    }
+
+    if (
+      ToDate &&
+      !dateFormat.test(ToDate)
+    ) {
+      return fail(
+        "ToDate must be in YYYY-MM-DD format.",
+        400,
+      );
+    }
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      return fail(
+        "FromDate cannot be greater than ToDate.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Common WHERE
+    // ============================================================
+
+    let whereClause = `
+      WHERE ca.IsDeleted = FALSE
+        AND ca.OrganizationID = $1
+    `;
+
+    const params = [
+      OrganizationID,
+    ];
+
+    // ============================================================
+    // Company Filter
+    // ============================================================
+
+    if (CompanyName) {
+      params.push(
+        CompanyName,
+      );
+
+      whereClause += `
+        AND COALESCE(
+          ca.CompanyName,
+          ''
+        ) ILIKE '%' ||
+          $${params.length} ||
+          '%'
+      `;
+    }
+
+    // ============================================================
+    // From Date
+    // ============================================================
+
+    if (FromDate) {
+      params.push(
+        FromDate,
+      );
+
+      whereClause += `
+        AND ca.ApplicationDate >=
+            $${params.length}::date
+      `;
+    }
+
+    // ============================================================
+    // To Date
+    // ============================================================
+
+    if (ToDate) {
+      params.push(
+        ToDate,
+      );
+
+      whereClause += `
+        AND ca.ApplicationDate <=
+            $${params.length}::date
+      `;
+    }
+
+    // ============================================================
+    // Count
+    // Count = Number Of Companies
+    // ============================================================
+
+    const countResult =
+      await pool.query(
+        `
+        SELECT
+          COUNT(
+            DISTINCT
+            UPPER(
+              TRIM(
+                ca.CompanyName
+              )
+            )
+          )::bigint AS TotalCount
+
+        FROM Credit_Application_Entry_Master ca
+
+        LEFT JOIN Credit_Application_Approval approval
+          ON approval.CreditApplicationID =
+             ca.CreditApplicationID
+
+         AND approval.IsDeleted = FALSE
+
+        ${whereClause};
+        `,
+        params,
+      );
+
+    const TotalCount =
+      Number(
+        countResult.rows[0]
+          ?.totalcount || 0,
+      );
+
+    // ============================================================
+    // Pagination Params
+    // ============================================================
+
+    const listParams = [
+      ...params,
+      PageSize,
+      offset,
+    ];
+
+    const limitIndex =
+      params.length + 1;
+
+    const offsetIndex =
+      params.length + 2;
+
+    // ============================================================
+    // Report
+    // ============================================================
+
+    const result =
+      await pool.query(
+        `
+        SELECT
+          ca.CompanyName,
+
+          COUNT(
+            ca.CreditApplicationID
+          )::bigint
+            AS TotalApplications,
+
+          COALESCE(
+            SUM(
+              ca.CreditAmountAllowed
+            ),
+            0
+          )
+            AS TotalCreditAmount,
+
+          COALESCE(
+            SUM(
+              ca.ExpectedBusinessFY
+            ),
+            0
+          )
+            AS TotalExpectedBusinessFY,
+
+          COUNT(*) FILTER
+          (
+            WHERE UPPER(
+              TRIM(
+                COALESCE(
+                  approval.FinalStatus,
+                  'Pending'
+                )
+              )
+            ) = 'PENDING'
+          )::bigint
+            AS PendingCount,
+
+          COUNT(*) FILTER
+          (
+            WHERE UPPER(
+              TRIM(
+                COALESCE(
+                  approval.FinalStatus,
+                  ''
+                )
+              )
+            ) = 'APPROVED'
+          )::bigint
+            AS ApprovedCount,
+
+          COUNT(*) FILTER
+          (
+            WHERE UPPER(
+              TRIM(
+                COALESCE(
+                  approval.FinalStatus,
+                  ''
+                )
+              )
+            ) = 'REJECTED'
+          )::bigint
+            AS RejectedCount,
+
+          COUNT(*) FILTER
+          (
+            WHERE UPPER(
+              TRIM(
+                COALESCE(
+                  approval.FinalStatus,
+                  ''
+                )
+              )
+            ) = 'RETURNED'
+          )::bigint
+            AS ReturnedCount,
+
+          COUNT(*) FILTER
+          (
+            WHERE
+              UPPER(
+                TRIM(
+                  COALESCE(
+                    approval.FinalStatus,
+                    ''
+                  )
+                )
+              ) = 'APPROVED'
+
+              AND NULLIF(
+                TRIM(
+                  COALESCE(
+                    ca.ARID,
+                    ''
+                  )
+                ),
+                ''
+              ) IS NOT NULL
+          )::bigint
+            AS ARCreatedCount,
+
+          COUNT(*) FILTER
+          (
+            WHERE
+              UPPER(
+                TRIM(
+                  COALESCE(
+                    approval.FinalStatus,
+                    ''
+                  )
+                )
+              ) = 'APPROVED'
+
+              AND NULLIF(
+                TRIM(
+                  COALESCE(
+                    ca.ARID,
+                    ''
+                  )
+                ),
+                ''
+              ) IS NULL
+          )::bigint
+            AS ARPendingCount
+
+        FROM Credit_Application_Entry_Master ca
+
+        LEFT JOIN Credit_Application_Approval approval
+          ON approval.CreditApplicationID =
+             ca.CreditApplicationID
+
+         AND approval.IsDeleted = FALSE
+
+        ${whereClause}
+
+        GROUP BY
+          ca.CompanyName
+
+        ORDER BY
+          ca.CompanyName ASC
+
+        LIMIT $${limitIndex}
+        OFFSET $${offsetIndex};
+        `,
+        listParams,
+      );
+
+    // ============================================================
+    // Mapping
+    // ============================================================
+
+    const records =
+      result.rows.map(
+        (row) => ({
+          CompanyName:
+            row.companyname,
+
+          TotalApplications:
+            Number(
+              row.totalapplications,
+            ),
+
+          TotalCreditAmount:
+            Number(
+              row.totalcreditamount,
+            ),
+
+          TotalExpectedBusinessFY:
+            Number(
+              row.totalexpectedbusinessfy,
+            ),
+
+          PendingCount:
+            Number(
+              row.pendingcount,
+            ),
+
+          ApprovedCount:
+            Number(
+              row.approvedcount,
+            ),
+
+          RejectedCount:
+            Number(
+              row.rejectedcount,
+            ),
+
+          ReturnedCount:
+            Number(
+              row.returnedcount,
+            ),
+
+          ARCreatedCount:
+            Number(
+              row.arcreatedcount,
+            ),
+
+          ARPendingCount:
+            Number(
+              row.arpendingcount,
+            ),
+        }),
+      );
+
+    const TotalPages =
+      TotalCount > 0
+        ? Math.ceil(
+            TotalCount /
+              PageSize,
+          )
+        : 0;
+
+    return ok(
+      "Company-wise Credit Application report fetched successfully.",
+      {
+        TotalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize,
+
+        TotalPages,
+
+        data:
+          records,
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch company-wise Credit Application report",
+    );
+  }
+};
+
+
+
 // ============================================================
 // Exports
 // ============================================================
@@ -4312,5 +4802,6 @@ module.exports = {
   updateCreditApplicationARID,
   createCreditApplicationApprovalConfig,
   getCreditApplicationApprovalConfigList,
-  deleteCreditApplicationApprovalConfig
+  deleteCreditApplicationApprovalConfig,
+  getCompanyWiseCreditApplicationReport
 };
