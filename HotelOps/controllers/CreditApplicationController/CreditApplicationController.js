@@ -678,6 +678,35 @@ exports.getCreditApplicationById = async (req, res) => {
     return handleError(error, res);
   }
 };
+// ============================================================GET COMPANY NAMES
+exports.getCompanyNames = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await CreditApplicationService
+        .getCompanyNames({
+          OrganizationID:
+            req.query.OrganizationID,
+        });
+
+    return res
+      .status(
+        result.statusCode ||
+          (result.success
+            ? 200
+            : 400),
+      )
+      .json(result);
+
+  } catch (error) {
+    return handleControllerError(
+      error,
+      res,
+    );
+  }
+};
 // ============================================================UPDATE CREDIT APPLICATION
 exports.updateCreditApplication = async (req, res) => {
   try {

@@ -17,7 +17,8 @@ const {
   generateCreditApplicationListPdf,
   generateCompanyWiseReportPdf,
   generateOrganizationWiseReportPdf,
-  generateCreditApplicationDetailPdf
+  generateCreditApplicationDetailPdf,
+  getCompanyNames,
 } = require("../../controllers/CreditApplicationController/CreditApplicationController");
 const router = express.Router();
 
@@ -25,6 +26,7 @@ const router = express.Router();
 router.post("/Create",authenticateToken,upload.array("Documents", 10),createCreditApplication,);
 router.get("/CreditApplicationList",authenticateToken, getCreditApplicationList,);
 router.get("/CreditApplicationById/:id",authenticateToken,getCreditApplicationById,);
+router.get("/CompanyNames",authenticateToken,getCompanyNames,);
 router.put("/Update",authenticateToken,upload.array("Documents", 10),updateCreditApplication,);
 router.delete("/Delete",authenticateToken,deleteCreditApplication,);
 // ============================================================ Approve
