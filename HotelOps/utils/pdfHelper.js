@@ -180,7 +180,7 @@ const footer = (reportName, timestamp) => (page, count) => ({ columns: [
   { text: `Generated: ${timestamp}`, alignment: "right", width: "*" },
 ], fontSize: 7.5, color: COLORS.navy, margin: [24, 6, 24, 0] });
 
-const generatePdf = async ({ title, reportName, organizationId, logoUrl, orientation = "portrait", metadata = [], columns, rows, sections = [], pageMargins, styles = {}, tableOptions = {} }) => {
+const generatePdf = async ({ title, reportName, organizationId, logoUrl, pageSize = "A4", orientation = "portrait", metadata = [], columns, rows, sections = [], pageMargins, styles = {}, tableOptions = {} }) => {
   const content = [await buildHeader(title, organizationId, logoUrl)];
   if (metadata.length) content.push(metadataTable(metadata));
   if (columns) content.push(dataTable({ columns, rows, ...tableOptions }));
@@ -203,7 +203,7 @@ const generatePdf = async ({ title, reportName, organizationId, logoUrl, orienta
     );
   }
   const definition = {
-    pageSize: "A4", pageOrientation: orientation, pageMargins: pageMargins || [24, 26, 24, 34], content,
+    pageSize, pageOrientation: orientation, pageMargins: pageMargins || [24, 26, 24, 34], content,
     defaultStyle: { font: "Roboto", fontSize: orientation === "landscape" ? 8 : 9 },
     styles: {
       pdfTitle: { fontSize: 18, bold: true, color: COLORS.navy }, pdfLabel: { fontSize: 8, bold: true, color: COLORS.navy },
