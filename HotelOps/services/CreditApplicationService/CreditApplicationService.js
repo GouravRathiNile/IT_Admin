@@ -2354,7 +2354,111 @@ const getCreditApplicationById = async (data) => {
       "Fetch Credit Application record",
     );
   }
-}; 
+};  
+// ============================================================GET COMPANY NAMES
+const getCompanyNames = async (data) => {
+  try {
+    // ============================================================
+    // Organization
+    // ============================================================
+
+    const OrganizationID =
+      Number(
+        data.OrganizationID,
+      );
+
+    if (
+      !Number.isSafeInteger(
+        OrganizationID,
+      ) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Query
+    // Case Insensitive Unique Company Names
+    // ============================================================
+
+    const result =
+      await pool.query(
+        `
+        SELECT
+          MIN(
+            TRIM(
+              CompanyName
+            )
+          ) AS CompanyName
+
+        FROM Credit_Application_Entry_Master
+
+        WHERE OrganizationID = $1
+
+          AND IsDeleted = FALSE
+
+          AND NULLIF(
+            TRIM(
+              COALESCE(
+                CompanyName,
+                ''
+              )
+            ),
+            ''
+          ) IS NOT NULL
+
+        GROUP BY
+          UPPER(
+            TRIM(
+              CompanyName
+            )
+          )
+
+        ORDER BY
+          CompanyName ASC;
+        `,
+        [
+          OrganizationID,
+        ],
+      );
+
+    // ============================================================
+    // Mapping
+    // Only Company Name Required
+    // ============================================================
+
+    const records =
+  result.rows.map(
+    (row) => ({
+      CompanyName:
+        row.companyname,
+    }),
+  );
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "Company names fetched successfully.",
+      {
+        Count:
+          records.length,
+
+        data:
+          records,
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch company names",
+    );
+  }
+};
 // ============================================================UPDATE CREDIT APPLICATION
 const updateCreditApplication = async (data) => {
   const client = await pool.connect();
@@ -7948,5 +8052,6 @@ module.exports = {
   generateCreditApplicationListPdf,
   generateCompanyWiseReportPdf,
   generateOrganizationWiseReportPdf,
-  generateCreditApplicationDetailPdf
+  generateCreditApplicationDetailPdf,
+  getCompanyNames
 };
