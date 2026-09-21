@@ -1734,3 +1734,79 @@ exports.generateOrganizationWiseReportPdf = async (
     );
   }
 };
+// ============================================================CREDIT APPLICATION Details  PDF
+exports.generateCreditApplicationDetailPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const result =
+      await CreditApplicationService
+        .generateCreditApplicationDetailPdf({
+          CreditApplicationID:
+            req.params.id,
+
+          // ======================================================
+          // Same JWT context as Get By ID
+          // ======================================================
+
+          UserID:
+            req.user.UserID,
+
+          UserType:
+            req.user.UserType,
+
+          DepartmentName:
+            req.user.DepartmentName,
+
+          LoginType:
+            req.user.LoginType,
+
+          AllOrganizationAccess:
+            req.user.AllOrganizationAccess,
+        });
+
+    // ============================================================
+    // Error
+    // ============================================================
+
+    if (!result.success) {
+      return res
+        .status(
+          result.statusCode ||
+            400,
+        )
+        .json(result);
+    }
+
+    // ============================================================
+    // PDF Response
+    // ============================================================
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${result.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.data.length,
+    );
+
+    return res.send(
+      result.data,
+    );
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};

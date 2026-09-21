@@ -16,7 +16,8 @@ const {
   getOrganizationWiseReport,
   generateCreditApplicationListPdf,
   generateCompanyWiseReportPdf,
-  generateOrganizationWiseReportPdf
+  generateOrganizationWiseReportPdf,
+  generateCreditApplicationDetailPdf
 } = require("../../controllers/CreditApplicationController/CreditApplicationController");
 const router = express.Router();
 
@@ -41,5 +42,6 @@ router.get("/OrganizationWiseReport",authenticateToken,getOrganizationWiseReport
 router.get("/CreditApplicationListPdf",authenticateToken,generateCreditApplicationListPdf,);
 router.get("/CompanyWiseReportPdf",authenticateToken,generateCompanyWiseReportPdf,);
 router.get("/OrganizationWiseReportPdf",authenticateToken,generateOrganizationWiseReportPdf,);
+router.get("/CreditApplicationDetailsPdf/:id",authenticateToken,generateCreditApplicationDetailPdf,);
 
 module.exports = router;
