@@ -2,6 +2,7 @@ const { pool } = require("../../db");
 const {retryableDatabaseResponse,} = require("../../utils/retryableDatabaseError");
 const { formatDate } = require("../../utils/dateFormatter");
 const generateUrl = require("../../AzurConfigration/CreditApplication/AzureGetData");
+const { dispatchCommittedCreditApplicationEvent } = require("./CreditApplicationNotificationService");
 // ===============================================Pdf Helper
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
 const PdfPrinter = require("pdfmake");
@@ -316,12 +317,22 @@ const createCreditApplication = async (data) => {
       ],
     );
 
+    const approvalFlow = await getCreditApplicationApprovalFlow(OrganizationID, client);
+    const firstApprovalRole = approvalFlow[0]?.ApprovalRole;
 
     // ============================================================
     // Commit
     // ============================================================
 
     await client.query("COMMIT");
+
+    dispatchCommittedCreditApplicationEvent({ organizationID: OrganizationID,
+      creditApplicationID: CreditApplicationID, companyName: CompanyName,
+      roles: firstApprovalRole ? [firstApprovalRole] : [], kind: "CREATE",
+      action: "CREATED", details: { applicationDate: ApplicationDate,
+        creditAmountAllowed: CreditAmountAllowed, expectedBusinessFY: ExpectedBusinessFY,
+        financialYear: FinancialYear, authorisedPerson: AuthorisedPersonNamePosition,
+        accountsContact: AccountsContactNamePosition } });
 
     return ok(
       "Credit Application created successfully."
@@ -2954,6 +2965,13 @@ const processCreditApplicationApproval = async (data) => {
         ca.OrganizationID,
         ca.CompanyName,
         ca.ARID,
+        ca.ApplicationDate,
+        ca.CreditAmountAllowed,
+        ca.ExpectedBusinessFY,
+        ca.FinancialYear,
+        ca.AuthorisedPersonNamePosition,
+        ca.AccountsContactNamePosition,
+        ca.CreatedBy,
 
         approval.CreditApplicationApprovalID,
 
@@ -3005,6 +3023,12 @@ const processCreditApplicationApproval = async (data) => {
 
     const OrganizationID =
       Number(row.organizationid);
+    let committedNotificationEvent = null;
+    const notificationDetails = { applicationDate: row.applicationdate,
+      creditAmountAllowed: row.creditamountallowed,
+      expectedBusinessFY: row.expectedbusinessfy, financialYear: row.financialyear,
+      authorisedPerson: row.authorisedpersonnameposition,
+      accountsContact: row.accountscontactnameposition };
 
     // ============================================================
     // Already Final Approved
@@ -3255,6 +3279,15 @@ const processCreditApplicationApproval = async (data) => {
           CreditApplicationID,
         ],
       );
+
+      // FC is the first approver and rejects silently. A GM rejection returns
+      // attention to the organization's FC without notifying the creator.
+      if (approvalRole === "GM") {
+        committedNotificationEvent = { organizationID: OrganizationID,
+          creditApplicationID: CreditApplicationID, companyName: row.companyname,
+          roles: ["FC"], excludeUserIds: [UserID, row.createdby],
+          kind: "GM_REJECT", action: "REJECTED", details: notificationDetails };
+      }
     }
 
     // ============================================================
@@ -3357,6 +3390,18 @@ const processCreditApplicationApproval = async (data) => {
           ],
         );
       }
+
+      if (approvalRole === "FC" && nextStage) {
+        committedNotificationEvent = { organizationID: OrganizationID,
+          creditApplicationID: CreditApplicationID, companyName: row.companyname,
+          roles: [nextStage.ApprovalRole], excludeUserIds: [UserID, row.createdby],
+          kind: "FC_APPROVE", action: "APPROVED", details: notificationDetails };
+      } else if (approvalRole === "GM" && !nextStage) {
+        committedNotificationEvent = { organizationID: OrganizationID,
+          creditApplicationID: CreditApplicationID, companyName: row.companyname,
+          roles: ["FC"], excludeUserIds: [UserID, row.createdby],
+          kind: "GM_APPROVE", action: "APPROVED", details: notificationDetails };
+      }
     }
 
     // ============================================================
@@ -3364,6 +3409,10 @@ const processCreditApplicationApproval = async (data) => {
     // ============================================================
 
     await client.query("COMMIT");
+
+    if (committedNotificationEvent) {
+      dispatchCommittedCreditApplicationEvent(committedNotificationEvent);
+    }
 
     return ok(
       `Credit Application ${newStatus.toLowerCase()} successfully.`,
