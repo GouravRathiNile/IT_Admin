@@ -75,4 +75,8 @@ module.exports = {
     REQUEST: "credit_application_request_queue",
     RESPONSE: "credit_application_response_queue",
   },
+  DAILY_BREAKAGE: {
+  REQUEST: "daily_breakage_request",
+  RESPONSE: "daily_breakage_response",
+},
 };
