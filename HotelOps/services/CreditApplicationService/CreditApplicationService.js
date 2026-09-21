@@ -6317,7 +6317,1672 @@ const generateOrganizationWiseReportPdf = async (data) => {
     );
   }
 };
+// ============================================================CREDIT APPLICATION Details  PDF
+const generateCreditApplicationDetailPdf = async (data) => {
+  try {
+    // ============================================================
+    // Validate ID
+    // ============================================================
 
+    const CreditApplicationID =
+      Number(
+        data.CreditApplicationID,
+      );
+
+    if (
+      !Number.isSafeInteger(
+        CreditApplicationID,
+      ) ||
+      CreditApplicationID <= 0
+    ) {
+      return fail(
+        "Valid CreditApplicationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // SAME GET BY ID API
+    // ============================================================
+
+    const result =
+      await getCreditApplicationById({
+        CreditApplicationID,
+
+        UserID:
+          data.UserID,
+
+        UserType:
+          data.UserType,
+
+        DepartmentName:
+          data.DepartmentName,
+
+        LoginType:
+          data.LoginType,
+
+        AllOrganizationAccess:
+          data.AllOrganizationAccess,
+      });
+
+    if (!result.success) {
+      return result;
+    }
+
+    const detail =
+      result.data;
+
+    if (!detail) {
+      return fail(
+        "Credit Application record not found.",
+        404,
+      );
+    }
+
+    const organizationID =
+      Number(
+        detail.OrganizationID,
+      );
+
+    // ============================================================
+    // PDF COLORS
+    // SAME AMC STYLE
+    // ============================================================
+
+    const COLORS = {
+      navy: "#082B5C",
+
+      label:
+        "#082B5C",
+
+      text:
+        "#172033",
+
+      muted:
+        "#64748B",
+
+      border:
+        "#CFD7E3",
+
+      labelBackground:
+        "#F4F6F9",
+    };
+
+    // ============================================================
+    // Display Helper
+    // ============================================================
+
+    const displayValue = (value) =>
+      value === null ||
+      value === undefined ||
+      String(value).trim() === ""
+        ? "-"
+        : String(value);
+
+    // ============================================================
+    // Canvas Helpers
+    // ============================================================
+
+    const line = (
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth = 1.1,
+    ) => ({
+      type: "line",
+
+      x1,
+      y1,
+      x2,
+      y2,
+
+      lineWidth,
+
+      lineColor:
+        COLORS.navy,
+    });
+
+    const rect = (
+      x,
+      y,
+      w,
+      h,
+      r = 0,
+    ) => ({
+      type: "rect",
+
+      x,
+      y,
+      w,
+      h,
+      r,
+
+      lineWidth: 1.1,
+
+      lineColor:
+        COLORS.navy,
+    });
+
+    const ellipse = (
+      x,
+      y,
+      r1,
+      r2 = r1,
+    ) => ({
+      type: "ellipse",
+
+      x,
+      y,
+      r1,
+      r2,
+
+      lineWidth: 1.1,
+
+      lineColor:
+        COLORS.navy,
+    });
+
+    // ============================================================
+    // Icons
+    // ============================================================
+
+    const fieldIcon = (type) => {
+      const icons = {
+        organization: [
+          rect(4, 2, 10, 15, 1),
+          line(1, 17, 17, 17),
+          line(7, 6, 7, 8),
+          line(11, 6, 11, 8),
+          line(7, 11, 7, 13),
+          line(11, 11, 11, 13),
+        ],
+
+        company: [
+          rect(2, 4, 14, 12, 1),
+          line(5, 7, 5, 13),
+          line(9, 7, 9, 13),
+          line(13, 7, 13, 13),
+          line(1, 17, 17, 17),
+        ],
+
+        calendar: [
+          rect(1, 4, 16, 13, 1),
+          line(1, 8, 17, 8),
+          line(5, 2, 5, 6),
+          line(13, 2, 13, 6),
+        ],
+
+        person: [
+          ellipse(9, 5, 3),
+
+          {
+            type:
+              "polyline",
+
+            points: [
+              {
+                x: 2,
+                y: 17,
+              },
+              {
+                x: 3,
+                y: 13,
+              },
+              {
+                x: 6,
+                y: 11,
+              },
+              {
+                x: 12,
+                y: 11,
+              },
+              {
+                x: 15,
+                y: 13,
+              },
+              {
+                x: 16,
+                y: 17,
+              },
+            ],
+
+            lineWidth:
+              1.1,
+
+            lineColor:
+              COLORS.navy,
+          },
+        ],
+
+        location: [
+          ellipse(
+            9,
+            7,
+            5,
+          ),
+
+          ellipse(
+            9,
+            7,
+            1.5,
+          ),
+
+          {
+            type:
+              "polyline",
+
+            points: [
+              {
+                x: 5,
+                y: 10,
+              },
+              {
+                x: 9,
+                y: 18,
+              },
+              {
+                x: 13,
+                y: 10,
+              },
+            ],
+
+            lineWidth:
+              1.1,
+
+            lineColor:
+              COLORS.navy,
+          },
+        ],
+
+        money: [
+          ellipse(
+            9,
+            9,
+            7,
+          ),
+
+          line(
+            9,
+            4,
+            9,
+            14,
+          ),
+
+          line(
+            6,
+            6,
+            12,
+            6,
+          ),
+
+          line(
+            6,
+            12,
+            12,
+            12,
+          ),
+        ],
+
+        status: [
+          ellipse(
+            9,
+            9,
+            7,
+          ),
+
+          line(
+            5,
+            9,
+            8,
+            12,
+          ),
+
+          line(
+            8,
+            12,
+            14,
+            6,
+          ),
+        ],
+
+        email: [
+          rect(
+            1,
+            4,
+            16,
+            11,
+            1,
+          ),
+
+          line(
+            1,
+            5,
+            9,
+            11,
+          ),
+
+          line(
+            17,
+            5,
+            9,
+            11,
+          ),
+        ],
+
+        phone: [
+          {
+            type:
+              "polyline",
+
+            points: [
+              {
+                x: 4,
+                y: 2,
+              },
+              {
+                x: 7,
+                y: 6,
+              },
+              {
+                x: 5,
+                y: 8,
+              },
+              {
+                x: 10,
+                y: 13,
+              },
+              {
+                x: 12,
+                y: 11,
+              },
+              {
+                x: 16,
+                y: 14,
+              },
+              {
+                x: 14,
+                y: 17,
+              },
+              {
+                x: 10,
+                y: 16,
+              },
+              {
+                x: 5,
+                y: 12,
+              },
+              {
+                x: 2,
+                y: 7,
+              },
+              {
+                x: 2,
+                y: 4,
+              },
+              {
+                x: 4,
+                y: 2,
+              },
+            ],
+
+            lineWidth:
+              1.1,
+
+            lineColor:
+              COLORS.navy,
+          },
+        ],
+
+        document: [
+          rect(
+            3,
+            1,
+            12,
+            16,
+            1,
+          ),
+
+          line(
+            6,
+            6,
+            12,
+            6,
+          ),
+
+          line(
+            6,
+            9,
+            12,
+            9,
+          ),
+
+          line(
+            6,
+            12,
+            11,
+            12,
+          ),
+        ],
+      };
+
+      const iconScale =
+        0.82;
+
+      return (
+        icons[type] ||
+        icons.company
+      ).map(
+        (shape) => {
+          const scaledShape = {
+            ...shape,
+
+            lineWidth:
+              (shape.lineWidth || 1) *
+              iconScale,
+          };
+
+          for (
+            const coordinate of [
+              "x",
+              "y",
+              "x1",
+              "y1",
+              "x2",
+              "y2",
+              "w",
+              "h",
+              "r",
+              "r1",
+              "r2",
+            ]
+          ) {
+            if (
+              typeof scaledShape[
+                coordinate
+              ] === "number"
+            ) {
+              scaledShape[
+                coordinate
+              ] *= iconScale;
+            }
+          }
+
+          if (
+            Array.isArray(
+              scaledShape.points,
+            )
+          ) {
+            scaledShape.points =
+              scaledShape.points.map(
+                (point) => ({
+                  x:
+                    point.x *
+                    iconScale,
+
+                  y:
+                    point.y *
+                    iconScale,
+                }),
+              );
+          }
+
+          return scaledShape;
+        },
+      );
+    };
+
+    // ============================================================
+    // Cell Helpers
+    // ============================================================
+
+    const labelCell = (
+      label,
+      icon,
+    ) => ({
+      columns: [
+        {
+          width: 22,
+
+          canvas:
+            fieldIcon(icon),
+        },
+
+        {
+          width:
+            "*",
+
+          text:
+            label,
+
+          style:
+            "fieldLabel",
+
+          margin: [
+            2,
+            3,
+            0,
+            0,
+          ],
+        },
+      ],
+
+      fillColor:
+        COLORS.labelBackground,
+
+      margin: [
+        8,
+        6,
+        5,
+        6,
+      ],
+    });
+
+    const valueCell = (
+      value,
+    ) => ({
+      text:
+        displayValue(
+          value,
+        ),
+
+      style:
+        "fieldValue",
+
+      margin: [
+        9,
+        8,
+        7,
+        7,
+      ],
+    });
+
+    const tableLayout = {
+      hLineColor: () =>
+        COLORS.border,
+
+      vLineColor: () =>
+        COLORS.border,
+
+      hLineWidth: () =>
+        0.7,
+
+      vLineWidth: () =>
+        0.7,
+
+      paddingLeft: () =>
+        0,
+
+      paddingRight: () =>
+        0,
+
+      paddingTop: () =>
+        0,
+
+      paddingBottom: () =>
+        0,
+    };
+
+    const sectionHeading = (
+      title,
+    ) => ({
+      text:
+        title,
+
+      fontSize:
+        11,
+
+      bold:
+        true,
+
+      color:
+        COLORS.navy,
+
+      margin: [
+        0,
+        4,
+        0,
+        7,
+      ],
+    });
+
+    // ============================================================
+    // Logo
+    // SAME AMC PATTERN
+    // ============================================================
+
+    const logo =
+      await loadLogo(
+        organizationID,
+        data.logoUrl,
+      );
+
+    const generatedOn =
+      formatDate(
+        new Date(),
+        "DD MMM YYYY hh:mm A",
+      );
+
+    // ============================================================
+    // Amount Values
+    // ============================================================
+
+    const creditAmount =
+      detail.CreditAmountAllowed !==
+        null &&
+      detail.CreditAmountAllowed !==
+        undefined
+        ? Number(
+            detail.CreditAmountAllowed,
+          ).toLocaleString(
+            "en-IN",
+            {
+              maximumFractionDigits: 2,
+            },
+          )
+        : null;
+
+    const expectedBusinessFY =
+      detail.ExpectedBusinessFY !==
+        null &&
+      detail.ExpectedBusinessFY !==
+        undefined
+        ? Number(
+            detail.ExpectedBusinessFY,
+          ).toLocaleString(
+            "en-IN",
+            {
+              maximumFractionDigits: 2,
+            },
+          )
+        : null;
+
+    // ============================================================
+    // Approval Table
+    // SAME Approval Array From GET
+    // ============================================================
+
+    const approvals =
+      Array.isArray(
+        detail.Approvals,
+      )
+        ? detail.Approvals
+        : [];
+
+    const approvalBody = [
+      [
+        {
+          text:
+            "Approval",
+
+          style:
+            "tableHeader",
+        },
+
+        {
+          text:
+            "Status",
+
+          style:
+            "tableHeader",
+        },
+
+        {
+          text:
+            "Remarks",
+
+          style:
+            "tableHeader",
+        },
+      ],
+    ];
+
+    approvals.forEach(
+      (approval) => {
+        approvalBody.push([
+          {
+            text:
+              displayValue(
+                approval.ApprovalRole,
+              ),
+
+            style:
+              "tableValue",
+          },
+
+          {
+            text:
+              displayValue(
+                approval.Status,
+              ),
+
+            style:
+              "tableValue",
+          },
+
+          {
+            text:
+              displayValue(
+                approval.Remarks,
+              ),
+
+            style:
+              "tableValue",
+          },
+        ]);
+      },
+    );
+
+    if (
+      approvals.length === 0
+    ) {
+      approvalBody.push([
+        {
+          text:
+            "No approval data found.",
+
+          colSpan:
+            3,
+
+          alignment:
+            "center",
+
+          style:
+            "tableValue",
+        },
+
+        {},
+        {},
+      ]);
+    }
+
+    // ============================================================
+    // Document Definition
+    // SAME AMC STYLE
+    // ============================================================
+
+    const documentDefinition = {
+      pageSize:
+        "A4",
+
+      pageOrientation:
+        "portrait",
+
+      pageMargins: [
+        22,
+        26,
+        22,
+        72,
+      ],
+
+      defaultStyle: {
+        font:
+          "Roboto",
+
+        fontSize:
+          9,
+
+        color:
+          COLORS.text,
+      },
+
+      content: [
+        // ========================================================
+        // Header
+        // ========================================================
+
+        {
+          table: {
+            widths: [
+              130,
+              "*",
+              80,
+            ],
+
+            body: [
+              [
+                logo
+                  ? {
+                      image:
+                        logo,
+
+                      fit: [
+                        88,
+                        50,
+                      ],
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    }
+                  : {
+                      text:
+                        "",
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    },
+
+                {
+                  text:
+                    "Credit Application Detail",
+
+                  style:
+                    "title",
+
+                  alignment:
+                    "center",
+
+                  margin: [
+                    0,
+                    18,
+                    0,
+                    0,
+                  ],
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+
+                {
+                  text:
+                    "",
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            "noBorders",
+        },
+
+        {
+          canvas: [
+            {
+              type:
+                "line",
+
+              x1:
+                0,
+
+              y1:
+                0,
+
+              x2:
+                551,
+
+              y2:
+                0,
+
+              lineWidth:
+                0.8,
+
+              lineColor:
+                COLORS.navy,
+            },
+          ],
+
+          margin: [
+            0,
+            7,
+            0,
+            14,
+          ],
+        },
+
+        // ========================================================
+        // Company Details
+        // ========================================================
+
+        sectionHeading(
+          "Company Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Organization",
+                  "organization",
+                ),
+
+                valueCell(
+                  detail
+                    .OrganizationShortName ||
+                    detail
+                      .OrganizationName,
+                ),
+
+                labelCell(
+                  "Application Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.ApplicationDate,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Company / Firm",
+                  "company",
+                ),
+
+                valueCell(
+                  detail.CompanyName,
+                ),
+
+                labelCell(
+                  "GSTIN",
+                  "document",
+                ),
+
+                valueCell(
+                  detail.CompanyGSTIN,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "MSME",
+                  "status",
+                ),
+
+                valueCell(
+                  detail.MSME,
+                ),
+
+                labelCell(
+                  "Financial Year",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.FinancialYear,
+                ),
+              ],
+
+              [
+                {
+                  ...labelCell(
+                    "Business Address",
+                    "location",
+                  ),
+                },
+
+                {
+                  text:
+                    displayValue(
+                      detail.BusinessAddress,
+                    ),
+
+                  style:
+                    "fieldValue",
+
+                  colSpan:
+                    3,
+
+                  margin: [
+                    9,
+                    8,
+                    7,
+                    7,
+                  ],
+                },
+
+                {},
+                {},
+              ],
+
+              [
+                {
+                  ...labelCell(
+                    "Billing Address",
+                    "location",
+                  ),
+                },
+
+                {
+                  text:
+                    displayValue(
+                      detail.BillingAddress,
+                    ),
+
+                  style:
+                    "fieldValue",
+
+                  colSpan:
+                    3,
+
+                  margin: [
+                    9,
+                    8,
+                    7,
+                    7,
+                  ],
+                },
+
+                {},
+                {},
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+        // ========================================================
+        // Authorised Person
+        // ========================================================
+
+        sectionHeading(
+          "Authorised Person Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Name / Position",
+                  "person",
+                ),
+
+                valueCell(
+                  detail
+                    .AuthorisedPersonNamePosition,
+                ),
+
+                labelCell(
+                  "Mobile Number",
+                  "phone",
+                ),
+
+                valueCell(
+                  detail
+                    .AuthorisedPersonMobileNo,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Email",
+                  "email",
+                ),
+
+                {
+                  text:
+                    displayValue(
+                      detail
+                        .AuthorisedPersonEmail,
+                    ),
+
+                  style:
+                    "fieldValue",
+
+                  colSpan:
+                    3,
+
+                  margin: [
+                    9,
+                    8,
+                    7,
+                    7,
+                  ],
+                },
+
+                {},
+                {},
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+        // ========================================================
+        // Accounts Contact
+        // ========================================================
+
+        sectionHeading(
+          "Accounts Contact Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Name / Position",
+                  "person",
+                ),
+
+                valueCell(
+                  detail
+                    .AccountsContactNamePosition,
+                ),
+
+                labelCell(
+                  "Mobile Number",
+                  "phone",
+                ),
+
+                valueCell(
+                  detail
+                    .AccountsContactMobileNo,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Email",
+                  "email",
+                ),
+
+                {
+                  text:
+                    displayValue(
+                      detail
+                        .AccountsContactEmail,
+                    ),
+
+                  style:
+                    "fieldValue",
+
+                  colSpan:
+                    3,
+
+                  margin: [
+                    9,
+                    8,
+                    7,
+                    7,
+                  ],
+                },
+
+                {},
+                {},
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+        // ========================================================
+        // Credit Details
+        // ========================================================
+
+        sectionHeading(
+          "Credit Details",
+        ),
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Recommended By",
+                  "person",
+                ),
+
+                valueCell(
+                  detail.RecommendedBy,
+                ),
+
+                labelCell(
+                  "Position",
+                  "person",
+                ),
+
+                valueCell(
+                  detail.Position,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Reference Checked By",
+                  "person",
+                ),
+
+                valueCell(
+                  detail
+                    .CreditReferenceCheckedBy,
+                ),
+
+                labelCell(
+                  "Reference Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail
+                    .CreditReferenceCheckedDate,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "Credit Amount",
+                  "money",
+                ),
+
+                valueCell(
+                  creditAmount,
+                ),
+
+                labelCell(
+                  "Expected Business FY",
+                  "money",
+                ),
+
+                valueCell(
+                  expectedBusinessFY,
+                ),
+              ],
+
+              [
+                labelCell(
+                  "AR ID",
+                  "document",
+                ),
+
+                valueCell(
+                  detail.ARID,
+                ),
+
+                labelCell(
+                  "Created Date",
+                  "calendar",
+                ),
+
+                valueCell(
+                  detail.CreatedDate,
+                ),
+              ],
+            ],
+          },
+
+          layout:
+            tableLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+        // ========================================================
+        // Approval Details
+        // ========================================================
+
+        sectionHeading(
+          "Approval Details",
+        ),
+
+        {
+          table: {
+            headerRows:
+              1,
+
+            widths: [
+              90,
+              90,
+              "*",
+            ],
+
+            body:
+              approvalBody,
+          },
+
+          layout: {
+            hLineColor: () =>
+              COLORS.border,
+
+            vLineColor: () =>
+              COLORS.border,
+
+            hLineWidth: () =>
+              0.7,
+
+            vLineWidth: () =>
+              0.7,
+
+            paddingLeft: () =>
+              7,
+
+            paddingRight: () =>
+              7,
+
+            paddingTop: () =>
+              6,
+
+            paddingBottom: () =>
+              6,
+          },
+
+          margin: [
+            0,
+            0,
+            0,
+            15,
+          ],
+        },
+
+      ],
+
+      // ==========================================================
+      // Footer
+      // ==========================================================
+
+      footer: () => ({
+        margin: [
+          22,
+          8,
+          22,
+          0,
+        ],
+
+        stack: [
+          {
+            canvas: [
+              {
+                type:
+                  "line",
+
+                x1:
+                  0,
+
+                y1:
+                  0,
+
+                x2:
+                  551,
+
+                y2:
+                  0,
+
+                lineWidth:
+                  0.7,
+
+                lineColor:
+                  COLORS.navy,
+              },
+            ],
+
+            margin: [
+              0,
+              0,
+              0,
+              8,
+            ],
+          },
+
+          {
+            columns: [
+              {
+                stack: [
+                  {
+                    text:
+                      "Powered by HotelOps",
+
+                    bold:
+                      true,
+
+                    color:
+                      COLORS.navy,
+
+                    fontSize:
+                      8,
+                  },
+                ],
+              },
+
+              {
+                width:
+                  150,
+
+                stack: [
+                  {
+                    text:
+                      `Generated On   :  ${generatedOn}`,
+
+                    fontSize:
+                      7,
+
+                    color:
+                      COLORS.label,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+
+      // ==========================================================
+      // Styles
+      // ==========================================================
+
+      styles: {
+        title: {
+          fontSize:
+            18,
+
+          bold:
+            true,
+
+          color:
+            COLORS.navy,
+        },
+
+        fieldLabel: {
+          fontSize:
+            8.5,
+
+          bold:
+            true,
+
+          color:
+            COLORS.label,
+        },
+
+        fieldValue: {
+          fontSize:
+            9,
+
+          color:
+            COLORS.text,
+        },
+
+        tableHeader: {
+          fontSize:
+            8.5,
+
+          bold:
+            true,
+
+          color:
+            COLORS.navy,
+
+          fillColor:
+            COLORS.labelBackground,
+        },
+
+        tableValue: {
+          fontSize:
+            8.5,
+
+          color:
+            COLORS.text,
+        },
+      },
+    };
+
+    // ============================================================
+    // Generate PDF
+    // Direct PdfPrinter
+    // Same AMC Pattern
+    // ============================================================
+
+    const pdfBuffer =
+      await new Promise(
+        (
+          resolve,
+          reject,
+        ) => {
+          try {
+            const pdfDocument =
+              new PdfPrinter(
+                EQUIPMENT_DETAIL_PDF_FONTS,
+              )
+                .createPdfKitDocument(
+                  documentDefinition,
+                );
+
+            const chunks = [];
+
+            pdfDocument.on(
+              "data",
+              (chunk) =>
+                chunks.push(
+                  chunk,
+                ),
+            );
+
+            pdfDocument.on(
+              "end",
+              () =>
+                resolve(
+                  Buffer.concat(
+                    chunks,
+                  ),
+                ),
+            );
+
+            pdfDocument.on(
+              "error",
+              reject,
+            );
+
+            pdfDocument.end();
+
+          } catch (error) {
+            reject(error);
+          }
+        },
+      );
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    const fileName =
+      `Credit-Application-Detail-${CreditApplicationID}.pdf`;
+
+    return {
+      success:
+        true,
+
+      message:
+        "Credit Application detail PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "Generate Credit Application detail PDF error:",
+      error,
+    );
+
+    return databaseFailure(
+      error,
+      "Generate Credit Application detail PDF",
+    );
+  }
+};
 // ============================================================
 // Exports
 // ============================================================
@@ -6336,5 +8001,6 @@ module.exports = {
   getOrganizationWiseReport,
   generateCreditApplicationListPdf,
   generateCompanyWiseReportPdf,
-  generateOrganizationWiseReportPdf
+  generateOrganizationWiseReportPdf,
+  generateCreditApplicationDetailPdf
 };
