@@ -1960,21 +1960,6 @@ const getCreditApplicationList = async (data) => {
         const field of [
           "OrganizationName",
 
-          "BusinessAddress",
-          "BillingAddress",
-
-          "AuthorisedPersonNamePosition",
-          "AuthorisedPersonMobileNo",
-          "AuthorisedPersonEmail",
-
-          "AccountsContactNamePosition",
-          "AccountsContactMobileNo",
-          "AccountsContactEmail",
-
-          "RecommendedBy",
-
-          "FinalStatusDateTime",
-
           "CreatedBy",
           "ModifiedDate",
 
@@ -5523,92 +5508,36 @@ const generateCreditApplicationListPdf = async (data) => {
     // ============================================================
 
     const columns = [
-      {
-        header: "#Sr",
-
-        value: (row) =>
-          row.ExportSerialNumber,
-
-        width: 30,
-
-        align: "center",
-      },
-
-      {
-        header: "DATE",
-
-        value: (row) =>
-          row.ApplicationDate,
-
-        width: 65,
-      },
-
-      {
-        header: "COMPANY / FIRM NAME",
-
-        value: (row) =>
-          row.CompanyName,
-
-        width: 155,
-      },
-
-      {
-        header: "POSITION",
-
-        value: (row) =>
-          row.Position,
-
-        width: 95,
-      },
-
-      {
-        header:
-          "CREDIT & REFERENCE CHECKED BY",
-
-        value: (row) =>
-          row.CreditReferenceCheckedBy,
-
-        width: 155,
-      },
-
-      {
-        header: "FC STATUS",
-
-        value: (row) =>
-          approvalStatus(
-            row,
-            [
-              "FC",
-              "FINANCE",
-            ],
-          ),
-
-        width: 70,
-      },
-
-      {
-        header: "GM STATUS",
-
-        value: (row) =>
-          approvalStatus(
-            row,
-            [
-              "GM",
-            ],
-          ),
-
-        width: 70,
-      },
-
-      {
-        header: "ARID",
-
-        value: (row) =>
-          row.ARID,
-
-        width: 80,
-      },
-
+      { header: "#", value: (row) => row.ExportSerialNumber, width: 25, align: "center" },
+      { header: "ID", value: (row) => row.CreditApplicationID, width: 35, align: "center" },
+      { header: "ORG ID", value: (row) => row.OrganizationID, width: 35, align: "center" },
+      { header: "HTL", value: (row) => row.OrganizationShortName, width: 35 },
+      { header: "APPLICATION DATE", value: (row) => row.ApplicationDate, width: 55 },
+      { header: "COMPANY NAME", value: (row) => row.CompanyName, width: 100 },
+      { header: "GSTIN", value: (row) => row.CompanyGSTIN, width: 80 },
+      { header: "MSME", value: (row) => row.MSME, width: 35, align: "center" },
+      { header: "BUSINESS ADDRESS", value: (row) => row.BusinessAddress, width: 90 },
+      { header: "BILLING ADDRESS", value: (row) => row.BillingAddress, width: 90 },
+      { header: "AUTHORISED PERSON", value: (row) => row.AuthorisedPersonNamePosition, width: 90 },
+      { header: "AUTH. MOBILE", value: (row) => row.AuthorisedPersonMobileNo, width: 65 },
+      { header: "AUTH. EMAIL", value: (row) => row.AuthorisedPersonEmail, width: 100 },
+      { header: "ACCOUNTS CONTACT", value: (row) => row.AccountsContactNamePosition, width: 90 },
+      { header: "ACCOUNTS MOBILE", value: (row) => row.AccountsContactMobileNo, width: 65 },
+      { header: "ACCOUNTS EMAIL", value: (row) => row.AccountsContactEmail, width: 100 },
+      { header: "RECOMMENDED BY", value: (row) => row.RecommendedBy, width: 70 },
+      { header: "POSITION", value: (row) => row.Position, width: 65 },
+      { header: "REFERENCE CHECKED BY", value: (row) => row.CreditReferenceCheckedBy, width: 70 },
+      { header: "REFERENCE DATE", value: (row) => row.CreditReferenceCheckedDate, width: 55 },
+      { header: "CREDIT AMOUNT", value: (row) => Number(row.CreditAmountAllowed || 0).toLocaleString("en-IN"), width: 65 },
+      { header: "EXPECTED BUSINESS FY", value: (row) => Number(row.ExpectedBusinessFY || 0).toLocaleString("en-IN"), width: 65 },
+      { header: "FINANCIAL YEAR", value: (row) => row.FinancialYear, width: 45 },
+      { header: "ARID", value: (row) => row.ARID, width: 50 },
+      { header: "CURRENT APPROVAL", value: (row) => row.CurrentApprovalRole, width: 45 },
+      { header: "CURRENT STATUS", value: (row) => row.CurrentStatus, width: 50 },
+      { header: "FINAL STATUS", value: (row) => row.FinalStatus, width: 50 },
+      { header: "FINAL STATUS DATE", value: (row) => row.FinalStatusDateTime, width: 70 },
+      { header: "FC STATUS", value: (row) => approvalStatus(row, ["FC", "FINANCE"]), width: 50 },
+      { header: "GM STATUS", value: (row) => approvalStatus(row, ["GM"]), width: 50 },
     ];
 
     // ============================================================
@@ -5681,6 +5610,9 @@ const generateCreditApplicationListPdf = async (data) => {
         logoUrl:
           data.logoUrl,
 
+        pageSize:
+          "A1",
+
         orientation:
           "landscape",
 
@@ -5690,6 +5622,20 @@ const generateCreditApplicationListPdf = async (data) => {
 
         rows:
           pdfRows,
+
+        styles: {
+          pdfTableHeader: { fontSize: 5, bold: true, color: "#FFFFFF" },
+          pdfTableCell: { fontSize: 5 },
+        },
+
+        tableOptions: {
+          layout: {
+            paddingLeft: () => 2,
+            paddingRight: () => 2,
+            paddingTop: () => 3,
+            paddingBottom: () => 3,
+          },
+        },
 
         pageMargins: [
           20,
