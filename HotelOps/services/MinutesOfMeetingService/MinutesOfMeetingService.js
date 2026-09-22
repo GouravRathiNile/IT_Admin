@@ -861,6 +861,41 @@ const mapMOMList = (row) => ({
 
   Status: row.status,
 });
+
+const getMOMCompletionFilter = (completionStatus) => {
+  if (!completionStatus) return null;
+
+  const normalizedStatus =
+    String(completionStatus).trim().toLowerCase();
+
+  const completionExpression = `
+    (
+      SELECT
+        CASE
+          WHEN COUNT(completion_action.ActionID) = 0 THEN 0
+          ELSE (
+            COUNT(completion_action.ActionID) FILTER (
+              WHERE LOWER(TRIM(completion_action.Status)) = 'completed'
+            )::NUMERIC
+            / COUNT(completion_action.ActionID)::NUMERIC
+          ) * 100
+        END
+      FROM MOM_Entry_Action_Details completion_action
+      WHERE completion_action.MeetingID = m.MeetingID
+        AND completion_action.IsDeleted = FALSE
+    )
+  `;
+
+  if (normalizedStatus === "completed") {
+    return `${completionExpression} = 100`;
+  }
+
+  if (normalizedStatus === "pending") {
+    return `${completionExpression} < 100`;
+  }
+
+  return null;
+};
 //===================== Get MOM List
 const getAllMOM = async (data) => {
   try {
@@ -886,6 +921,17 @@ const getAllMOM = async (data) => {
     }
 
 
+    // ============================================================ Title Filter
+
+    if (data.Title && String(data.Title).trim()) {
+      values.push(`%${String(data.Title).trim()}%`);
+
+      conditions.push(
+        `m.Title ILIKE $${values.length}`,
+      );
+    }
+
+
     // ============================================================ Status Filter
 
     if (data.Status) {
@@ -894,6 +940,13 @@ const getAllMOM = async (data) => {
       conditions.push(
         `LOWER(TRIM(m.Status)) = LOWER(TRIM($${values.length}))`,
       );
+    }
+
+    const completionFilter =
+      getMOMCompletionFilter(data.CompletionStatus);
+
+    if (completionFilter) {
+      conditions.push(completionFilter);
     }
 
 
@@ -1258,6 +1311,7 @@ const getMOMSummaryReport = async (data) => {
       (
         SELECT
           a.ActionID,
+          a.MeetingID,
           a.Status
 
         FROM MOM_Entry_Action_Details a
@@ -1266,6 +1320,37 @@ const getMOMSummaryReport = async (data) => {
           ON fm.MeetingID = a.MeetingID
 
         WHERE a.IsDeleted = FALSE
+      ),
+
+      meeting_completion AS
+      (
+        SELECT
+          fm.MeetingID,
+
+          CASE
+            WHEN COUNT(fa.ActionID) = 0
+              THEN 0
+
+            ELSE ROUND(
+              (
+                COUNT(fa.ActionID) FILTER
+                (
+                  WHERE LOWER(TRIM(fa.Status)) = 'completed'
+                )::NUMERIC
+                /
+                COUNT(fa.ActionID)::NUMERIC
+              ) * 100,
+              2
+            )
+          END AS CompletionPercentage
+
+        FROM filtered_meetings fm
+
+        LEFT JOIN filtered_actions fa
+          ON fa.MeetingID = fm.MeetingID
+
+        GROUP BY
+          fm.MeetingID
       )
 
       SELECT
@@ -1301,7 +1386,19 @@ const getMOMSummaryReport = async (data) => {
           SELECT COUNT(*)::BIGINT
           FROM filtered_actions
           WHERE LOWER(TRIM(Status)) = 'completed'
-        ) AS CompletedActions;
+        ) AS CompletedActions,
+
+        (
+          SELECT COUNT(*)::BIGINT
+          FROM meeting_completion
+          WHERE CompletionPercentage = 100
+        ) AS FullyCompletedMeetings,
+
+        (
+          SELECT COUNT(*)::BIGINT
+          FROM meeting_completion
+          WHERE CompletionPercentage < 100
+        ) AS Below100CompletionMeetings;
       `,
       values,
     );
@@ -1319,7 +1416,8 @@ const getMOMSummaryReport = async (data) => {
         ? 0
         : Number(
             (
-              (completedActions / totalActions) * 100
+              (completedActions / totalActions) *
+              100
             ).toFixed(2),
           );
 
@@ -1334,6 +1432,12 @@ const getMOMSummaryReport = async (data) => {
 
         ArchivedMeetings:
           Number(row.archivedmeetings),
+
+        FullyCompletedMeetings:
+          Number(row.fullycompletedmeetings),
+
+        Below100CompletionMeetings:
+          Number(row.below100completionmeetings),
 
         TotalActions:
           totalActions,
@@ -1356,7 +1460,7 @@ const getMOMSummaryReport = async (data) => {
     );
   }
 };
-// ============================================================ Responsible Person Wise Report
+// ============================================================ Responsible Person Count Wise Report
 // ===================== Responsible Person Report Mapper Helper
 const mapResponsiblePersonReport = (row) => ({
   ResponsiblePersonID:
@@ -1601,6 +1705,277 @@ const getMOMResponsiblePersonReport = async (data) => {
     );
   }
 };
+// ============================================================ Responsible Person Details Wise Report
+// ==================== Responsible Person Detail Report Mapper
+const mapResponsiblePersonDetailReport = (row) => ({
+  ResponsiblePersonID:
+    Number(row.responsiblepersonid),
+
+  ResponsiblePersonName:
+    row.responsiblepersonname || null,
+
+  Title:
+    row.title || null,
+
+  Action:
+    row.action || null,
+
+  Deadline:
+    formatDate(row.deadline),
+
+  Status:
+    row.status || null,
+});
+// ====================Responsible Person Detail Report
+const getMOMResponsiblePersonDetailReport = async (data) => {
+  try {
+    const page =
+      Number(data.page) || 1;
+
+    const pageSize =
+      Number(data.PageSize) || 10;
+
+    const offset =
+      (page - 1) * pageSize;
+
+
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+      "a.IsDeleted = FALSE",
+    ];
+
+
+    // ============================================================
+    // Organization Filter
+    // ============================================================
+
+    if (data.OrganizationID) {
+      values.push(
+        data.OrganizationID,
+      );
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // Title Filter
+    // ============================================================
+
+    if (data.Title && String(data.Title).trim()) {
+      values.push(
+        `%${String(data.Title).trim()}%`,
+      );
+
+      conditions.push(
+        `m.Title ILIKE $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // From Date Filter
+    // ============================================================
+
+    if (data.FromDate) {
+      values.push(
+        data.FromDate,
+      );
+
+      conditions.push(
+        `m.MeetingDate >= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================
+    // To Date Filter
+    // ============================================================
+
+    if (data.ToDate) {
+      values.push(
+        data.ToDate,
+      );
+
+      conditions.push(
+        `m.MeetingDate <= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================
+    // Responsible Person Filter
+    // ============================================================
+
+    if (data.ResponsiblePersonID) {
+      values.push(
+        data.ResponsiblePersonID,
+      );
+
+      conditions.push(
+        `rp.UserID = $${values.length}::BIGINT`,
+      );
+    }
+
+
+    const whereClause =
+      `WHERE ${conditions.join(" AND ")}`;
+
+
+    // ============================================================
+    // Count
+    // ============================================================
+
+    const countResult = await pool.query(
+      `
+      SELECT
+        COUNT(*)::BIGINT AS TotalCount
+
+      FROM MOM_Entry_Action_Details a
+
+      INNER JOIN MOM_Entry_Master m
+        ON m.MeetingID = a.MeetingID
+
+      CROSS JOIN LATERAL
+      UNNEST(
+        COALESCE(
+          a.ResponsiblePerson,
+          ARRAY[]::BIGINT[]
+        )
+      ) AS rp(UserID)
+
+      ${whereClause};
+      `,
+      values,
+    );
+
+
+    const totalCount =
+      Number(
+        countResult.rows[0].totalcount,
+      );
+
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+
+    const listValues = [
+      ...values,
+      pageSize,
+      offset,
+    ];
+
+    const limitIndex =
+      listValues.length - 1;
+
+    const offsetIndex =
+      listValues.length;
+
+
+    // ============================================================
+    // Detail Data
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        rp.UserID AS ResponsiblePersonID,
+
+        u.FullName AS ResponsiblePersonName,
+
+        m.Title,
+
+        a.Action,
+
+        a.Deadline,
+
+        a.Status
+
+      FROM MOM_Entry_Action_Details a
+
+      INNER JOIN MOM_Entry_Master m
+        ON m.MeetingID = a.MeetingID
+
+      CROSS JOIN LATERAL
+      UNNEST(
+        COALESCE(
+          a.ResponsiblePerson,
+          ARRAY[]::BIGINT[]
+        )
+      ) AS rp(UserID)
+
+      LEFT JOIN user_master u
+        ON u.UserID = rp.UserID
+        AND COALESCE(
+          u.IsDeleted,
+          FALSE
+        ) = FALSE
+
+      ${whereClause}
+
+      ORDER BY
+        u.FullName ASC,
+        m.MeetingDate DESC,
+        a.SrNo ASC,
+        a.ActionID ASC
+
+      LIMIT $${limitIndex}
+      OFFSET $${offsetIndex};
+      `,
+      listValues,
+    );
+
+
+    // ============================================================
+    // Mapping
+    // ============================================================
+
+    const records =
+      result.rows.map(
+        mapResponsiblePersonDetailReport,
+      );
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return ok(
+      "Responsible person wise MOM detail report fetched successfully.",
+      records,
+      {
+        TotalCount:
+          totalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize:
+          pageSize,
+
+        TotalPages:
+          Math.ceil(
+            totalCount /
+            pageSize,
+          ),
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch responsible person wise MOM detail report",
+    );
+  }
+};
 // ============================================================ MOM Action Detail Report
 // ==================== Action Detail Report Mapper
 const mapActionDetailReport = (row) => ({
@@ -1700,7 +2075,6 @@ const getMOMActionDetailReport = async (data) => {
         `LOWER(TRIM(a.Status)) = LOWER(TRIM($${values.length}))`,
       );
     }
-
 
     // ============================================================ Responsible Person
 
@@ -1908,6 +2282,17 @@ const generateMOMListPdf = async (data) => {
     }
 
 
+    // ============================================================ Title Filter
+
+    if (data.Title && String(data.Title).trim()) {
+      values.push(`%${String(data.Title).trim()}%`);
+
+      conditions.push(
+        `m.Title ILIKE $${values.length}`,
+      );
+    }
+
+
     // ============================================================ Status Filter
 
     if (data.Status) {
@@ -1916,6 +2301,13 @@ const generateMOMListPdf = async (data) => {
       conditions.push(
         `LOWER(TRIM(m.Status)) = LOWER(TRIM($${values.length}))`,
       );
+    }
+
+    const completionFilter =
+      getMOMCompletionFilter(data.CompletionStatus);
+
+    if (completionFilter) {
+      conditions.push(completionFilter);
     }
 
 
@@ -2141,6 +2533,20 @@ const generateMOMListPdf = async (data) => {
       metadata.push({
         label: "Status",
         value: data.Status,
+      });
+    }
+
+    if (data.CompletionStatus) {
+      metadata.push({
+        label: "Completion Status",
+        value: data.CompletionStatus,
+      });
+    }
+
+    if (data.Title) {
+      metadata.push({
+        label: "Title",
+        value: data.Title,
       });
     }
 
@@ -3783,7 +4189,17 @@ const generateMOMDetailPdf = async (data) => {
       ]);
     }
 
+// =========================================================
+// PDF HEADER TITLE
+// =========================================================
 
+const actionStatus =
+  String(data.Status || "").trim();
+
+const pdfHeaderTitle =
+  actionStatus
+    ? `${actionStatus} Actions Meeting Details`
+    : "Meeting Details";
     // =========================================================
     // DOCUMENT DEFINITION
     // =========================================================
@@ -3864,7 +4280,7 @@ const generateMOMDetailPdf = async (data) => {
 
                 {
                   text:
-                    "Meeting Details",
+                    pdfHeaderTitle,
 
                   style:
                     "title",
@@ -4487,7 +4903,401 @@ const generateMOMDetailPdf = async (data) => {
     );
   }
 };
+// ============================================================ Responsible Person Detail Report PDF
+const generateMOMResponsiblePersonDetailReportPdf = async (data) => {
+  try {
+    const values = [];
 
+    const conditions = [
+      "m.IsDeleted = FALSE",
+      "a.IsDeleted = FALSE",
+    ];
+
+
+    // ============================================================
+    // Organization Filter
+    // ============================================================
+
+    if (data.OrganizationID) {
+      values.push(
+        data.OrganizationID,
+      );
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // Title Filter
+    // ============================================================
+
+    if (
+      data.Title &&
+      String(data.Title).trim()
+    ) {
+      values.push(
+        `%${String(data.Title).trim()}%`,
+      );
+
+      conditions.push(
+        `m.Title ILIKE $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // From Date Filter
+    // ============================================================
+
+    if (data.FromDate) {
+      values.push(
+        data.FromDate,
+      );
+
+      conditions.push(
+        `m.MeetingDate >= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================
+    // To Date Filter
+    // ============================================================
+
+    if (data.ToDate) {
+      values.push(
+        data.ToDate,
+      );
+
+      conditions.push(
+        `m.MeetingDate <= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================
+    // Responsible Person Filter
+    // ============================================================
+
+    if (data.ResponsiblePersonID) {
+      values.push(
+        data.ResponsiblePersonID,
+      );
+
+      conditions.push(
+        `rp.UserID = $${values.length}::BIGINT`,
+      );
+    }
+
+
+    const whereClause =
+      `WHERE ${conditions.join(" AND ")}`;
+
+
+    // ============================================================
+    // SAME QUERY AS GET API
+    // Only LIMIT / OFFSET removed
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        rp.UserID AS ResponsiblePersonID,
+
+        u.FullName AS ResponsiblePersonName,
+
+        m.Title,
+
+        a.Action,
+
+        a.Deadline,
+
+        a.Status
+
+      FROM MOM_Entry_Action_Details a
+
+      INNER JOIN MOM_Entry_Master m
+        ON m.MeetingID = a.MeetingID
+
+      CROSS JOIN LATERAL
+      UNNEST(
+        COALESCE(
+          a.ResponsiblePerson,
+          ARRAY[]::BIGINT[]
+        )
+      ) AS rp(UserID)
+
+      LEFT JOIN user_master u
+        ON u.UserID = rp.UserID
+        AND COALESCE(
+          u.IsDeleted,
+          FALSE
+        ) = FALSE
+
+      ${whereClause}
+
+      ORDER BY
+        u.FullName ASC,
+        m.MeetingDate DESC,
+        a.SrNo ASC,
+        a.ActionID ASC;
+      `,
+      values,
+    );
+
+
+    // ============================================================
+    // SAME MAPPER AS GET API
+    // ============================================================
+
+    const records =
+      result.rows.map(
+        mapResponsiblePersonDetailReport,
+      );
+
+
+    // ============================================================
+    // Organization Details
+    // ============================================================
+
+    let organization = null;
+
+    if (data.OrganizationID) {
+      const organizationResult = await pool.query(
+        `
+        SELECT
+          OrganizationName,
+          ShortName
+        FROM Organization_Master
+        WHERE OrganizationID = $1
+          AND COALESCE(IsDeleted, FALSE) = FALSE
+        LIMIT 1;
+        `,
+        [data.OrganizationID],
+      );
+
+      organization =
+        organizationResult.rows[0] || null;
+    }
+
+
+    // ============================================================
+    // PDF COLUMNS
+    // Same Data As GET API
+    // ============================================================
+
+    const columns = [
+      {
+        header:
+          "Responsible Person",
+
+        value:
+          (row) =>
+            row.ResponsiblePersonName ||
+            "-",
+
+        width:
+          120,
+      },
+
+      {
+        header:
+          "Title",
+
+        value:
+          (row) =>
+            row.Title ||
+            "-",
+
+        width:
+          140,
+      },
+
+      {
+        header:
+          "Action",
+
+        value:
+          (row) =>
+            row.Action ||
+            "-",
+
+        width:
+          "*",
+      },
+
+      {
+        header:
+          "Deadline",
+
+        value:
+          (row) =>
+            row.Deadline ||
+            "-",
+
+        width:
+          80,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "Status",
+
+        value:
+          (row) =>
+            row.Status ||
+            "-",
+
+        width:
+          70,
+
+        align:
+          "center",
+      },
+    ];
+
+
+    // ============================================================
+    // Metadata
+    // ============================================================
+
+    const metadata = [];
+
+    if (data.OrganizationID) {
+      metadata.push({
+        label:
+          "Organization",
+
+        value:
+          organization?.organizationname ||
+          organization?.shortname ||
+          "-",
+      });
+    }
+
+    if (data.Title) {
+      metadata.push({
+        label:
+          "Title",
+
+        value:
+          data.Title,
+      });
+    }
+
+    if (data.ResponsiblePersonID) {
+      metadata.push({
+        label:
+          "Responsible Person",
+
+        value:
+          records[0]
+            ?.ResponsiblePersonName ||
+          "-",
+      });
+    }
+
+    if (data.FromDate) {
+      metadata.push({
+        label:
+          "From Date",
+
+        value:
+          formatDate(
+            data.FromDate,
+          ),
+      });
+    }
+
+    if (data.ToDate) {
+      metadata.push({
+        label:
+          "To Date",
+
+        value:
+          formatDate(
+            data.ToDate,
+          ),
+      });
+    }
+
+    metadata.push({
+      label:
+        "Total Records",
+
+      value:
+        records.length,
+    });
+
+
+    // ============================================================
+    // Generate PDF
+    // ============================================================
+
+    const pdfBuffer =
+      await generatePdf({
+        title:
+          "RESPONSIBLE PERSON DETAIL REPORT",
+
+        reportName:
+          "Responsible Person Detail Report",
+
+        organizationId:
+          data.OrganizationID || null,
+
+        orientation:
+          "landscape",
+
+        metadata,
+
+        columns,
+
+        rows:
+          records,
+
+        pageMargins:
+          [20, 24, 20, 35],
+      });
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return {
+      success:
+        true,
+
+      message:
+        "Responsible person wise MOM detail report PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `MOM_Responsible_Person_Detail_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "Responsible Person Detail Report PDF Error:",
+      error,
+    );
+
+    return databaseFailure(
+      error,
+      "Generate responsible person wise MOM detail report PDF",
+    );
+  }
+};
 
 module.exports = {
   createMOM,
@@ -4504,5 +5314,7 @@ module.exports = {
   generateMOMListPdf,
   generateMOMResponsiblePersonReportPdf,
   generateMOMActionDetailReportPdf,
-  generateMOMDetailPdf
+  generateMOMDetailPdf,
+  getMOMResponsiblePersonDetailReport,
+  generateMOMResponsiblePersonDetailReportPdf
 };

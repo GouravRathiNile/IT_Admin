@@ -270,7 +270,9 @@ exports.getAllMOM = async (req, res) => {
   try {
     const {
       OrganizationID,
+      Title,
       Status,
+      CompletionStatus,
       FromDate,
       ToDate,
       page,
@@ -287,10 +289,24 @@ exports.getAllMOM = async (req, res) => {
       );
     }
 
+    if (
+      CompletionStatus &&
+      !["completed", "pending"].includes(
+        String(CompletionStatus).trim().toLowerCase(),
+      )
+    ) {
+      throw new AppError(
+        "Completion Status must be Completed or Pending",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
     const response =
       await MinutesOfMeetingService.getAllMOM({
         OrganizationID,
+        Title,
         Status,
+        CompletionStatus,
         FromDate,
         ToDate,
         page,
@@ -465,7 +481,7 @@ exports.getMOMSummaryReport = async (req, res) => {
     return handleError(error, res);
   }
 };
-// ============================================================ Responsible Person Wise Report
+// ============================================================ Responsible Person Count Wise Report
 exports.getMOMResponsiblePersonReport = async (req, res) => {
   try {
     const {
@@ -511,6 +527,100 @@ exports.getMOMResponsiblePersonReport = async (req, res) => {
 
   } catch (error) {
     return handleError(error, res);
+  }
+};
+// ============================================================ Responsible Person Details Wise Report
+exports.getMOMResponsiblePersonDetailReport = async (
+  req,
+  res,
+) => {
+  try {
+    const {
+      OrganizationID,
+      ResponsiblePersonID,
+      Title,
+      FromDate,
+      ToDate,
+      page,
+      PageSize,
+    } = req.query;
+
+
+    // ============================================================
+    // Date Validation
+    // ============================================================
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    const response =
+      await MinutesOfMeetingService
+        .getMOMResponsiblePersonDetailReport({
+          OrganizationID:
+            OrganizationID || null,
+
+          ResponsiblePersonID:
+            ResponsiblePersonID || null,
+
+          Title:
+            Title || null,
+
+          FromDate:
+            FromDate || null,
+
+          ToDate:
+            ToDate || null,
+
+          page:
+            page || 1,
+
+          PageSize:
+            PageSize || 10,
+        });
+
+
+    if (!response.success) {
+      throw new AppError(
+        response.message ||
+          "Unable to fetch responsible person detail report",
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS,
+      )
+      .json(response);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
   }
 };
 // ============================================================ Action Detail Report
@@ -575,7 +685,9 @@ exports.getMOMListPdf = async (req, res) => {
   try {
     const {
       OrganizationID,
+      Title,
       Status,
+      CompletionStatus,
       FromDate,
       ToDate,
     } = req.query;
@@ -604,13 +716,31 @@ exports.getMOMListPdf = async (req, res) => {
       );
     }
 
+    if (
+      CompletionStatus &&
+      !["completed", "pending"].includes(
+        String(CompletionStatus).trim().toLowerCase(),
+      )
+    ) {
+      throw new AppError(
+        "Completion Status must be Completed or Pending",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
 
     const data = {
       OrganizationID:
         OrganizationID || null,
 
+      Title:
+        Title || null,
+
       Status:
         Status || null,
+
+      CompletionStatus:
+        CompletionStatus || null,
 
       FromDate:
         FromDate || null,
@@ -926,6 +1056,114 @@ exports.generateMOMDetailPdf = async (
     return res
       .status(STATUS_CODES.SUCCESS)
       .send(result.data);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================ Responsible Person Detail Report PDF
+exports.getMOMResponsiblePersonDetailReportPdf = async (
+  req,
+  res,
+) => {
+  try {
+    const {
+      OrganizationID,
+      Title,
+      FromDate,
+      ToDate,
+      ResponsiblePersonID,
+    } = req.query;
+
+
+    // ============================================================
+    // Date Validation
+    // ============================================================
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    const data = {
+      OrganizationID:
+        OrganizationID || null,
+
+      Title:
+        Title || null,
+
+      FromDate:
+        FromDate || null,
+
+      ToDate:
+        ToDate || null,
+
+      ResponsiblePersonID:
+        ResponsiblePersonID || null,
+    };
+
+
+    const response =
+      await MinutesOfMeetingService
+        .generateMOMResponsiblePersonDetailReportPdf(
+          data,
+        );
+
+
+    if (!response.success) {
+      return res
+        .status(
+          response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(response);
+    }
+
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType,
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS,
+      )
+      .send(
+        response.data,
+      );
 
   } catch (error) {
     return handleError(
