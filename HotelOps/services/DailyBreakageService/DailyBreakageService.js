@@ -427,13 +427,9 @@ const mapDailyBreakage = (row) => ({
 
   OrganizationShortName: row.organizationshortname || null,
 
-  OrganizationName: row.organizationname || null,
-
   Outlet: row.outlet,
 
   EntryDate: formatDate(row.entrydate),
-
-  CreatedDate: formatDate(row.createddate),
 
   Details: [],
 });
@@ -455,6 +451,12 @@ const mapDailyBreakageDetail = (row) => ({
 
   CreatedDate: formatDate(row.createddate),
 });
+const sanitizeDailyBreakageDetail = (detail) => {
+  delete detail.DailyBreakageID;
+  delete detail.OrganizationID;
+  delete detail.CreatedDate;
+  return detail;
+};
 // ======================Summary Helper
 const addSummary = (record) => {
   const details = Array.isArray(record.Details) ? record.Details : [];
@@ -558,6 +560,8 @@ const getDailyBreakageById = async (data) => {
     record.Details = detailResult.rows.map(mapDailyBreakageDetail);
 
     addSummary(record);
+
+    record.Details.forEach(sanitizeDailyBreakageDetail);
 
     return ok("Daily Breakage fetched successfully.", record);
   } catch (error) {
@@ -768,6 +772,8 @@ const getDailyBreakageList = async (data) => {
         record.Details = detailMap.get(record.DailyBreakageID) || [];
 
         addSummary(record);
+
+        record.Details.forEach(sanitizeDailyBreakageDetail);
       }
     }
 
@@ -799,6 +805,93 @@ const getDailyBreakageList = async (data) => {
     });
   } catch (error) {
     return databaseFailure(error, "Fetch Daily Breakage list");
+  }
+};
+// ============================================================Outlets Names
+const getDailyBreakageOutlets = async (data) => {
+  try {
+    const { OrganizationID } = data;
+
+    const result = await pool.query(
+      `
+      SELECT DISTINCT
+        TRIM(Outlet) AS Outlet
+
+      FROM Daily_Breakage_Entry_Master
+
+      WHERE OrganizationID = $1
+        AND IsDeleted = FALSE
+        AND Outlet IS NOT NULL
+        AND TRIM(Outlet) <> ''
+
+      ORDER BY Outlet ASC;
+      `,
+      [OrganizationID],
+    );
+
+    const outlets = result.rows.map(
+      (row) => ({
+        Outlet: row.outlet,
+      }),
+    );
+
+    return ok(
+      "Daily Breakage outlets fetched successfully.",
+      outlets,
+      {
+        Count: outlets.length,
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Daily Breakage outlets",
+    );
+  }
+};
+// ============================================================Person Responsible Names
+const getDailyBreakagePersonResponsible = async (data) => {
+  try {
+    const { OrganizationID } = data;
+
+    const result = await pool.query(
+      `
+      SELECT DISTINCT
+        TRIM(PersonResponsible) AS PersonResponsible
+
+      FROM Daily_Breakage_Entry_Details
+
+      WHERE OrganizationID = $1
+        AND IsDeleted = FALSE
+        AND PersonResponsible IS NOT NULL
+        AND TRIM(PersonResponsible) <> ''
+
+      ORDER BY PersonResponsible ASC;
+      `,
+      [OrganizationID],
+    );
+
+    const persons = result.rows.map(
+      (row) => ({
+        PersonResponsible:
+          row.personresponsible,
+      }),
+    );
+
+    return ok(
+      "Daily Breakage person responsible fetched successfully.",
+      persons,
+      {
+        Count: persons.length,
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Daily Breakage person responsible",
+    );
   }
 };
 // ============================================================Delete Daily Breakage
@@ -890,6 +983,698 @@ const deleteDailyBreakage = async (data) => {
     client.release();
   }
 };
+// =======================================================================Reports
+// ============================================================Summary Report
+const getDailyBreakageSummaryReport = async (data) => {
+  try {
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+    ];
+
+
+    // ============================================================
+    // Organization Filter
+    // ============================================================
+
+    if (data.OrganizationID) {
+      values.push(data.OrganizationID);
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // From Date
+    // ============================================================
+
+    if (data.FromDate) {
+      values.push(data.FromDate);
+
+      conditions.push(
+        `m.EntryDate >= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================
+    // To Date
+    // ============================================================
+
+    if (data.ToDate) {
+      values.push(data.ToDate);
+
+      conditions.push(
+        `m.EntryDate <= $${values.length}::DATE`,
+      );
+    }
+
+
+    const whereClause =
+      `WHERE ${conditions.join(" AND ")}`;
+
+
+    // ============================================================
+    // Summary
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        COUNT(
+          DISTINCT m.DailyBreakageID
+        )::BIGINT
+          AS TotalEntries,
+
+        COUNT(
+          d.DailyBreakageDetailID
+        )::BIGINT
+          AS TotalBreakageItems,
+
+        COALESCE(
+          SUM(d.Nos),
+          0
+        )::NUMERIC
+          AS TotalNos,
+
+        COALESCE(
+          SUM(d.TotalCost),
+          0
+        )::NUMERIC
+          AS TotalCost
+
+      FROM Daily_Breakage_Entry_Master m
+
+      LEFT JOIN Daily_Breakage_Entry_Details d
+        ON d.DailyBreakageID =
+          m.DailyBreakageID
+
+        AND d.IsDeleted = FALSE
+
+      ${whereClause};
+      `,
+      values,
+    );
+
+
+    const row =
+      result.rows[0];
+
+
+    return ok(
+      "Daily Breakage summary report fetched successfully.",
+      {
+        TotalEntries:
+          Number(
+            row.totalentries,
+          ),
+
+        TotalBreakageItems:
+          Number(
+            row.totalbreakageitems,
+          ),
+
+        TotalNos:
+          Number(
+            row.totalnos,
+          ),
+
+        TotalCost:
+          Number(
+            row.totalcost,
+          ),
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch Daily Breakage summary report",
+    );
+  }
+};
+// ============================================================Outlet Wise Report
+const mapOutletWiseReport = (row) => ({
+  Outlet:
+    row.outlet,
+
+  TotalEntries:
+    Number(
+      row.totalentries,
+    ),
+
+  TotalBreakageItems:
+    Number(
+      row.totalbreakageitems,
+    ),
+
+  TotalNos:
+    Number(
+      row.totalnos,
+    ),
+
+  TotalCost:
+    Number(
+      row.totalcost,
+    ),
+});
+const getDailyBreakageOutletWiseReport = async (data) => {
+  try {
+    const page =
+      Number(data.page) > 0
+        ? Number(data.page)
+        : 1;
+
+
+    const requestedPageSize =
+      Number(data.PageSize);
+
+
+    const pageSize =
+      requestedPageSize > 0
+        ? Math.min(
+            requestedPageSize,
+            100,
+          )
+        : 10;
+
+
+    const offset =
+      (page - 1) *
+      pageSize;
+
+
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+      "d.IsDeleted = FALSE",
+      "m.Outlet IS NOT NULL",
+      "TRIM(m.Outlet) <> ''",
+    ];
+
+
+    // ============================================================
+    // Organization Filter
+    // ============================================================
+
+    if (data.OrganizationID) {
+      values.push(data.OrganizationID);
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // Outlet Filter
+    // ============================================================
+
+    if (data.Outlet) {
+      values.push(
+        `%${String(
+          data.Outlet,
+        ).trim()}%`,
+      );
+
+      conditions.push(
+        `m.Outlet ILIKE $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // From Date
+    // ============================================================
+
+    if (data.FromDate) {
+      values.push(data.FromDate);
+
+      conditions.push(
+        `m.EntryDate >= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================
+    // To Date
+    // ============================================================
+
+    if (data.ToDate) {
+      values.push(data.ToDate);
+
+      conditions.push(
+        `m.EntryDate <= $${values.length}::DATE`,
+      );
+    }
+
+
+    const whereClause =
+      `WHERE ${conditions.join(" AND ")}`;
+
+
+    // ============================================================
+    // Count
+    // Same Scope As Data Query
+    // ============================================================
+
+    const countResult = await pool.query(
+      `
+      SELECT
+        COUNT(*)::BIGINT
+          AS TotalCount
+
+      FROM
+      (
+        SELECT
+          LOWER(
+            TRIM(m.Outlet)
+          ) AS OutletKey
+
+        FROM Daily_Breakage_Entry_Master m
+
+        INNER JOIN Daily_Breakage_Entry_Details d
+          ON d.DailyBreakageID =
+            m.DailyBreakageID
+
+        ${whereClause}
+
+        GROUP BY
+          LOWER(
+            TRIM(m.Outlet)
+          )
+      ) x;
+      `,
+      values,
+    );
+
+
+    const totalCount =
+      Number(
+        countResult
+          .rows[0]
+          .totalcount,
+      );
+
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+
+    const listValues = [
+      ...values,
+      pageSize,
+      offset,
+    ];
+
+
+    const limitIndex =
+      listValues.length - 1;
+
+    const offsetIndex =
+      listValues.length;
+
+
+    // ============================================================
+    // Data
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        MIN(
+          TRIM(m.Outlet)
+        ) AS Outlet,
+
+        COUNT(
+          DISTINCT m.DailyBreakageID
+        )::BIGINT
+          AS TotalEntries,
+
+        COUNT(
+          d.DailyBreakageDetailID
+        )::BIGINT
+          AS TotalBreakageItems,
+
+        COALESCE(
+          SUM(d.Nos),
+          0
+        )::NUMERIC
+          AS TotalNos,
+
+        COALESCE(
+          SUM(d.TotalCost),
+          0
+        )::NUMERIC
+          AS TotalCost
+
+      FROM Daily_Breakage_Entry_Master m
+
+      INNER JOIN Daily_Breakage_Entry_Details d
+        ON d.DailyBreakageID =
+          m.DailyBreakageID
+
+      ${whereClause}
+
+      GROUP BY
+        LOWER(
+          TRIM(m.Outlet)
+        )
+
+      ORDER BY
+        MIN(
+          TRIM(m.Outlet)
+        ) ASC
+
+      LIMIT $${limitIndex}
+
+      OFFSET $${offsetIndex};
+      `,
+      listValues,
+    );
+
+
+    const records =
+      result.rows.map(
+        mapOutletWiseReport,
+      );
+
+
+    return ok(
+      "Outlet wise Daily Breakage report fetched successfully.",
+      records,
+      {
+        TotalCount:
+          totalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize:
+          pageSize,
+
+        TotalPages:
+          Math.ceil(
+            totalCount /
+            pageSize,
+          ),
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch outlet wise Daily Breakage report",
+    );
+  }
+};
+// ============================================================Person Responsible Wise Report
+const mapPersonResponsibleReport = (row) => ({
+  PersonResponsible:
+    row.personresponsible,
+
+  TotalBreakageCount:
+    Number(
+      row.totalbreakagecount,
+    ),
+
+  TotalNos:
+    Number(
+      row.totalnos,
+    ),
+
+  TotalCost:
+    Number(
+      row.totalcost,
+    ),
+});
+const getDailyBreakagePersonResponsibleReport = async (data) => {
+  try {
+    const page =
+      Number(data.page) > 0
+        ? Number(data.page)
+        : 1;
+
+
+    const requestedPageSize =
+      Number(data.PageSize);
+
+
+    const pageSize =
+      requestedPageSize > 0
+        ? Math.min(
+            requestedPageSize,
+            100,
+          )
+        : 10;
+
+
+    const offset =
+      (page - 1) *
+      pageSize;
+
+
+    const values = [];
+
+    const conditions = [
+      "m.IsDeleted = FALSE",
+      "d.IsDeleted = FALSE",
+      "d.PersonResponsible IS NOT NULL",
+      "TRIM(d.PersonResponsible) <> ''",
+    ];
+
+
+    // ============================================================
+    // Organization Filter
+    // ============================================================
+
+    if (data.OrganizationID) {
+      values.push(data.OrganizationID);
+
+      conditions.push(
+        `m.OrganizationID = $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // Person Responsible Filter
+    // ============================================================
+
+    if (data.PersonResponsible) {
+      values.push(
+        `%${String(
+          data.PersonResponsible,
+        ).trim()}%`,
+      );
+
+      conditions.push(
+        `d.PersonResponsible ILIKE $${values.length}`,
+      );
+    }
+
+
+    // ============================================================
+    // From Date
+    // ============================================================
+
+    if (data.FromDate) {
+      values.push(data.FromDate);
+
+      conditions.push(
+        `m.EntryDate >= $${values.length}::DATE`,
+      );
+    }
+
+
+    // ============================================================
+    // To Date
+    // ============================================================
+
+    if (data.ToDate) {
+      values.push(data.ToDate);
+
+      conditions.push(
+        `m.EntryDate <= $${values.length}::DATE`,
+      );
+    }
+
+
+    const whereClause =
+      `WHERE ${conditions.join(" AND ")}`;
+
+
+    // ============================================================
+    // Count
+    // Same Scope As Data Query
+    // ============================================================
+
+    const countResult = await pool.query(
+      `
+      SELECT
+        COUNT(*)::BIGINT
+          AS TotalCount
+
+      FROM
+      (
+        SELECT
+          LOWER(
+            TRIM(
+              d.PersonResponsible
+            )
+          ) AS PersonResponsibleKey
+
+        FROM Daily_Breakage_Entry_Details d
+
+        INNER JOIN Daily_Breakage_Entry_Master m
+          ON m.DailyBreakageID =
+            d.DailyBreakageID
+
+        ${whereClause}
+
+        GROUP BY
+          LOWER(
+            TRIM(
+              d.PersonResponsible
+            )
+          )
+      ) x;
+      `,
+      values,
+    );
+
+
+    const totalCount =
+      Number(
+        countResult
+          .rows[0]
+          .totalcount,
+      );
+
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+
+    const listValues = [
+      ...values,
+      pageSize,
+      offset,
+    ];
+
+
+    const limitIndex =
+      listValues.length - 1;
+
+    const offsetIndex =
+      listValues.length;
+
+
+    // ============================================================
+    // Data
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        MIN(
+          TRIM(
+            d.PersonResponsible
+          )
+        ) AS PersonResponsible,
+
+        COUNT(
+          d.DailyBreakageDetailID
+        )::BIGINT
+          AS TotalBreakageCount,
+
+        COALESCE(
+          SUM(d.Nos),
+          0
+        )::NUMERIC
+          AS TotalNos,
+
+        COALESCE(
+          SUM(d.TotalCost),
+          0
+        )::NUMERIC
+          AS TotalCost
+
+      FROM Daily_Breakage_Entry_Details d
+
+      INNER JOIN Daily_Breakage_Entry_Master m
+        ON m.DailyBreakageID =
+          d.DailyBreakageID
+
+      ${whereClause}
+
+      GROUP BY
+        LOWER(
+          TRIM(
+            d.PersonResponsible
+          )
+        )
+
+      ORDER BY
+        MIN(
+          TRIM(
+            d.PersonResponsible
+          )
+        ) ASC
+
+      LIMIT $${limitIndex}
+
+      OFFSET $${offsetIndex};
+      `,
+      listValues,
+    );
+
+
+    const records =
+      result.rows.map(
+        mapPersonResponsibleReport,
+      );
+
+
+    return ok(
+      "Person responsible wise Daily Breakage report fetched successfully.",
+      records,
+      {
+        TotalCount:
+          totalCount,
+
+        PageCount:
+          records.length,
+
+        CurrentPage:
+          page,
+
+        PageSize:
+          pageSize,
+
+        TotalPages:
+          Math.ceil(
+            totalCount /
+            pageSize,
+          ),
+      },
+    );
+
+  } catch (error) {
+    return databaseFailure(
+      error,
+      "Fetch person responsible wise Daily Breakage report",
+    );
+  }
+};
+
 // ============================================================
 // Export
 // ============================================================
@@ -900,4 +1685,9 @@ module.exports = {
   getDailyBreakageById,
   getDailyBreakageList,
   deleteDailyBreakage,
+  getDailyBreakageOutlets,
+  getDailyBreakageSummaryReport,
+  getDailyBreakageOutletWiseReport,
+  getDailyBreakagePersonResponsibleReport,
+  getDailyBreakagePersonResponsible
 };

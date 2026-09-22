@@ -6,6 +6,10 @@ const {
   getDailyBreakageById,
   getDailyBreakageList,
   deleteDailyBreakage,
+  getDailyBreakageOutlets,
+  getDailyBreakageSummaryReport,
+  getDailyBreakageOutletWiseReport,
+  getDailyBreakagePersonResponsibleReport,
 } = require("../../controllers/DailyBreakageController/DailyBreakageController");
 const router = express.Router();
 
@@ -15,5 +19,10 @@ router.put("/Update",authenticateToken,updateDailyBreakage,);
 router.get("/DailyBreakageById/:DailyBreakageID",authenticateToken,getDailyBreakageById,);
 router.get("/DailyBreakageList", authenticateToken, getDailyBreakageList);
 router.delete("/Delete", authenticateToken, deleteDailyBreakage);
+router.get("/Outlets",authenticateToken,getDailyBreakageOutlets,);
+// ============================================================ Reports
+router.get("/SummaryReport",authenticateToken,getDailyBreakageSummaryReport,);
+router.get("/OutletWiseReport",authenticateToken,getDailyBreakageOutletWiseReport,);
+router.get("/PersonResponsibleReport",authenticateToken,getDailyBreakagePersonResponsibleReport,);
 
 module.exports = router;

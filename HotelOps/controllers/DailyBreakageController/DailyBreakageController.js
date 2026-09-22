@@ -596,7 +596,6 @@ exports.getDailyBreakageById = async (
       DailyBreakageID,
     } = req.params;
 
-
     if (
       !DailyBreakageID ||
       !Number.isInteger(
@@ -609,7 +608,6 @@ exports.getDailyBreakageById = async (
         STATUS_CODES.BAD_REQUEST,
       );
     }
-
 
     const user =
       authenticatedUser(req);
@@ -799,6 +797,379 @@ exports.deleteDailyBreakage = async (
       },
     );
 
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================ Outlet Names
+exports.getDailyBreakageOutlets = async (req, res) => {
+  try {
+    const { OrganizationID } = req.query;
+
+    if (
+      !OrganizationID ||
+      !Number.isInteger(Number(OrganizationID)) ||
+      Number(OrganizationID) <= 0
+    ) {
+      throw new AppError(
+        "Valid Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    const response =
+      await DailyBreakageService.getDailyBreakageOutlets({
+        OrganizationID: Number(OrganizationID),
+      });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message ||
+          "Unable to fetch Daily Breakage outlets",
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// =======================================================================Reports
+// ============================================================Summary Report
+exports.getDailyBreakageSummaryReport = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      FromDate,
+      ToDate,
+    } = req.query;
+
+
+    // ============================================================
+    // Organization Validation
+    // ============================================================
+
+    if (
+      OrganizationID &&
+      (
+        !Number.isInteger(
+          Number(OrganizationID),
+        ) ||
+        Number(OrganizationID) <= 0
+      )
+    ) {
+      throw new AppError(
+        "Valid Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Date Validation
+    // ============================================================
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Service
+    // ============================================================
+
+    const response =
+      await DailyBreakageService
+        .getDailyBreakageSummaryReport({
+          OrganizationID:
+            OrganizationID
+              ? Number(OrganizationID)
+              : null,
+
+          FromDate:
+            FromDate || null,
+
+          ToDate:
+            ToDate || null,
+        });
+
+
+    if (!response.success) {
+      throw new AppError(
+        response.message ||
+          "Unable to fetch Daily Breakage summary report",
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS,
+      )
+      .json(response);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Outlet Wise Report
+exports.getDailyBreakageOutletWiseReport = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      Outlet,
+      FromDate,
+      ToDate,
+      page,
+      PageSize,
+    } = req.query;
+
+
+    // ============================================================
+    // Organization Validation
+    // ============================================================
+
+    if (
+      OrganizationID &&
+      (
+        !Number.isInteger(
+          Number(OrganizationID),
+        ) ||
+        Number(OrganizationID) <= 0
+      )
+    ) {
+      throw new AppError(
+        "Valid Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Date Validation
+    // ============================================================
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Service
+    // ============================================================
+
+    const response =
+      await DailyBreakageService
+        .getDailyBreakageOutletWiseReport({
+          OrganizationID:
+            OrganizationID
+              ? Number(OrganizationID)
+              : null,
+
+          Outlet:
+            Outlet
+              ? String(Outlet).trim()
+              : null,
+
+          FromDate:
+            FromDate || null,
+
+          ToDate:
+            ToDate || null,
+
+          page,
+          PageSize,
+        });
+
+
+    if (!response.success) {
+      throw new AppError(
+        response.message ||
+          "Unable to fetch outlet wise Daily Breakage report",
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS,
+      )
+      .json(response);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Person Responsible Wise Report
+exports.getDailyBreakagePersonResponsibleReport = async (
+  req,
+  res,
+) => {
+  try {
+    const {
+      OrganizationID,
+      PersonResponsible,
+      FromDate,
+      ToDate,
+      page,
+      PageSize,
+    } = req.query;
+
+
+    // ============================================================
+    // Organization Validation
+    // ============================================================
+
+    if (
+      OrganizationID &&
+      (
+        !Number.isInteger(
+          Number(OrganizationID),
+        ) ||
+        Number(OrganizationID) <= 0
+      )
+    ) {
+      throw new AppError(
+        "Valid Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Date Validation
+    // ============================================================
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Service
+    // ============================================================
+
+    const response =
+      await DailyBreakageService
+        .getDailyBreakagePersonResponsibleReport({
+          OrganizationID:
+            OrganizationID
+              ? Number(OrganizationID)
+              : null,
+
+          PersonResponsible:
+            PersonResponsible
+              ? String(
+                  PersonResponsible,
+                ).trim()
+              : null,
+
+          FromDate:
+            FromDate || null,
+
+          ToDate:
+            ToDate || null,
+
+          page,
+          PageSize,
+        });
+
+
+    if (!response.success) {
+      throw new AppError(
+        response.message ||
+          "Unable to fetch person responsible Daily Breakage report",
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS,
+      )
+      .json(response);
 
   } catch (error) {
     return handleError(
