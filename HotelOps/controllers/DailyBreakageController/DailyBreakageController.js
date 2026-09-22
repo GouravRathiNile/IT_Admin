@@ -847,6 +847,50 @@ exports.getDailyBreakageOutlets = async (req, res) => {
     );
   }
 };
+// ============================================================Person Responsible Names
+exports.getDailyBreakagePersonResponsible = async (req, res) => {
+  try {
+    const { OrganizationID } = req.query;
+
+    if (
+      !OrganizationID ||
+      !Number.isInteger(Number(OrganizationID)) ||
+      Number(OrganizationID) <= 0
+    ) {
+      throw new AppError(
+        "Valid Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+    const response =
+      await DailyBreakageService
+        .getDailyBreakagePersonResponsible({
+          OrganizationID:
+            Number(OrganizationID),
+        });
+
+    if (!response.success) {
+      throw new AppError(
+        response.message ||
+          "Unable to fetch Daily Breakage person responsible",
+        response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        response.errors,
+      );
+    }
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .json(response);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
 // =======================================================================Reports
 // ============================================================Summary Report
 exports.getDailyBreakageSummaryReport = async (req, res) => {

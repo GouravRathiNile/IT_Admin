@@ -1362,3 +1362,104 @@ exports.getOpexOrganizationReportPdf = async (req, res) => {
     });
   }
 };
+// ============================================================SINGLE OPEX DETAIL PDF
+exports.generateOpexByIdPdf = async (req, res) => {
+  try {
+    const opexID = Number(req.params.id);
+
+    // ==========================================================
+    // VALIDATE OPEX ID
+    // ==========================================================
+    if (!Number.isInteger(opexID) || opexID <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid OPEX ID is required.",
+      });
+    }
+
+    // ==========================================================
+    // CALL SERVICE DIRECTLY
+    // ==========================================================
+    const result =
+      await OpexService.generateOpexByIdPdf({
+        OpexID: opexID,
+
+        UserID:
+          req.user?.UserID ||
+          req.user?.userid ||
+          null,
+      });
+
+    // ==========================================================
+    // SERVICE ERROR
+    // ==========================================================
+    if (!result.success) {
+      return res
+        .status(
+          result.statusCode ||
+            result.StatusCode ||
+            result.status ||
+            500,
+        )
+        .json({
+          success: false,
+
+          message:
+            result.message ||
+            "Unable to generate OPEX PDF.",
+        });
+    }
+
+    // ==========================================================
+    // VALIDATE PDF BUFFER
+    // ==========================================================
+    if (!Buffer.isBuffer(result.PdfBuffer)) {
+      return res.status(500).json({
+        success: false,
+        message: "Invalid PDF response generated.",
+      });
+    }
+
+    // ==========================================================
+    // RESPONSE HEADERS
+    // ==========================================================
+    res.setHeader(
+      "Content-Type",
+      result.ContentType ||
+        "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${result.FileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      result.PdfBuffer.length,
+    );
+
+    res.setHeader(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate",
+    );
+
+    // ==========================================================
+    // SEND PDF
+    // ==========================================================
+    return res.end(
+      result.PdfBuffer,
+    );
+  } catch (error) {
+    console.error(
+      "Generate OPEX PDF Controller Error:",
+      error.message,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to generate OPEX PDF.",
+    });
+  }
+};
