@@ -4650,6 +4650,12 @@ const generateCapexByIdPdf = async (data) => {
     };
 
     // ==========================================================
+    // COMMON LABEL WIDTH
+    // All label boxes will use same width
+    // ==========================================================
+    const LABEL_WIDTH = 90;
+
+    // ==========================================================
     // LOGO / GENERATED DATE
     // ==========================================================
     const logo = await loadLogo(capex.OrganizationID);
@@ -4839,6 +4845,7 @@ const generateCapexByIdPdf = async (data) => {
       };
 
       const iconScale = 0.8;
+
       return (icons[type] || icons.capex).map((shape) => {
         const scaledShape = {
           ...shape,
@@ -4864,10 +4871,12 @@ const generateCapexByIdPdf = async (data) => {
         }
 
         if (Array.isArray(scaledShape.points)) {
-          scaledShape.points = scaledShape.points.map((point) => ({
-            x: point.x * iconScale,
-            y: point.y * iconScale,
-          }));
+          scaledShape.points = scaledShape.points.map(
+            (point) => ({
+              x: point.x * iconScale,
+              y: point.y * iconScale,
+            }),
+          );
         }
 
         return scaledShape;
@@ -4876,11 +4885,12 @@ const generateCapexByIdPdf = async (data) => {
 
     // ==========================================================
     // LABEL CELL
+    // Same height / same padding for every label
     // ==========================================================
     const labelCell = (text, icon) => ({
       columns: [
         {
-          width: 25,
+          width: 22,
           canvas: fieldIcon(icon),
           margin: [0, 0, 0, 0],
         },
@@ -4894,7 +4904,7 @@ const generateCapexByIdPdf = async (data) => {
 
       fillColor: COLORS.labelBackground,
 
-      margin: [9, 5, 6, 5],
+      margin: [8, 6, 6, 6],
     });
 
     // ==========================================================
@@ -4903,7 +4913,7 @@ const generateCapexByIdPdf = async (data) => {
     const valueCell = (value) => ({
       text: capexPdfValue(value),
       style: "fieldValue",
-      margin: [9, 6, 7, 6],
+      margin: [8, 6, 6, 6],
     });
 
     // ==========================================================
@@ -4936,100 +4946,61 @@ const generateCapexByIdPdf = async (data) => {
     // ==========================================================
     const approvalRows = [];
 
-    approvals.forEach(
-      (approval) => {
-        if (
-          approval.ApprovalRole ===
-            undefined ||
-          approval.ApprovalRole ===
-            null ||
-          String(
-            approval.ApprovalRole,
-          ).trim() === ""
-        ) {
-          return;
-        }
+    approvals.forEach((approval) => {
+      if (
+        approval.ApprovalRole === undefined ||
+        approval.ApprovalRole === null ||
+        String(approval.ApprovalRole).trim() === ""
+      ) {
+        return;
+      }
 
-        const approvalRole = String(
-          approval.ApprovalRole,
-        ).trim();
+      const approvalRole = String(
+        approval.ApprovalRole,
+      ).trim();
 
-        const approvedQuantity =
-          approval.ApprovedQuantity !==
-            null &&
-          approval.ApprovedQuantity !==
-            undefined &&
-          String(
-            approval.ApprovedQuantity,
-          ).trim() !== ""
-            ? formatCapexAmount(
-                approval.ApprovedQuantity,
-              )
-            : "-";
+      const approvedQuantity =
+        approval.ApprovedQuantity !== null &&
+        approval.ApprovedQuantity !== undefined &&
+        String(approval.ApprovedQuantity).trim() !== ""
+          ? formatCapexAmount(
+              approval.ApprovedQuantity,
+            )
+          : "-";
 
-        approvalRows.push([
-          {
-            text: approvalRole,
-            style: "approvalRole",
-            margin: [
-              4,
-              5,
-              4,
-              5,
-            ],
-          },
-
-          statusCell(
-            approval.Status,
-          ),
-
-          {
-            text: approvedQuantity,
-            style: "approvalValue",
-            margin: [
-              4,
-              5,
-              4,
-              5,
-            ],
-          },
-
-          {
-            text: capexPdfValue(
-              approval.Remarks,
-            ),
-            style: "approvalValue",
-            margin: [
-              4,
-              5,
-              4,
-              5,
-            ],
-          },
-        ]);
-      },
-    );
-
-    if (
-      approvalRows.length === 0
-    ) {
       approvalRows.push([
         {
-          text:
-            "No approval details available",
+          text: approvalRole,
+          style: "approvalRole",
+          margin: [4, 5, 4, 5],
+        },
 
+        statusCell(approval.Status),
+
+        {
+          text: approvedQuantity,
+          style: "approvalValue",
+          margin: [4, 5, 4, 5],
+        },
+
+        {
+          text: capexPdfValue(
+            approval.Remarks,
+          ),
+          style: "approvalValue",
+          margin: [4, 5, 4, 5],
+        },
+      ]);
+    });
+
+    if (approvalRows.length === 0) {
+      approvalRows.push([
+        {
+          text: "No approval details available",
           colSpan: 4,
-
           alignment: "center",
-
           color: COLORS.muted,
-
-          margin: [
-            0,
-            7,
-            0,
-            7,
-          ],
+          margin: [0, 7, 0, 7],
         },
 
         {},
@@ -5044,8 +5015,7 @@ const generateCapexByIdPdf = async (data) => {
     const documentDefinition = {
       pageSize: "A4",
 
-      pageOrientation:
-        "portrait",
+      pageOrientation: "portrait",
 
       pageMargins: [
         22,
@@ -5101,13 +5071,11 @@ const generateCapexByIdPdf = async (data) => {
                     },
 
                 {
-                  text:
-                    "CAPEX Detail Report",
+                  text: "CAPEX Detail Report",
 
                   style: "title",
 
-                  alignment:
-                    "center",
+                  alignment: "center",
 
                   margin: [
                     0,
@@ -5130,7 +5098,9 @@ const generateCapexByIdPdf = async (data) => {
           layout: "noBorders",
         },
 
+        // ======================================================
         // HEADER LINE
+        // ======================================================
         {
           canvas: [
             {
@@ -5144,8 +5114,7 @@ const generateCapexByIdPdf = async (data) => {
 
               lineWidth: 0.8,
 
-              lineColor:
-                COLORS.mainHeader,
+              lineColor: COLORS.mainHeader,
             },
           ],
 
@@ -5158,14 +5127,15 @@ const generateCapexByIdPdf = async (data) => {
         },
 
         // ======================================================
-        // ORGANIZATION DETAILS
+        // ORGANIZATION + CAPEX NO.
+        // CREATED DATE + DEPARTMENT
         // ======================================================
         {
           table: {
             widths: [
-              105,
+              LABEL_WIDTH,
               "*",
-              105,
+              LABEL_WIDTH,
               "*",
             ],
 
@@ -5193,7 +5163,7 @@ const generateCapexByIdPdf = async (data) => {
 
               [
                 labelCell(
-                  "Created Date",
+                  "Created On",
                   "calendar",
                 ),
 
@@ -5213,14 +5183,14 @@ const generateCapexByIdPdf = async (data) => {
             ],
           },
 
-          layout:
-            borderedLayout,
+          layout: borderedLayout,
 
+          // No bottom gap
           margin: [
             0,
             0,
             0,
-            18,
+            0,
           ],
         },
 
@@ -5230,9 +5200,9 @@ const generateCapexByIdPdf = async (data) => {
         {
           table: {
             widths: [
-              95,
+              LABEL_WIDTH,
               "*",
-              85,
+              LABEL_WIDTH,
               "*",
             ],
 
@@ -5259,29 +5229,31 @@ const generateCapexByIdPdf = async (data) => {
             ],
           },
 
-          layout:
-            borderedLayout,
+          layout: borderedLayout,
 
+          // No gap
           margin: [
             0,
             0,
             0,
-            12,
+            0,
           ],
         },
 
         // ======================================================
-        // QTY + RATE + TOTAL
-        // SAME ROW
+        // QUANTITY + RATE + TOTAL
+        // All 3 labels have same width
         // ======================================================
         {
           table: {
             widths: [
-              74,
+              LABEL_WIDTH,
               "*",
-              62,
+
+              LABEL_WIDTH,
               "*",
-              62,
+
+              LABEL_WIDTH,
               "*",
             ],
 
@@ -5319,28 +5291,27 @@ const generateCapexByIdPdf = async (data) => {
                     capex.Total,
                   )}`,
 
-                  style:
-                    "totalValue",
+                  style: "totalValue",
 
                   margin: [
                     8,
-                    8,
-                    5,
-                    8,
+                    6,
+                    6,
+                    6,
                   ],
                 },
               ],
             ],
           },
 
-          layout:
-            borderedLayout,
+          layout: borderedLayout,
 
+          // No gap
           margin: [
             0,
+            8,
             0,
-            0,
-            18,
+            8,
           ],
         },
 
@@ -5350,7 +5321,7 @@ const generateCapexByIdPdf = async (data) => {
         {
           table: {
             widths: [
-              105,
+              LABEL_WIDTH,
               "*",
             ],
 
@@ -5362,33 +5333,31 @@ const generateCapexByIdPdf = async (data) => {
                 ),
 
                 {
-                  text:
-                    capexPdfValue(
-                      capex.Description,
-                    ),
+                  text: capexPdfValue(
+                    capex.Description,
+                  ),
 
-                  style:
-                    "descriptionValue",
+                  style: "descriptionValue",
 
                   margin: [
-                    10,
-                    9,
-                    10,
-                    9,
+                    8,
+                    6,
+                    6,
+                    6,
                   ],
                 },
               ],
             ],
           },
 
-          layout:
-            borderedLayout,
+          layout: borderedLayout,
 
+          // No gap
           margin: [
             0,
             0,
             0,
-            18,
+            0,
           ],
         },
 
@@ -5409,34 +5378,23 @@ const generateCapexByIdPdf = async (data) => {
             body: [
               [
                 {
-                  text:
-                    "Approval",
-
-                  style:
-                    "tableHeader",
+                  text: "Approval",
+                  style: "tableHeader",
                 },
 
                 {
-                  text:
-                    "Status",
-
-                  style:
-                    "tableHeader",
+                  text: "Status",
+                  style: "tableHeader",
                 },
 
                 {
                   text: "Qty",
-
-                  style:
-                    "tableHeader",
+                  style: "tableHeader",
                 },
 
                 {
-                  text:
-                    "Remarks",
-
-                  style:
-                    "tableHeader",
+                  text: "Remarks",
+                  style: "tableHeader",
                 },
               ],
 
@@ -5457,11 +5415,12 @@ const generateCapexByIdPdf = async (data) => {
             vLineWidth: () =>
               0.7,
 
-            fillColor:
-              (rowIndex) =>
-                rowIndex === 0
-                  ? COLORS.tableHeaderBackground
-                  : COLORS.white,
+            fillColor: (
+              rowIndex,
+            ) =>
+              rowIndex === 0
+                ? COLORS.tableHeaderBackground
+                : COLORS.white,
 
             paddingLeft: () =>
               8,
@@ -5472,13 +5431,14 @@ const generateCapexByIdPdf = async (data) => {
             paddingTop: () =>
               6,
 
-            paddingBottom:
-              () => 6,
+            paddingBottom: () =>
+              6,
           },
 
+          // No gap above approval
           margin: [
             0,
-            0,
+            12,
             0,
             5,
           ],
@@ -5508,8 +5468,7 @@ const generateCapexByIdPdf = async (data) => {
                 x2: 551,
                 y2: 0,
 
-                lineWidth:
-                  0.7,
+                lineWidth: 0.7,
 
                 lineColor:
                   COLORS.mainHeader,
@@ -5539,8 +5498,6 @@ const generateCapexByIdPdf = async (data) => {
 
                     fontSize: 8,
                   },
-
-                
                 ],
               },
 
@@ -5556,8 +5513,6 @@ const generateCapexByIdPdf = async (data) => {
                     color:
                       COLORS.label,
                   },
-
-                 
                 ],
               },
             ],

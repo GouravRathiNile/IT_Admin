@@ -6,12 +6,38 @@ const generateDocumentUrl = require("../../AzurConfigration/Opex/AzureGetData");
 const { formatDate } = require("../../utils/dateFormatter");
 const PdfPrinter = require("pdfmake");
 const path = require("path");
-const { generatePdf } = require("../../utils/pdfHelper");
+const { generatePdf, loadLogo, } = require("../../utils/pdfHelper");
 const { sendEmail } = require("../../utils/emailService");
 const { buildOpexEmail } = require("./OpexEmailTemplate");
 const generateOrganizationLogoUrl = require("../../AzurConfigration/ITAdmin/OrganizationMaster/AzureGetData");
+const OPEX_DETAIL_PDF_FONTS = {
+  Roboto: {
+    normal: path.join(
+      process.cwd(),
+      "fonts/Roboto-Regular.ttf",
+    ),
+
+    bold: path.join(
+      process.cwd(),
+      "fonts/Roboto-Medium.ttf",
+    ),
+
+    italics: path.join(
+      process.cwd(),
+      "fonts/Roboto-SemiBold.ttf",
+    ),
+
+    bolditalics: path.join(
+      process.cwd(),
+      "fonts/Roboto-Bold.ttf",
+    ),
+  },
+};
+
 const OPEX_NOTIFICATION_MODULE = "Opex";
 
+
+// ======================================================
 const notificationUserIds = (values) => [...new Set((Array.isArray(values) ? values : [values])
   .filter((value) => value != null && /^[1-9]\d*$/.test(String(value).trim()))
   .map((value) => String(value).trim()))].sort();
@@ -5037,6 +5063,1920 @@ const getOpexOrganizationReportPdf = async (data) => {
     };
   }
 };
+// ============================================================SINGLE OPEX DETAIL PDF
+// ====================OPEX SINGLE DETAIL PDF HELPERS
+const formatOpexAmount = (value) => {
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount)) {
+    return "0.00";
+  }
+
+  return amount.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+const opexPdfValue = (value) => {
+  if (
+    value === undefined ||
+    value === null ||
+    String(value).trim() === ""
+  ) {
+    return "-";
+  }
+
+  return String(value);
+};
+const generateOpexByIdPdf = async (data) => {
+  try {
+    // ==========================================================
+    // VALIDATE OPEX ID
+    // ==========================================================
+
+    const opexID = Number(data.OpexID);
+
+    if (
+      !Number.isInteger(opexID) ||
+      opexID <= 0
+    ) {
+      return fail(
+        "Valid OPEX ID is required.",
+        400,
+      );
+    }
+
+    // ==========================================================
+    // FETCH OPEX
+    // Same query as Get By ID API
+    // ==========================================================
+
+    const result = await pool.query(
+      `
+      ${Opex_SELECT}
+      AND cm.OpexID = $1
+      LIMIT 1;
+      `,
+      [opexID],
+    );
+
+    if (result.rows.length === 0) {
+      return fail(
+        "OPEX record not found.",
+        404,
+      );
+    }
+
+    // ==========================================================
+    // ATTACH DOCUMENTS + APPROVALS
+    // Same data as Get By ID API
+    // ==========================================================
+
+    const [opex] =
+      await attachRelatedData(
+        result.rows,
+      );
+
+    const approvals =
+      Array.isArray(
+        opex.Approvals,
+      )
+        ? opex.Approvals
+        : [];
+
+    // ==========================================================
+    // COLORS
+    // ==========================================================
+
+    const COLORS = {
+      mainHeader: "#082B5C",
+
+      label: "#082B5C",
+
+      value: "#172033",
+
+      icon: "#0D3B7A",
+
+      labelBackground:
+        "#F4F6F9",
+
+      tableHeaderBackground:
+        "#F4F6F9",
+
+      border: "#CFD7E3",
+
+      white: "#FFFFFF",
+
+      approved: "#15803D",
+
+      approvedBackground:
+        "#DCFCE7",
+
+      pending: "#D97706",
+
+      pendingBackground:
+        "#FEF3C7",
+
+      rejected: "#B91C1C",
+
+      rejectedBackground:
+        "#FEE2E2",
+
+      returned: "#7C3AED",
+
+      returnedBackground:
+        "#EDE9FE",
+
+      hold: "#B45309",
+
+      holdBackground:
+        "#FEF3C7",
+
+      muted: "#64748B",
+    };
+
+    // ==========================================================
+    // COMMON LABEL WIDTH
+    // ==========================================================
+
+    const LABEL_WIDTH = 90;
+
+    // ==========================================================
+    // LOGO + GENERATED DATE
+    // ==========================================================
+
+    const logo =
+      await loadLogo(
+        opex.OrganizationID,
+      );
+
+    const generatedOn =
+      formatDate(
+        new Date(),
+        "DD MMM YYYY hh:mm A",
+      );
+
+    // ==========================================================
+    // SVG ICONS
+    // ==========================================================
+
+    const fieldIcon = (
+      type,
+    ) => {
+      const stroke =
+        COLORS.icon;
+
+      const line = (
+        x1,
+        y1,
+        x2,
+        y2,
+        lineWidth = 1.25,
+      ) => ({
+        type: "line",
+
+        x1,
+        y1,
+        x2,
+        y2,
+
+        lineWidth,
+
+        lineColor:
+          stroke,
+      });
+
+      const rect = (
+        x,
+        y,
+        w,
+        h,
+        r = 0,
+      ) => ({
+        type: "rect",
+
+        x,
+        y,
+        w,
+        h,
+        r,
+
+        lineWidth: 1.25,
+
+        lineColor:
+          stroke,
+      });
+
+      const ellipse = (
+        x,
+        y,
+        r1,
+        r2 = r1,
+      ) => ({
+        type: "ellipse",
+
+        x,
+        y,
+        r1,
+        r2,
+
+        lineWidth: 1.25,
+
+        lineColor:
+          stroke,
+      });
+
+      const icons = {
+        // -----------------------------------------------
+        // Organization
+        // -----------------------------------------------
+
+        organization: [
+          rect(
+            5,
+            3,
+            10,
+            15,
+            1,
+          ),
+
+          line(
+            2,
+            18,
+            18,
+            18,
+          ),
+
+          line(
+            8,
+            7,
+            8,
+            8,
+          ),
+
+          line(
+            12,
+            7,
+            12,
+            8,
+          ),
+
+          line(
+            8,
+            11,
+            8,
+            12,
+          ),
+
+          line(
+            12,
+            11,
+            12,
+            12,
+          ),
+
+          line(
+            10,
+            15,
+            10,
+            18,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // OPEX Number
+        // -----------------------------------------------
+
+        opex: [
+          rect(
+            4,
+            2,
+            11,
+            16,
+            1,
+          ),
+
+          line(
+            7,
+            6,
+            12,
+            6,
+          ),
+
+          line(
+            7,
+            9,
+            12,
+            9,
+          ),
+
+          line(
+            7,
+            12,
+            12,
+            12,
+          ),
+
+          line(
+            7,
+            15,
+            11,
+            15,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // Calendar
+        // -----------------------------------------------
+
+        calendar: [
+          rect(
+            2,
+            4,
+            16,
+            14,
+            1,
+          ),
+
+          line(
+            2,
+            8,
+            18,
+            8,
+          ),
+
+          line(
+            6,
+            2,
+            6,
+            6,
+          ),
+
+          line(
+            14,
+            2,
+            14,
+            6,
+          ),
+
+          line(
+            6,
+            11,
+            8,
+            11,
+          ),
+
+          line(
+            11,
+            11,
+            13,
+            11,
+          ),
+
+          line(
+            6,
+            14,
+            8,
+            14,
+          ),
+
+          line(
+            11,
+            14,
+            13,
+            14,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // Department
+        // -----------------------------------------------
+
+        department: [
+          ellipse(
+            10,
+            5,
+            2.5,
+          ),
+
+          ellipse(
+            4,
+            7,
+            2,
+          ),
+
+          ellipse(
+            16,
+            7,
+            2,
+          ),
+
+          line(
+            6,
+            18,
+            6,
+            13,
+          ),
+
+          line(
+            14,
+            18,
+            14,
+            13,
+          ),
+
+          line(
+            6,
+            13,
+            14,
+            13,
+          ),
+
+          line(
+            2,
+            18,
+            18,
+            18,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // Item
+        // -----------------------------------------------
+
+        item: [
+          {
+            type:
+              "polyline",
+
+            points: [
+              {
+                x: 2,
+                y: 8,
+              },
+
+              {
+                x: 9,
+                y: 1,
+              },
+
+              {
+                x: 18,
+                y: 10,
+              },
+
+              {
+                x: 10,
+                y: 18,
+              },
+
+              {
+                x: 2,
+                y: 10,
+              },
+            ],
+
+            closePath: true,
+
+            lineWidth:
+              1.25,
+
+            lineColor:
+              stroke,
+          },
+
+          ellipse(
+            8,
+            6,
+            1.2,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // Make
+        // -----------------------------------------------
+
+        make: [
+          ellipse(
+            10,
+            10,
+            5,
+          ),
+
+          ellipse(
+            10,
+            10,
+            2,
+          ),
+
+          line(
+            10,
+            1,
+            10,
+            5,
+          ),
+
+          line(
+            10,
+            15,
+            10,
+            19,
+          ),
+
+          line(
+            1,
+            10,
+            5,
+            10,
+          ),
+
+          line(
+            15,
+            10,
+            19,
+            10,
+          ),
+
+          line(
+            4,
+            4,
+            7,
+            7,
+          ),
+
+          line(
+            13,
+            13,
+            16,
+            16,
+          ),
+
+          line(
+            16,
+            4,
+            13,
+            7,
+          ),
+
+          line(
+            4,
+            16,
+            7,
+            13,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // Quantity
+        // -----------------------------------------------
+
+        quantity: [
+          {
+            type:
+              "polyline",
+
+            points: [
+              {
+                x: 10,
+                y: 1,
+              },
+
+              {
+                x: 18,
+                y: 5,
+              },
+
+              {
+                x: 10,
+                y: 9,
+              },
+
+              {
+                x: 2,
+                y: 5,
+              },
+            ],
+
+            closePath: true,
+
+            lineWidth:
+              1.25,
+
+            lineColor:
+              stroke,
+          },
+
+          line(
+            2,
+            5,
+            2,
+            14,
+          ),
+
+          line(
+            18,
+            5,
+            18,
+            14,
+          ),
+
+          line(
+            2,
+            14,
+            10,
+            19,
+          ),
+
+          line(
+            18,
+            14,
+            10,
+            19,
+          ),
+
+          line(
+            10,
+            9,
+            10,
+            19,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // Rate
+        // -----------------------------------------------
+
+        rate: [
+          line(
+            5,
+            3,
+            15,
+            3,
+          ),
+
+          line(
+            5,
+            7,
+            15,
+            7,
+          ),
+
+          line(
+            8,
+            3,
+            8,
+            17,
+          ),
+
+          line(
+            8,
+            7,
+            16,
+            18,
+          ),
+
+          line(
+            8,
+            7,
+            11,
+            7,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // Total
+        // -----------------------------------------------
+
+        total: [
+          ellipse(
+            10,
+            5,
+            7,
+            3,
+          ),
+
+          ellipse(
+            10,
+            10,
+            7,
+            3,
+          ),
+
+          ellipse(
+            10,
+            15,
+            7,
+            3,
+          ),
+
+          line(
+            3,
+            5,
+            3,
+            15,
+          ),
+
+          line(
+            17,
+            5,
+            17,
+            15,
+          ),
+        ],
+
+        // -----------------------------------------------
+        // Description
+        // -----------------------------------------------
+
+        description: [
+          rect(
+            4,
+            2,
+            12,
+            16,
+            1,
+          ),
+
+          line(
+            7,
+            7,
+            13,
+            7,
+          ),
+
+          line(
+            7,
+            10,
+            13,
+            10,
+          ),
+
+          line(
+            7,
+            13,
+            12,
+            13,
+          ),
+        ],
+      };
+
+      const iconScale =
+        0.8;
+
+      return (
+        icons[type] ||
+        icons.opex
+      ).map(
+        (shape) => {
+          const scaledShape =
+            {
+              ...shape,
+
+              lineWidth:
+                (
+                  shape.lineWidth ||
+                  1
+                ) *
+                iconScale,
+            };
+
+          for (
+            const coordinate of [
+              "x",
+              "y",
+
+              "x1",
+              "y1",
+
+              "x2",
+              "y2",
+
+              "w",
+              "h",
+
+              "r",
+
+              "r1",
+              "r2",
+            ]
+          ) {
+            if (
+              typeof scaledShape[
+                coordinate
+              ] ===
+              "number"
+            ) {
+              scaledShape[
+                coordinate
+              ] *=
+                iconScale;
+            }
+          }
+
+          if (
+            Array.isArray(
+              scaledShape.points,
+            )
+          ) {
+            scaledShape.points =
+              scaledShape.points.map(
+                (
+                  point,
+                ) => ({
+                  x:
+                    point.x *
+                    iconScale,
+
+                  y:
+                    point.y *
+                    iconScale,
+                }),
+              );
+          }
+
+          return scaledShape;
+        },
+      );
+    };
+
+    // ==========================================================
+    // LABEL CELL
+    // ==========================================================
+
+    const labelCell = (
+      text,
+      icon,
+    ) => ({
+      columns: [
+        {
+          width: 22,
+
+          canvas:
+            fieldIcon(
+              icon,
+            ),
+
+          margin: [
+            0,
+            0,
+            0,
+            0,
+          ],
+        },
+
+        {
+          width: "*",
+
+          text,
+
+          style:
+            "fieldLabel",
+
+          margin: [
+            3,
+            3,
+            0,
+            0,
+          ],
+        },
+      ],
+
+      fillColor:
+        COLORS.labelBackground,
+
+      margin: [
+        8,
+        6,
+        6,
+        6,
+      ],
+    });
+
+    // ==========================================================
+    // VALUE CELL
+    // ==========================================================
+
+    const valueCell = (
+      value,
+    ) => ({
+      text:
+        opexPdfValue(
+          value,
+        ),
+
+      style:
+        "fieldValue",
+
+      margin: [
+        8,
+        6,
+        6,
+        6,
+      ],
+    });
+
+    // ==========================================================
+    // TABLE BORDER
+    // ==========================================================
+
+    const borderedLayout = {
+      hLineColor: () =>
+        COLORS.border,
+
+      vLineColor: () =>
+        COLORS.border,
+
+      hLineWidth: () =>
+        0.7,
+
+      vLineWidth: () =>
+        0.7,
+
+      paddingLeft: () =>
+        0,
+
+      paddingRight: () =>
+        0,
+
+      paddingTop: () =>
+        0,
+
+      paddingBottom: () =>
+        0,
+    };
+
+    // ==========================================================
+    // STATUS CELL
+    // ==========================================================
+
+    const statusCell = (
+      statusValue,
+    ) => ({
+      text:
+        opexPdfValue(
+          statusValue,
+        ),
+
+      style:
+        "approvalValue",
+
+      margin: [
+        4,
+        5,
+        4,
+        5,
+      ],
+    });
+
+    // ==========================================================
+    // APPROVAL ROWS
+    //
+    // Dynamic:
+    // HOD
+    // FC
+    // GM
+    // RD-FC
+    // CEO
+    //
+    // Whatever attachRelatedData returns will be displayed.
+    // ==========================================================
+
+    const approvalRows = [];
+
+    approvals.forEach(
+      (approval) => {
+        if (
+          approval.ApprovalRole ===
+            undefined ||
+          approval.ApprovalRole ===
+            null ||
+          String(
+            approval.ApprovalRole,
+          ).trim() === ""
+        ) {
+          return;
+        }
+
+        const approvalRole =
+          String(
+            approval.ApprovalRole,
+          ).trim();
+
+        const approvedQuantity =
+          approval.ApprovedQuantity !==
+            null &&
+          approval.ApprovedQuantity !==
+            undefined &&
+          String(
+            approval.ApprovedQuantity,
+          ).trim() !== ""
+            ? formatOpexAmount(
+                approval.ApprovedQuantity,
+              )
+            : "-";
+
+        approvalRows.push([
+          // -----------------------------------------
+          // Approval Role
+          // -----------------------------------------
+
+          {
+            text:
+              approvalRole,
+
+            style:
+              "approvalRole",
+
+            margin: [
+              4,
+              5,
+              4,
+              5,
+            ],
+          },
+
+          // -----------------------------------------
+          // Status
+          // -----------------------------------------
+
+          statusCell(
+            approval.Status,
+          ),
+
+          // -----------------------------------------
+          // Approved Qty
+          // -----------------------------------------
+
+          {
+            text:
+              approvedQuantity,
+
+            style:
+              "approvalValue",
+
+            margin: [
+              4,
+              5,
+              4,
+              5,
+            ],
+          },
+
+          // -----------------------------------------
+          // Remarks
+          // -----------------------------------------
+
+          {
+            text:
+              opexPdfValue(
+                approval.Remarks,
+              ),
+
+            style:
+              "approvalValue",
+
+            margin: [
+              4,
+              5,
+              4,
+              5,
+            ],
+          },
+        ]);
+      },
+    );
+
+    // ==========================================================
+    // NO APPROVAL DATA
+    // ==========================================================
+
+    if (
+      approvalRows.length ===
+      0
+    ) {
+      approvalRows.push([
+        {
+          text:
+            "No approval details available",
+
+          colSpan: 4,
+
+          alignment:
+            "center",
+
+          color:
+            COLORS.muted,
+
+          margin: [
+            0,
+            7,
+            0,
+            7,
+          ],
+        },
+
+        {},
+
+        {},
+
+        {},
+      ]);
+    }
+
+    // ==========================================================
+    // DOCUMENT DEFINITION
+    // ==========================================================
+
+    const documentDefinition = {
+      pageSize: "A4",
+
+      pageOrientation:
+        "portrait",
+
+      pageMargins: [
+        22,
+        26,
+        22,
+        72,
+      ],
+
+      defaultStyle: {
+        font: "Roboto",
+
+        fontSize: 9,
+
+        color:
+          COLORS.value,
+      },
+
+      content: [
+        // ======================================================
+        // HEADER
+        // ======================================================
+
+        {
+          table: {
+            widths: [
+              130,
+              "*",
+            ],
+
+            body: [
+              [
+                logo
+                  ? {
+                      image:
+                        logo,
+
+                      fit: [
+                        102,
+                        58,
+                      ],
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    }
+                  : {
+                      text: "",
+
+                      border: [
+                        false,
+                        false,
+                        false,
+                        false,
+                      ],
+                    },
+
+                {
+                  text:
+                    "OPEX Detail Report",
+
+                  style:
+                    "title",
+
+                  alignment:
+                    "center",
+
+                  margin: [
+                    0,
+                    18,
+                    80,
+                    0,
+                  ],
+
+                  border: [
+                    false,
+                    false,
+                    false,
+                    false,
+                  ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            "noBorders",
+        },
+
+        // ======================================================
+        // HEADER LINE
+        // ======================================================
+
+        {
+          canvas: [
+            {
+              type:
+                "line",
+
+              x1: 0,
+
+              y1: 0,
+
+              x2: 551,
+
+              y2: 0,
+
+              lineWidth:
+                0.8,
+
+              lineColor:
+                COLORS.mainHeader,
+            },
+          ],
+
+          margin: [
+            0,
+            7,
+            0,
+            18,
+          ],
+        },
+
+        // ======================================================
+        // ORGANIZATION + OPEX NUMBER
+        // CREATED DATE + DEPARTMENT
+        // ======================================================
+
+        {
+          table: {
+            widths: [
+              LABEL_WIDTH,
+              "*",
+
+              LABEL_WIDTH,
+              "*",
+            ],
+
+            body: [
+              // -----------------------------------------------
+              // Organization + OPEX No.
+              // -----------------------------------------------
+
+              [
+                labelCell(
+                  "Organization",
+                  "organization",
+                ),
+
+                valueCell(
+                  opex.OrganizationShortName ||
+                    opex.OrganizationID,
+                ),
+
+                labelCell(
+                  "OPEX No.",
+                  "opex",
+                ),
+
+                valueCell(
+                  opex.OpexNumber,
+                ),
+              ],
+
+              // -----------------------------------------------
+              // Date + Department
+              // -----------------------------------------------
+
+              [
+                labelCell(
+                  "Created On",
+                  "calendar",
+                ),
+
+                valueCell(
+                  opex.CreatedDate,
+                ),
+
+                labelCell(
+                  "Department",
+                  "department",
+                ),
+
+                valueCell(
+                  opex.Department,
+                ),
+              ],
+            ],
+          },
+
+          layout:
+            borderedLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            0,
+          ],
+        },
+
+        // ======================================================
+        // ITEM + MAKE
+        // ======================================================
+
+        {
+          table: {
+            widths: [
+              LABEL_WIDTH,
+              "*",
+
+              LABEL_WIDTH,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Item",
+                  "item",
+                ),
+
+                valueCell(
+                  opex.Item,
+                ),
+
+                labelCell(
+                  "Make",
+                  "make",
+                ),
+
+                valueCell(
+                  opex.Make,
+                ),
+              ],
+            ],
+          },
+
+          layout:
+            borderedLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            0,
+          ],
+        },
+
+        // ======================================================
+        // QUANTITY + RATE + TOTAL
+        // ======================================================
+
+        {
+          table: {
+            widths: [
+              LABEL_WIDTH,
+              "*",
+
+              LABEL_WIDTH,
+              "*",
+
+              LABEL_WIDTH,
+              "*",
+            ],
+
+            body: [
+              [
+                // -------------------------------------------
+                // Quantity
+                // -------------------------------------------
+
+                labelCell(
+                  "Quantity",
+                  "quantity",
+                ),
+
+                valueCell(
+                  formatOpexAmount(
+                    opex.Qty,
+                  ),
+                ),
+
+                // -------------------------------------------
+                // Rate
+                // -------------------------------------------
+
+                labelCell(
+                  "Rate",
+                  "rate",
+                ),
+
+                valueCell(
+                  `INR ${formatOpexAmount(
+                    opex.Rate,
+                  )}`,
+                ),
+
+                // -------------------------------------------
+                // Total
+                // -------------------------------------------
+
+                labelCell(
+                  "Total",
+                  "total",
+                ),
+
+                {
+                  text:
+                    `INR ${formatOpexAmount(
+                      opex.Total,
+                    )}`,
+
+                  style:
+                    "totalValue",
+
+                  margin: [
+                    8,
+                    6,
+                    6,
+                    6,
+                  ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            borderedLayout,
+
+          // Quantity row ke upar aur niche gap
+          margin: [
+            0,
+            8,
+            0,
+            8,
+          ],
+        },
+
+        // ======================================================
+        // DESCRIPTION
+        // ======================================================
+
+        {
+          table: {
+            widths: [
+              LABEL_WIDTH,
+              "*",
+            ],
+
+            body: [
+              [
+                labelCell(
+                  "Description",
+                  "description",
+                ),
+
+                {
+                  text:
+                    opexPdfValue(
+                      opex.Description,
+                    ),
+
+                  style:
+                    "descriptionValue",
+
+                  margin: [
+                    8,
+                    6,
+                    6,
+                    6,
+                  ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            borderedLayout,
+
+          margin: [
+            0,
+            0,
+            0,
+            0,
+          ],
+        },
+
+        // ======================================================
+        // APPROVAL TABLE
+        // ======================================================
+
+        {
+          table: {
+            headerRows: 1,
+
+            widths: [
+              100,
+              120,
+              80,
+              "*",
+            ],
+
+            body: [
+              // -----------------------------------------------
+              // Header
+              // -----------------------------------------------
+
+              [
+                {
+                  text:
+                    "Approval",
+
+                  style:
+                    "tableHeader",
+                },
+
+                {
+                  text:
+                    "Status",
+
+                  style:
+                    "tableHeader",
+                },
+
+                {
+                  text:
+                    "Qty",
+
+                  style:
+                    "tableHeader",
+                },
+
+                {
+                  text:
+                    "Remarks",
+
+                  style:
+                    "tableHeader",
+                },
+              ],
+
+              // -----------------------------------------------
+              // Dynamic OPEX Approvals
+              // -----------------------------------------------
+
+              ...approvalRows,
+            ],
+          },
+
+          layout: {
+            hLineColor:
+              () =>
+                COLORS.border,
+
+            vLineColor:
+              () =>
+                COLORS.border,
+
+            hLineWidth:
+              () =>
+                0.7,
+
+            vLineWidth:
+              () =>
+                0.7,
+
+            fillColor:
+              (
+                rowIndex,
+              ) =>
+                rowIndex ===
+                0
+                  ? COLORS.tableHeaderBackground
+                  : COLORS.white,
+
+            paddingLeft:
+              () => 8,
+
+            paddingRight:
+              () => 8,
+
+            paddingTop:
+              () => 6,
+
+            paddingBottom:
+              () => 6,
+          },
+
+          // Description ke baad approval table gap
+          margin: [
+            0,
+            12,
+            0,
+            5,
+          ],
+        },
+      ],
+
+      // ========================================================
+      // FOOTER
+      // ========================================================
+
+      footer: () => ({
+        margin: [
+          22,
+          8,
+          22,
+          0,
+        ],
+
+        stack: [
+          // ----------------------------------------------------
+          // Footer Line
+          // ----------------------------------------------------
+
+          {
+            canvas: [
+              {
+                type:
+                  "line",
+
+                x1: 0,
+
+                y1: 0,
+
+                x2: 551,
+
+                y2: 0,
+
+                lineWidth:
+                  0.7,
+
+                lineColor:
+                  COLORS.mainHeader,
+              },
+            ],
+
+            margin: [
+              0,
+              0,
+              0,
+              8,
+            ],
+          },
+
+          // ----------------------------------------------------
+          // Footer Text
+          // ----------------------------------------------------
+
+          {
+            columns: [
+              {
+                stack: [
+                  {
+                    text:
+                      "Powered by HotelOps",
+
+                    bold: true,
+
+                    color:
+                      COLORS.mainHeader,
+
+                    fontSize:
+                      8,
+                  },
+                ],
+              },
+
+              {
+                width: 130,
+
+                stack: [
+                  {
+                    text:
+                      `Generated On   :  ${generatedOn}`,
+
+                    fontSize:
+                      7,
+
+                    color:
+                      COLORS.label,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+
+      // ========================================================
+      // STYLES
+      // ========================================================
+
+      styles: {
+        title: {
+          fontSize:
+            18,
+
+          bold:
+            true,
+
+          color:
+            COLORS.mainHeader,
+        },
+
+        fieldLabel: {
+          fontSize:
+            9,
+
+          bold:
+            true,
+
+          color:
+            COLORS.label,
+        },
+
+        fieldValue: {
+          fontSize:
+            9,
+
+          color:
+            COLORS.value,
+        },
+
+        descriptionValue: {
+          fontSize:
+            9,
+
+          lineHeight:
+            1.25,
+
+          color:
+            COLORS.value,
+        },
+
+        totalValue: {
+          fontSize:
+            9,
+
+          bold:
+            true,
+
+          color:
+            COLORS.value,
+        },
+
+        tableHeader: {
+          fontSize:
+            9,
+
+          bold:
+            true,
+
+          color:
+            COLORS.label,
+
+          fillColor:
+            COLORS.tableHeaderBackground,
+
+          margin: [
+            3,
+            2,
+            3,
+            2,
+          ],
+        },
+
+        approvalRole: {
+          fontSize:
+            9,
+
+          bold:
+            true,
+
+          color:
+            COLORS.value,
+        },
+
+        approvalValue: {
+          fontSize:
+            9,
+
+          color:
+            COLORS.value,
+        },
+      },
+    };
+
+    // ==========================================================
+    // CREATE PDF
+    // ==========================================================
+
+    const pdfBuffer =
+      await new Promise(
+        (
+          resolve,
+          reject,
+        ) => {
+          try {
+            const pdfDocument =
+              new PdfPrinter(
+                OPEX_DETAIL_PDF_FONTS,
+              ).createPdfKitDocument(
+                documentDefinition,
+              );
+
+            const chunks = [];
+
+            pdfDocument.on(
+              "data",
+              (
+                chunk,
+              ) =>
+                chunks.push(
+                  chunk,
+                ),
+            );
+
+            pdfDocument.on(
+              "end",
+              () =>
+                resolve(
+                  Buffer.concat(
+                    chunks,
+                  ),
+                ),
+            );
+
+            pdfDocument.on(
+              "error",
+              reject,
+            );
+
+            pdfDocument.end();
+          } catch (error) {
+            reject(error);
+          }
+        },
+      );
+
+    // ==========================================================
+    // SUCCESS
+    // ==========================================================
+
+    return {
+      success: true,
+
+      message:
+        "OPEX PDF generated successfully.",
+
+      FileName:
+        `OPEX-${opex.OpexNumber}.pdf`,
+
+      ContentType:
+        "application/pdf",
+
+      PdfBuffer:
+        pdfBuffer,
+    };
+  } catch (error) {
+    console.error(
+      "Generate OPEX PDF Service Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(
+        error,
+      );
+
+    if (
+      retryResponse
+    ) {
+      return retryResponse;
+    }
+
+    return fail(
+      "Unable to generate OPEX PDF at this time.",
+      500,
+    );
+  }
+};
 // ============================================================ Exports
 module.exports = {
   createOpex,
@@ -5053,5 +6993,6 @@ module.exports = {
   deleteApprovalConfig,
   generateOpexListPdf,
   getOpexDepartmentReportPdf,
-  getOpexOrganizationReportPdf
+  getOpexOrganizationReportPdf,
+  generateOpexByIdPdf
 };

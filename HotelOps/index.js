@@ -34,6 +34,7 @@ const PublicEquipmentRoutes = require("./routes/EngineeringRoutes/PublicEquipmen
 const NotificationRoutes = require("./routes/NotificationRoute/NotificationRoutes");
 const MinutesOfMeetingRoutes = require("./routes/MinutesOfMeetingRoutes/MinutesOfMeetingRoutes");
 const CreditApplicationRoutes = require("./routes/CreditApplicationRoute/CreditApplicationRoute");
+const DailyBreakageRoutes = require("./routes/DailyBreakageRoute/DailyBreakageRoute");
 // ==========================================Consumers
 const BrandMasterConsumer = require("./consumer/ITAdminConsumer/BrandMaster");
 const OrganizationHandler = require("./consumer/ITAdminConsumer/OrganizationHandler");
@@ -58,6 +59,7 @@ const MinutesOfMeetingHandler = require("./consumer/MinutesOfMeetingConsumer/Min
 const { startEngineeringMaintenanceNotificationJob } = require("./services/EngineeringService/EngineeringMaintenanceNotificationJob");
 const { startEngineeringAMCNotificationJob } = require("./services/EngineeringService/EngineeringAMCNotificationJob");
 const CreditApplicationHandler = require("./consumer/CreditApplicationConsumer/CreditApplicationHandler");
+const DailyBreakageHandler = require("./consumer/DailyBreakageConsumer/DailyBreakageHandler");
 // ==========================================Packages Start
 const app = express();
 app.use(express.json());
@@ -86,6 +88,7 @@ app.use("/public", PublicEquipmentRoutes);
 app.use("/api/Notification", NotificationRoutes);
 app.use("/api/MinutesOfMeeting", MinutesOfMeetingRoutes);
 app.use("/api/CreditApplication",CreditApplicationRoutes);
+app.use("/api/DailyBreakageReport",DailyBreakageRoutes);
 // =========================================Default Route
 app.get("/", (req, res) => {
   res.json({
@@ -215,6 +218,12 @@ const startServer = async () => {
      QUEUE.CREDIT_APPLICATION.REQUEST,
      QUEUE.CREDIT_APPLICATION.RESPONSE,
      CreditApplicationHandler
+      );
+      // ===================================== Daily Breakage Consumer
+    await startConsumer(
+     QUEUE.DAILY_BREAKAGE.REQUEST,
+     QUEUE.DAILY_BREAKAGE.RESPONSE,
+     DailyBreakageHandler
       );
     // Start only after RabbitMQ consumers are ready; the job itself is
     // concurrency-safe across multiple application instances.
