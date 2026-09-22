@@ -1276,13 +1276,6 @@ const getCreditApplicationList = async (data) => {
       });
 
 
-    const userType =
-      String(
-        data.UserType || "",
-      )
-        .trim()
-        .toUpperCase();
-
     const departmentName =
       String(
         data.DepartmentName ||
@@ -1293,23 +1286,21 @@ const getCreditApplicationList = async (data) => {
 
 
     // ============================================================
-    // CEO / Front Office
+    // Front Office Search Rule
     //
-    // No default list.
-    // CompanyName search compulsory.
+    // Sirf Front Office ke liye CompanyName search compulsory hai.
     // ============================================================
 
-    const searchOnlyViewer =
+    const frontOfficeViewer =
       !approvalRole &&
       (
-        userType === "CEO" ||
         departmentName ===
           "FRONT OFFICE" ||
         departmentName === "FO"
       );
 
     if (
-      searchOnlyViewer &&
+      frontOfficeViewer &&
       !CompanyName
     ) {
       return ok(
@@ -1381,10 +1372,12 @@ const getCreditApplicationList = async (data) => {
 
 
     // ============================================================
-    // CEO / Front Office Visibility
+    // Non-Approver Visibility
+    // CEO, Front Office aur baaki non-approver users ko record tabhi
+    // dikhega jab approvals complete hon aur ARID update ho chuka ho.
     // ============================================================
 
-    if (searchOnlyViewer) {
+    if (!approvalRole) {
       whereClause += `
         AND UPPER(
           TRIM(
@@ -5660,38 +5653,158 @@ const generateCreditApplicationListPdf = async (data) => {
     // Same Fields As Credit Approval List UI
     // ============================================================
 
-    const columns = [
-      { header: "#", value: (row) => row.ExportSerialNumber, width: 25, align: "center" },
-      { header: "ID", value: (row) => row.CreditApplicationID, width: 35, align: "center" },
-      { header: "ORG ID", value: (row) => row.OrganizationID, width: 35, align: "center" },
-      { header: "HTL", value: (row) => row.OrganizationShortName, width: 35 },
-      { header: "APPLICATION DATE", value: (row) => row.ApplicationDate, width: 55 },
-      { header: "COMPANY NAME", value: (row) => row.CompanyName, width: 100 },
-      { header: "GSTIN", value: (row) => row.CompanyGSTIN, width: 80 },
-      { header: "MSME", value: (row) => row.MSME, width: 35, align: "center" },
-      { header: "BUSINESS ADDRESS", value: (row) => row.BusinessAddress, width: 90 },
-      { header: "BILLING ADDRESS", value: (row) => row.BillingAddress, width: 90 },
-      { header: "AUTHORISED PERSON", value: (row) => row.AuthorisedPersonNamePosition, width: 90 },
-      { header: "AUTH. MOBILE", value: (row) => row.AuthorisedPersonMobileNo, width: 65 },
-      { header: "AUTH. EMAIL", value: (row) => row.AuthorisedPersonEmail, width: 100 },
-      { header: "ACCOUNTS CONTACT", value: (row) => row.AccountsContactNamePosition, width: 90 },
-      { header: "ACCOUNTS MOBILE", value: (row) => row.AccountsContactMobileNo, width: 65 },
-      { header: "ACCOUNTS EMAIL", value: (row) => row.AccountsContactEmail, width: 100 },
-      { header: "RECOMMENDED BY", value: (row) => row.RecommendedBy, width: 70 },
-      { header: "POSITION", value: (row) => row.Position, width: 65 },
-      { header: "REFERENCE CHECKED BY", value: (row) => row.CreditReferenceCheckedBy, width: 70 },
-      { header: "REFERENCE DATE", value: (row) => row.CreditReferenceCheckedDate, width: 55 },
-      { header: "CREDIT AMOUNT", value: (row) => Number(row.CreditAmountAllowed || 0).toLocaleString("en-IN"), width: 65 },
-      { header: "EXPECTED BUSINESS FY", value: (row) => Number(row.ExpectedBusinessFY || 0).toLocaleString("en-IN"), width: 65 },
-      { header: "FINANCIAL YEAR", value: (row) => row.FinancialYear, width: 45 },
-      { header: "ARID", value: (row) => row.ARID, width: 50 },
-      { header: "CURRENT APPROVAL", value: (row) => row.CurrentApprovalRole, width: 45 },
-      { header: "CURRENT STATUS", value: (row) => row.CurrentStatus, width: 50 },
-      { header: "FINAL STATUS", value: (row) => row.FinalStatus, width: 50 },
-      { header: "FINAL STATUS DATE", value: (row) => row.FinalStatusDateTime, width: 70 },
-      { header: "FC STATUS", value: (row) => approvalStatus(row, ["FC", "FINANCE"]), width: 50 },
-      { header: "GM STATUS", value: (row) => approvalStatus(row, ["GM"]), width: 50 },
-    ];
+// ============================================================
+// PDF Columns
+// ============================================================
+
+const columns = [
+  {
+    header: "DATE",
+    value: (row) =>
+      row.ApplicationDate,
+    width: 50,
+  },
+
+  // ============================================================
+  // Company + GST + MSME
+  // ============================================================
+
+  {
+    header: "COMPANY / GST / MSME",
+
+    value: (row) =>
+      [
+        `Company: ${row.CompanyName || "-"}`,
+        `GST No.: ${row.CompanyGSTIN || "-"}`,
+        `MSME: ${row.MSME || "-"}`,
+      ].join("\n"),
+
+    width: 105,
+  },
+
+  // ============================================================
+  // Business + Billing Address
+  // ============================================================
+
+  {
+    header: "BUSINESS / BILLING ADDRESS",
+
+    value: (row) =>
+      [
+        `Business: ${row.BusinessAddress || "-"}`,
+        `Billing: ${row.BillingAddress || "-"}`,
+      ].join("\n"),
+
+    width: 120,
+  },
+
+  // ============================================================
+  // Authorised Person
+  // ============================================================
+
+  {
+    header: "AUTHORISED PERSON",
+
+    value: (row) =>
+      [
+        row.AuthorisedPersonNamePosition || "-",
+        row.AuthorisedPersonMobileNo || "-",
+        row.AuthorisedPersonEmail || "-",
+      ].join("\n"),
+
+    width: 100,
+  },
+
+  // ============================================================
+  // Accounts Contact
+  // ============================================================
+
+  {
+    header: "ACCOUNTS CONTACT",
+
+    value: (row) =>
+      [
+        row.AccountsContactNamePosition || "-",
+        row.AccountsContactMobileNo || "-",
+        row.AccountsContactEmail || "-",
+      ].join("\n"),
+
+    width: 100,
+  },
+
+  {
+  header: "RECOMMENDED BY / POSITION",
+
+  value: (row) =>
+    [
+      `Recommended By: ${row.RecommendedBy || "-"}`,
+      `Position: ${row.Position || "-"}`,
+    ].join("\n"),
+
+  width: 80,
+},
+
+{
+  header: "REFERENCE CHECKED BY / DATE",
+
+  value: (row) =>
+    [
+      `Checked By: ${row.CreditReferenceCheckedBy || "-"}`,
+      `Date: ${row.CreditReferenceCheckedDate || "-"}`,
+    ].join("\n"),
+
+  width: 85,
+},
+{
+  header: "AMOUNT / FY / FINANCIAL YEAR",
+
+  value: (row) =>
+    [
+      `Amount: ${Number(
+        row.CreditAmountAllowed || 0,
+      ).toLocaleString("en-IN")}`,
+
+      `FY: ${Number(
+        row.ExpectedBusinessFY || 0,
+      ).toLocaleString("en-IN")}`,
+
+      `Financial Year: ${row.FinancialYear || "-"}`,
+    ].join("\n"),
+
+  width: 80,
+},
+  {
+    header: "ARID",
+
+    value: (row) =>
+      row.ARID || "-",
+
+    width: 45,
+  },
+
+  // ============================================================
+  // FC + GM Status
+  // ============================================================
+
+  {
+    header: "FC / GM STATUS",
+
+    value: (row) =>
+      [
+        `FC: ${approvalStatus(
+          row,
+          ["FC", "FINANCE"],
+        )}`,
+
+        `GM: ${approvalStatus(
+          row,
+          ["GM"],
+        )}`,
+      ].join("\n"),
+
+    width: 70,
+  },
+];
 
     // ============================================================
     // Metadata
@@ -5764,7 +5877,7 @@ const generateCreditApplicationListPdf = async (data) => {
           data.logoUrl,
 
         pageSize:
-          "A1",
+          "A4",
 
         orientation:
           "landscape",
@@ -5777,8 +5890,8 @@ const generateCreditApplicationListPdf = async (data) => {
           pdfRows,
 
         styles: {
-          pdfTableHeader: { fontSize: 5, bold: true, color: "#FFFFFF" },
-          pdfTableCell: { fontSize: 5 },
+          pdfTableHeader: { fontSize: 8, bold: true, color: "#FFFFFF" },
+          pdfTableCell: { fontSize: 8 },
         },
 
         tableOptions: {
