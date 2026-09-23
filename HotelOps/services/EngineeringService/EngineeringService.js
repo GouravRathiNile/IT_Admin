@@ -18178,36 +18178,235 @@ const getEngineeringDashboardSummary = async (data) => {
 
         (
           SELECT COUNT(*)::bigint
+
           FROM Engineering_Equipment_Entry_Master e
+
           WHERE e.OrganizationID = $1
             AND e.IsDeleted = FALSE
         ) AS "TotalEquipment",
 
+
         -- ========================================================
+        -- Warranty - Active
         -- Under Warranty
         -- ========================================================
 
         (
           SELECT COUNT(*)::bigint
+
           FROM Engineering_Equipment_Entry_Master e
+
           WHERE e.OrganizationID = $1
             AND e.IsDeleted = FALSE
-            AND LOWER(TRIM(COALESCE(e.WarrantyStatus, ''))) =
-                'under warranty'
-        ) AS "UnderWarranty",
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.WarrantyStatus, '')
+              )
+            ) = 'under warranty'
+        ) AS "WarrantyActive",
+
 
         -- ========================================================
+        -- Warranty - Expired
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.WarrantyStatus, '')
+              )
+            ) = 'expired'
+        ) AS "WarrantyExpired",
+
+
+        -- ========================================================
+        -- Warranty - N/A
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.WarrantyStatus, '')
+              )
+            ) = 'n/a'
+        ) AS "WarrantyNA",
+
+
+        -- ========================================================
+        -- AMC - Active
         -- Under AMC
         -- ========================================================
 
         (
           SELECT COUNT(*)::bigint
+
           FROM Engineering_Equipment_Entry_Master e
+
           WHERE e.OrganizationID = $1
             AND e.IsDeleted = FALSE
-            AND LOWER(TRIM(COALESCE(e.AMCStatus, ''))) =
-                'under amc'
-        ) AS "UnderAMC",
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCStatus, '')
+              )
+            ) = 'under amc'
+        ) AS "AMCActive",
+
+
+        -- ========================================================
+        -- AMC - Expired
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCStatus, '')
+              )
+            ) = 'expired'
+        ) AS "AMCExpired",
+
+
+        -- ========================================================
+        -- AMC - N/A
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCStatus, '')
+              )
+            ) = 'n/a'
+        ) AS "AMCNA",
+
+
+        -- ========================================================
+        -- Equipment Coverage - Comprehensive
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCType, '')
+              )
+            ) = 'comprehensive'
+        ) AS "Comprehensive",
+
+
+        -- ========================================================
+        -- Equipment Coverage - Non Comprehensive
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCType, '')
+              )
+            ) = 'non comprehensive'
+        ) AS "NonComprehensive",
+
+
+        -- ========================================================
+        -- Equipment Coverage - On Call
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCType, '')
+              )
+            ) = 'on call'
+        ) AS "OnCall",
+
+
+        -- ========================================================
+        -- Equipment Coverage - By Hotel Team
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCType, '')
+              )
+            ) = 'by hotel team'
+        ) AS "ByHotelTeam",
+
+
+        -- ========================================================
+        -- Equipment Coverage - No AMC Required
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND LOWER(
+              TRIM(
+                COALESCE(e.AMCType, '')
+              )
+            ) = 'no amc required'
+        ) AS "NoAMCRequired",
+
 
         -- ========================================================
         -- Breakdown Count
@@ -18215,7 +18414,9 @@ const getEngineeringDashboardSummary = async (data) => {
 
         (
           SELECT COUNT(*)::bigint
+
           FROM Engineering_Breakdown_Entry b
+
           WHERE b.OrganizationID = $1
             AND b.IsDeleted = FALSE
 
@@ -18229,6 +18430,7 @@ const getEngineeringDashboardSummary = async (data) => {
               OR b.BreakdownDate <= $3::date
             )
         ) AS "BreakdownCount",
+
 
         -- ========================================================
         -- Breakdown Amount
@@ -18256,6 +18458,7 @@ const getEngineeringDashboardSummary = async (data) => {
             )
         ) AS "BreakdownAmount",
 
+
         -- ========================================================
         -- Total Maintenance
         -- ========================================================
@@ -18278,6 +18481,7 @@ const getEngineeringDashboardSummary = async (data) => {
               OR m.MaintenanceDate <= $3::date
             )
         ) AS "TotalMaintenance",
+
 
         -- ========================================================
         -- Pending Maintenance
@@ -18318,20 +18522,105 @@ const getEngineeringDashboardSummary = async (data) => {
     const row = result.rows[0];
 
     // ============================================================
+    // Values
+    // ============================================================
+
+    const TotalEquipment =
+      Number(row.TotalEquipment || 0);
+
+    const WarrantyActive =
+      Number(row.WarrantyActive || 0);
+
+    const WarrantyExpired =
+      Number(row.WarrantyExpired || 0);
+
+    const WarrantyNA =
+      Number(row.WarrantyNA || 0);
+
+    const AMCActive =
+      Number(row.AMCActive || 0);
+
+    const AMCExpired =
+      Number(row.AMCExpired || 0);
+
+    const AMCNA =
+      Number(row.AMCNA || 0);
+
+    const Comprehensive =
+      Number(row.Comprehensive || 0);
+
+    const NonComprehensive =
+      Number(row.NonComprehensive || 0);
+
+    const OnCall =
+      Number(row.OnCall || 0);
+
+    const ByHotelTeam =
+      Number(row.ByHotelTeam || 0);
+
+    const NoAMCRequired =
+      Number(row.NoAMCRequired || 0);
+
+    // ============================================================
+    // Percentage Helper
+    // ============================================================
+
+    const percentage = (count) => {
+      if (TotalEquipment === 0) {
+        return 0;
+      }
+
+      return Number(
+        (
+          (Number(count) / TotalEquipment) *
+          100
+        ).toFixed(2),
+      );
+    };
+
+    // ============================================================
+    // Good Condition / Needs Attention
+    //
+    // Exact business condition not defined yet.
+    // Current dashboard requirement:
+    // all equipment treated as good condition.
+    // ============================================================
+
+    const NeedsAttention = 0;
+
+    const InGoodCondition =
+      TotalEquipment - NeedsAttention;
+
+    // ============================================================
     // Response
     // ============================================================
 
     return ok(
       "Engineering dashboard summary fetched successfully.",
       {
-        TotalEquipment:
-          Number(row.TotalEquipment || 0),
+        TotalEquipment,
 
-        UnderWarranty:
-          Number(row.UnderWarranty || 0),
+        InGoodCondition: {
+          Count:
+            InGoodCondition,
 
-        UnderAMC:
-          Number(row.UnderAMC || 0),
+          Percentage:
+            percentage(InGoodCondition),
+        },
+
+        NeedsAttention: {
+          Count:
+            NeedsAttention,
+
+          Percentage:
+            percentage(NeedsAttention),
+        },
+
+        TotalMaintenance:
+          Number(row.TotalMaintenance || 0),
+
+        PendingMaintenance:
+          Number(row.PendingMaintenance || 0),
 
         Breakdown: {
           Count:
@@ -18341,11 +18630,99 @@ const getEngineeringDashboardSummary = async (data) => {
             Number(row.BreakdownAmount || 0),
         },
 
-        TotalMaintenance:
-          Number(row.TotalMaintenance || 0),
+        WarrantyStatus: {
+          Active: {
+            Count:
+              WarrantyActive,
 
-        PendingMaintenance:
-          Number(row.PendingMaintenance || 0),
+            Percentage:
+              percentage(WarrantyActive),
+          },
+
+          Expired: {
+            Count:
+              WarrantyExpired,
+
+            Percentage:
+              percentage(WarrantyExpired),
+          },
+
+          NA: {
+            Count:
+              WarrantyNA,
+
+            Percentage:
+              percentage(WarrantyNA),
+          },
+        },
+
+        AMCStatus: {
+          Active: {
+            Count:
+              AMCActive,
+
+            Percentage:
+              percentage(AMCActive),
+          },
+
+          Expired: {
+            Count:
+              AMCExpired,
+
+            Percentage:
+              percentage(AMCExpired),
+          },
+
+          NA: {
+            Count:
+              AMCNA,
+
+            Percentage:
+              percentage(AMCNA),
+          },
+        },
+
+        EquipmentCoverage: {
+          Comprehensive: {
+            Count:
+              Comprehensive,
+
+            Percentage:
+              percentage(Comprehensive),
+          },
+
+          NonComprehensive: {
+            Count:
+              NonComprehensive,
+
+            Percentage:
+              percentage(NonComprehensive),
+          },
+
+          OnCall: {
+            Count:
+              OnCall,
+
+            Percentage:
+              percentage(OnCall),
+          },
+
+          ByHotelTeam: {
+            Count:
+              ByHotelTeam,
+
+            Percentage:
+              percentage(ByHotelTeam),
+          },
+
+          NoAMCRequired: {
+            Count:
+              NoAMCRequired,
+
+            Percentage:
+              percentage(NoAMCRequired),
+          },
+        },
       },
     );
   } catch (error) {
