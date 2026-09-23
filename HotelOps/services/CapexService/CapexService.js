@@ -2488,7 +2488,7 @@ const processCapexApproval = async (data) => {
           kind: "APPROVE",
           notificationAction: "APPROVED",
           roles: [followingStage.role],
-          includeCreator: true,
+          // includeCreator: true,
           excludeActor: true,
         });
 
@@ -2536,7 +2536,7 @@ const processCapexApproval = async (data) => {
       notifyApprovalCommitted({
         kind: "APPROVE",
         notificationAction: "APPROVED",
-        includeCreator: true,
+        // includeCreator: true,
       });
 
       return {

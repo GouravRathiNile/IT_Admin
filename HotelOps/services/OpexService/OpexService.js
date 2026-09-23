@@ -53,6 +53,46 @@ const DEFAULT_APPROVALS = Object.freeze([
 const APPROVAL_ROLES = new Set(["HOD", "FC", "GM", "RD-FC", "CEO"]);
 const CENTRAL_RDFC_ORGANIZATION_ID = 10;
 
+// Returns true only when the OPEX creator is an active Finance HOD
+// mapped to the same organization as the OPEX.
+const isFinanceHodCreator = async (userID, organizationID) => {
+  const normalizedUserID = Number(userID);
+  const normalizedOrganizationID = Number(organizationID);
+
+  if (
+    !Number.isSafeInteger(normalizedUserID) ||
+    normalizedUserID < 1 ||
+    !Number.isSafeInteger(normalizedOrganizationID) ||
+    normalizedOrganizationID < 1
+  ) {
+    return false;
+  }
+
+  const result = await pool.query(
+    `
+    SELECT 1
+    FROM user_master um
+    INNER JOIN department_master dm
+      ON dm.departmentid = um.departmentid
+    INNER JOIN user_org_mapping uom
+      ON uom.userid = um.userid
+    WHERE um.userid = $1
+      AND uom.organizationid = $2
+      AND UPPER(TRIM(um.usertype)) = 'HOD'
+      AND UPPER(TRIM(COALESCE(dm.departmentname, ''))) = 'FINANCE'
+      AND um.isactive = TRUE
+      AND um.isdeleted = FALSE
+      AND um.islocked = FALSE
+      AND dm.isdeleted = FALSE
+      AND uom.isactive = TRUE
+      AND uom.isdeleted = FALSE
+    LIMIT 1;
+    `,
+    [normalizedUserID, normalizedOrganizationID],
+  );
+
+  return result.rows.length > 0;
+};
 // Resolve recipients with the same effective-role rules used by OPEX approval:
 // property/department HOD, property FC/GM/CEO, and central-org Finance HOD for RD-FC.
 const resolveOpexNotificationRecipients = async ({ organizationID, department, roles = [],
@@ -162,18 +202,24 @@ const opexNotificationContent = ({ kind, item, qty, department, description,
 const notifyOpex = async ({ organizationID, opexID, department, roles, directUserIds,
   excludeUserID, actorUserID, kind, item, qty, rate, total, description,
   actionQuantity, remark, actionDate, approverRole, action }) => {
-  const context = await resolveOpexNotificationRecipients({ organizationID, department,
-    roles, directUserIds, excludeUserID, actorUserID });
+  const context = await resolveOpexNotificationRecipients({
+    organizationID, department,
+    roles, directUserIds, excludeUserID, actorUserID
+  });
   if (!context.userIds.length) return;
-  const content = opexNotificationContent({ kind, item, qty, department, description,
-    approverRole, organizationShortName: context.organizationShortName, actorName: context.actorName });
+  const content = opexNotificationContent({
+    kind, item, qty, department, description,
+    approverRole, organizationShortName: context.organizationShortName, actorName: context.actorName
+  });
   const { sendMessage } = require("../../producer/producer");
   const QUEUE = require("../../config/queue");
   const response = await sendMessage(QUEUE.NOTIFICATION.REQUEST, QUEUE.NOTIFICATION.RESPONSE, {
     action: "CREATE_NOTIFICATION",
-    data: { organizationId: Number(organizationID), title: content.title, message: content.message,
+    data: {
+      organizationId: Number(organizationID), title: content.title, message: content.message,
       type: "info", moduleName: OPEX_NOTIFICATION_MODULE, entityType: "Opex",
-      entityId: String(opexID), action, priority: "normal", userIds: context.userIds },
+      entityId: String(opexID), action, priority: "normal", userIds: context.userIds
+    },
   });
   if (!response || response.success !== true) {
     console.error("OPEX notification request unsuccessful:", response?.message || "No response");
@@ -182,8 +228,10 @@ const notifyOpex = async ({ organizationID, opexID, department, roles, directUse
   Promise.resolve().then(() => sendOpexEmails({
     emails: context.emails, organizationID, organizationName: context.organizationName,
     notificationTitle: content.title,
-    details: { entityId: opexID, kind, item, department, quantity: qty, rate, total, description,
-      actionQuantity, remark, actionBy: context.actorName || approverRole || "-", actionDate },
+    details: {
+      entityId: opexID, kind, item, department, quantity: qty, rate, total, description,
+      actionQuantity, remark, actionBy: context.actorName || approverRole || "-", actionDate
+    },
   })).catch((error) => console.error("OPEX email dispatch failed:", error.message));
 };
 
@@ -235,6 +283,96 @@ const hasCentralRdfcMapping = async (queryable, userID) => {
   return result.rows.length > 0;
 };
 
+const getRdfcMappedOrganizations = async (queryable, userID) => {
+  const normalizedUserID = Number(userID);
+
+  if (!Number.isSafeInteger(normalizedUserID) || normalizedUserID < 1) {
+    return [];
+  }
+
+  const result = await queryable.query(
+    `
+    SELECT uom.OrganizationID
+    FROM user_org_mapping uom
+    INNER JOIN user_master um
+      ON um.UserID = uom.UserID
+    INNER JOIN organization_master om
+      ON om.OrganizationID = uom.OrganizationID
+    WHERE uom.UserID = $1
+      AND uom.IsActive = TRUE
+      AND uom.IsDeleted = FALSE
+      AND um.IsActive = TRUE
+      AND um.IsDeleted = FALSE
+      AND um.IsLocked = FALSE
+      AND om.IsActive = TRUE
+      AND om.ActivationStatus = TRUE
+      AND om.IsDeleted = FALSE
+    ORDER BY uom.OrganizationID;
+    `,
+    [normalizedUserID],
+  );
+
+  return result.rows
+    .map((row) => Number(row.organizationid))
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+};
+
+// const resolveOpexAccess = async (
+//   data = {},
+//   queryable = pool,
+//   { approvalAction = false } = {},
+// ) => {
+//   const jwtRole = String(data.UserType || "").trim().toUpperCase();
+//   const departmentName = String(data.DepartmentName || "").trim();
+
+//   if (jwtRole === "RD-FC") {
+//     return {
+//       error: fail(
+//         "RD-FC OPEX access is assigned to the Organization 10 Finance HOD.",
+//         403,
+//       ),
+//     };
+//   }
+
+//   if (jwtRole === "HOD" && !departmentName) {
+//     return {
+//       error: fail("Department information is required for HOD OPEX access.", 403),
+//     };
+//   }
+
+//   const financeHod =
+//     jwtRole === "HOD" && departmentName.toUpperCase() === "FINANCE";
+
+//   const centralContext =
+//     financeHod &&
+//     (approvalAction ||
+//       Number(data.OrganizationID ?? data.Filters?.OrganizationID) ===
+//       CENTRAL_RDFC_ORGANIZATION_ID);
+//   let centralizedRdfc = false;
+
+//   if (centralContext) {
+//     centralizedRdfc = await hasCentralRdfcMapping(queryable, data.UserID);
+
+//     if (!centralizedRdfc && !approvalAction) {
+//       return {
+//         error: fail(
+//           "You are not authorized as the centralized RD-FC approver.",
+//           403,
+//         ),
+//       };
+//     }
+//   }
+
+//   return {
+//     jwtRole,
+//     effectiveRole: centralizedRdfc ? "RD-FC" : financeHod ? "FC" : jwtRole,
+//     departmentName,
+//     departmentScope: jwtRole === "HOD" && !financeHod ? departmentName : null,
+//     financeHod,
+//     centralizedRdfc,
+//   };
+// };
+
 const resolveOpexAccess = async (
   data = {},
   queryable = pool,
@@ -254,27 +392,60 @@ const resolveOpexAccess = async (
 
   if (jwtRole === "HOD" && !departmentName) {
     return {
-      error: fail("Department information is required for HOD OPEX access.", 403),
+      error: fail(
+        "Department information is required for HOD OPEX access.",
+        403,
+      ),
     };
   }
 
   const financeHod =
-    jwtRole === "HOD" && departmentName.toUpperCase() === "FINANCE";
+    jwtRole === "HOD" &&
+    departmentName.toUpperCase() === "FINANCE";
 
-  const centralContext =
-    financeHod &&
-    (approvalAction ||
-      Number(data.OrganizationID ?? data.Filters?.OrganizationID) ===
-        CENTRAL_RDFC_ORGANIZATION_ID);
   let centralizedRdfc = false;
+  let rdfcMappedOrganizations = [];
 
-  if (centralContext) {
-    centralizedRdfc = await hasCentralRdfcMapping(queryable, data.UserID);
+  if (financeHod) {
+    centralizedRdfc = await hasCentralRdfcMapping(
+      queryable,
+      data.UserID,
+    );
 
-    if (!centralizedRdfc && !approvalAction) {
+    if (centralizedRdfc) {
+      rdfcMappedOrganizations = await getRdfcMappedOrganizations(
+        queryable,
+        data.UserID,
+      );
+    }
+  }
+
+  /*
+   * Organization 10 Finance HOD acts as RD-FC.
+   *
+   * Organization selection:
+   * - Organization 10 -> global RD view, but only mapped organizations
+   * - Specific mapped organization -> only that organization
+   * - Specific unmapped organization -> no access
+   */
+  let selectedOrganizationID = null;
+
+  if (
+    data.OrganizationID !== undefined &&
+    data.OrganizationID !== null &&
+    String(data.OrganizationID).trim() !== ""
+  ) {
+    selectedOrganizationID = Number(data.OrganizationID);
+  }
+
+  if (centralizedRdfc && selectedOrganizationID !== null) {
+    if (
+      selectedOrganizationID !== CENTRAL_RDFC_ORGANIZATION_ID &&
+      !rdfcMappedOrganizations.includes(selectedOrganizationID)
+    ) {
       return {
         error: fail(
-          "You are not authorized as the centralized RD-FC approver.",
+          "You are not authorized for the selected organization.",
           403,
         ),
       };
@@ -283,14 +454,28 @@ const resolveOpexAccess = async (
 
   return {
     jwtRole,
-    effectiveRole: centralizedRdfc ? "RD-FC" : financeHod ? "FC" : jwtRole,
+
+    effectiveRole: centralizedRdfc
+      ? "RD-FC"
+      : financeHod
+        ? "FC"
+        : jwtRole,
+
     departmentName,
-    departmentScope: jwtRole === "HOD" && !financeHod ? departmentName : null,
+
+    departmentScope:
+      jwtRole === "HOD" && !financeHod
+        ? departmentName
+        : null,
+
     financeHod,
     centralizedRdfc,
+
+    rdfcMappedOrganizations,
+
+    selectedOrganizationID,
   };
 };
-
 // Merge organization overrides with the HOD -> FC -> GM -> RD-FC -> CEO defaults.
 const mergeApprovalConfiguration = (configuredRows) => {
   const approvals = new Map(
@@ -580,11 +765,70 @@ const createOpex = async (data) => {
     await client.query("COMMIT");
     transactionStarted = false;
 
-    const firstApprovalRole = String(approvals[0]?.ApprovalRole || "").trim().toUpperCase();
-    notifyCommittedOpex({ organizationID: data.OrganizationID, opexID: OpexID,
-      department: data.Department, roles: firstApprovalRole ? [firstApprovalRole] : [],
-      directUserIds: [], kind: "CREATE", item: data.Item, qty: data.Qty,
-      rate: data.Rate, total, description: data.Description, action: "CREATED" });
+    // // const firstApprovalRole = String(approvals[0]?.ApprovalRole || "").trim().toUpperCase();
+    // const firstApprovalRole = String(
+    //   approvals[0]?.ApprovalRole || ""
+    // )
+    //   .trim()
+    //   .toUpperCase();
+
+    // const createNotificationRoles =
+    //   firstApprovalRole === "HOD" &&
+    //     String(data.Department || "").trim().toUpperCase() === "FINANCE"
+    //     ? ["GM"]
+    //     : firstApprovalRole
+    //       ? [firstApprovalRole]
+    //       : [];
+
+    // // notifyCommittedOpex({
+    // //   organizationID: data.OrganizationID, opexID: OpexID,
+    // //   department: data.Department, roles: firstApprovalRole ? [firstApprovalRole] : [],
+    // //   directUserIds: [], kind: "CREATE", item: data.Item, qty: data.Qty,
+    // //   rate: data.Rate, total, description: data.Description, action: "CREATED"
+    // // });
+    // notifyCommittedOpex({
+    //   organizationID: data.OrganizationID,
+    //   opexID: OpexID,
+    //   department: data.Department,
+    //   roles: createNotificationRoles,
+    //   directUserIds: [],
+    //   kind: "CREATE",
+    //   item: data.Item,
+    //   qty: data.Qty,
+    //   description: data.Description,
+    //   action: "CREATED",
+    // });
+
+    const firstApprovalRole = String(
+      approvals[0]?.ApprovalRole || "",
+    ).trim().toUpperCase();
+
+    const isFinanceOpex =
+      String(data.Department || "").trim().toUpperCase() === "FINANCE";
+
+    const creatorIsFinanceHod =
+      isFinanceOpex &&
+      await isFinanceHodCreator(data.CreatedBy, data.OrganizationID);
+
+    const createNotificationExcludeUserID =
+      creatorIsFinanceHod ? data.CreatedBy : null;
+
+    notifyCommittedOpex({
+      organizationID: data.OrganizationID,
+      opexID: OpexID,
+      department: data.Department,
+      roles: firstApprovalRole ? [firstApprovalRole] : [],
+      directUserIds: [],
+      excludeUserID: createNotificationExcludeUserID,
+      actorUserID: data.CreatedBy,
+      kind: "CREATE",
+      item: data.Item,
+      qty: data.Qty,
+      rate: data.Rate,
+      total,
+      description: data.Description,
+      action: "CREATED",
+    });
 
     return {
       success: true,
@@ -1155,8 +1399,8 @@ const getAllOpex = async (data) => {
     const departmentName = access.departmentScope;
     const requestedDepartment =
       data.Department !== undefined &&
-      data.Department !== null &&
-      String(data.Department).trim() !== ""
+        data.Department !== null &&
+        String(data.Department).trim() !== ""
         ? String(data.Department).trim()
         : null;
     const fromDate = normalizeOptionalOpexDate(data.FromDate);
@@ -1180,8 +1424,8 @@ const getAllOpex = async (data) => {
 
     const approvalStatus =
       data.Status !== undefined &&
-      data.Status !== null &&
-      String(data.Status).trim() !== ""
+        data.Status !== null &&
+        String(data.Status).trim() !== ""
         ? String(data.Status).trim().toUpperCase()
         : null;
 
@@ -1215,16 +1459,50 @@ const getAllOpex = async (data) => {
     // Organization Filter
     // =====================================================
 
-    if (
-      !access.centralizedRdfc &&
+    // if (
+    //   !access.centralizedRdfc &&
+    //   data.OrganizationID !== null &&
+    //   data.OrganizationID !== undefined
+    // ) {
+    //   params.push(data.OrganizationID);
+
+    //   query += `
+    //     AND cm.OrganizationID = $${params.length}
+    //   `;
+    // }
+    if (access.centralizedRdfc) {
+      const selectedOrganizationID =
+        access.selectedOrganizationID;
+
+      if (
+        selectedOrganizationID !== null &&
+        selectedOrganizationID !== CENTRAL_RDFC_ORGANIZATION_ID
+      ) {
+        params.push(selectedOrganizationID);
+
+        query += `
+      AND cm.OrganizationID = $${params.length}
+    `;
+      } else {
+        /*
+         * Organization 10 selection means:
+         * show all organizations mapped to the RD.
+         */
+        params.push(access.rdfcMappedOrganizations);
+
+        query += `
+      AND cm.OrganizationID = ANY($${params.length}::int[])
+    `;
+      }
+    } else if (
       data.OrganizationID !== null &&
       data.OrganizationID !== undefined
     ) {
       params.push(data.OrganizationID);
 
       query += `
-        AND cm.OrganizationID = $${params.length}
-      `;
+    AND cm.OrganizationID = $${params.length}
+  `;
     }
 
     // HOD visibility is restricted to the department stored in the JWT.
@@ -1306,16 +1584,46 @@ const getAllOpex = async (data) => {
     // Organization Count Filter
     // =====================================================
 
-    if (
-      !access.centralizedRdfc &&
+    // if (
+    //   !access.centralizedRdfc &&
+    //   data.OrganizationID !== null &&
+    //   data.OrganizationID !== undefined
+    // ) {
+    //   countParams.push(data.OrganizationID);
+
+    //   countQuery += `
+    //     AND cm.OrganizationID = $${countParams.length}
+    //   `;
+    // }
+    if (access.centralizedRdfc) {
+      const selectedOrganizationID =
+        access.selectedOrganizationID;
+
+      if (
+        selectedOrganizationID !== null &&
+        selectedOrganizationID !== CENTRAL_RDFC_ORGANIZATION_ID
+      ) {
+        countParams.push(selectedOrganizationID);
+
+        countQuery += `
+      AND cm.OrganizationID = $${countParams.length}
+    `;
+      } else {
+        countParams.push(access.rdfcMappedOrganizations);
+
+        countQuery += `
+      AND cm.OrganizationID = ANY($${countParams.length}::int[])
+    `;
+      }
+    } else if (
       data.OrganizationID !== null &&
       data.OrganizationID !== undefined
     ) {
       countParams.push(data.OrganizationID);
 
       countQuery += `
-        AND cm.OrganizationID = $${countParams.length}
-      `;
+    AND cm.OrganizationID = $${countParams.length}
+  `;
     }
 
     if (departmentName) {
@@ -2395,6 +2703,18 @@ CEORemarks,
 
     const currentStatus = currentStage.status;
 
+    // Finance HOD and FC are the same user for Finance department OPEX.
+    // When the current stage is HOD, this Finance HOD must act as HOD first.
+    // FC will be auto-approved in the APPROVE flow below.
+    const isFinanceOpexSameUser = (
+      access.financeHod === true &&
+      String(Opex.department || "").trim().toUpperCase() === "FINANCE"
+    );
+
+    if (isFinanceOpexSameUser && currentStage.role === "HOD") {
+      approverRole = "HOD";
+    }
+
     // Finance HOD is the effective HOD only for its own Finance OPEX while
     // that configured stage is current. Later FC/RD-FC stages remain unchanged.
     if (
@@ -2408,15 +2728,15 @@ CEORemarks,
     // Build one notification from the locked OPEX row and effective configured stage.
     const notifyApprovalCommitted = ({ kind, notificationAction, roles = [],
       includeCreator = false, excludeActor = false, actionDate: committedActionDate }) => notifyCommittedOpex({
-      organizationID: Opex.organizationid, opexID: Opex.opexid,
-      department: Opex.department, roles,
-      directUserIds: includeCreator ? [Opex.createdby] : [],
-      excludeUserID: excludeActor ? data.UserID : null, actorUserID: data.UserID,
-      kind, item: Opex.item, qty: Opex.qty, rate: Opex.rate, total: Opex.total,
-      description: Opex.description, actionQuantity: approvedQuantity, remark: remarks,
-      actionDate: committedActionDate,
-      approverRole, action: notificationAction,
-    });
+        organizationID: Opex.organizationid, opexID: Opex.opexid,
+        department: Opex.department, roles,
+        directUserIds: includeCreator ? [Opex.createdby] : [],
+        excludeUserID: excludeActor ? data.UserID : null, actorUserID: data.UserID,
+        kind, item: Opex.item, qty: Opex.qty, rate: Opex.rate, total: Opex.total,
+        description: Opex.description, actionQuantity: approvedQuantity, remark: remarks,
+        actionDate: committedActionDate,
+        approverRole, action: notificationAction,
+      });
 
     // ============================================================
     // 15. FIND USER'S STAGE
@@ -2558,8 +2878,8 @@ CEORemarks,
         userId,
         roleRemarks || null,
         approvedQuantity !== undefined &&
-        approvedQuantity !== null &&
-        approvedQuantity !== ""
+          approvedQuantity !== null &&
+          approvedQuantity !== ""
           ? Number(approvedQuantity)
           : null,
         approval.opexapprovalid,
@@ -2691,13 +3011,50 @@ CEORemarks,
       // Find next stage
       // ----------------------------------------------------------
 
+      // const followingStage = stages[currentIndex + 1];
+      // ----------------------------------------------------------
+      // Find next stage
+      // ----------------------------------------------------------
+
       const followingStage = stages[currentIndex + 1];
+
+      // ----------------------------------------------------------
+      // FINANCE HOD + FC SAME USER
+      //
+      // For Finance OPEX:
+      // HOD approval automatically approves FC.
+      // The workflow then moves directly to GM.
+      // No separate FC approval/notification.
+      // ----------------------------------------------------------
+
+      const autoApproveFinanceFC =
+        isFinanceOpexSameUser &&
+        approverRole === "HOD" &&
+        followingStage?.role === "FC";
+
+      if (autoApproveFinanceFC) {
+        await updateRoleApproval(
+          "FC",
+          "Approved",
+          data.UserID,
+          null,
+          approvedQuantity,
+        );
+      }
+
+      // If FC was auto-approved, skip FC and move to the next stage.
+      // Normally this will be GM.
+      const nextStage = autoApproveFinanceFC
+        ? stages[currentIndex + 2]
+        : followingStage;
+
+
 
       // ----------------------------------------------------------
       // NEXT APPROVAL EXISTS
       // ----------------------------------------------------------
 
-      if (followingStage) {
+      if (nextStage) {
         await client.query(
           `
           UPDATE Opex_Approval
@@ -2716,9 +3073,11 @@ CEORemarks,
 
         transactionStarted = false;
 
-        notifyApprovalCommitted({ kind: "APPROVE", notificationAction: "APPROVED",
-          roles: [followingStage.role], includeCreator: true, excludeActor: true,
-          actionDate: committedActionDate });
+        notifyApprovalCommitted({
+          kind: "APPROVE", notificationAction: "APPROVED",
+          roles: [nextStage.role], excludeActor: true,
+          actionDate: committedActionDate
+        });
 
         return {
           success: true,
@@ -2732,7 +3091,7 @@ CEORemarks,
 
           //   CurrentStatus: "Pending",
 
-          //   CurrentApprovalRole: followingStage.role,
+          //   CurrentApprovalRole: nextStage.role,
 
           //   Action: "APPROVE",
           // },
@@ -2761,8 +3120,10 @@ CEORemarks,
 
       transactionStarted = false;
 
-      notifyApprovalCommitted({ kind: "APPROVE", notificationAction: "APPROVED",
-        includeCreator: true, excludeActor: true, actionDate: committedActionDate });
+      notifyApprovalCommitted({
+        kind: "APPROVE", notificationAction: "APPROVED",
+        excludeActor: true, actionDate: committedActionDate
+      });
 
       return {
         success: true,
@@ -2831,9 +3192,11 @@ CEORemarks,
 
       transactionStarted = false;
 
-      notifyApprovalCommitted({ kind: "REJECT", notificationAction: "REJECTED",
-        roles: [approverRole], includeCreator: true, excludeActor: true,
-        actionDate: committedActionDate });
+      notifyApprovalCommitted({
+        kind: "REJECT", notificationAction: "REJECTED",
+        roles: [approverRole], excludeActor: true,
+        actionDate: committedActionDate
+      });
 
       return {
         success: true,
@@ -2899,9 +3262,11 @@ CEORemarks,
 
       transactionStarted = false;
 
-      notifyApprovalCommitted({ kind: "RETURN", notificationAction: "RETURNED",
-        roles: [approverRole], includeCreator: true, excludeActor: true,
-        actionDate: committedActionDate });
+      notifyApprovalCommitted({
+        kind: "RETURN", notificationAction: "RETURNED",
+        roles: [approverRole], excludeActor: true,
+        actionDate: committedActionDate
+      });
 
       return {
         success: true,
@@ -2963,9 +3328,11 @@ CEORemarks,
       await client.query("COMMIT");
       transactionStarted = false;
 
-      notifyApprovalCommitted({ kind: "HOLD", notificationAction: "HOLD",
-        roles: [currentRole], includeCreator: true, excludeActor: true,
-        actionDate: committedActionDate });
+      notifyApprovalCommitted({
+        kind: "HOLD", notificationAction: "HOLD",
+        roles: [currentRole], excludeActor: true,
+        actionDate: committedActionDate
+      });
 
       return {
         success: true,
@@ -3103,8 +3470,8 @@ const departmentReportParameters = (data) => {
   const filters = data.Filters || data || {};
   const department =
     filters.Department !== undefined &&
-    filters.Department !== null &&
-    String(filters.Department).trim() !== ""
+      filters.Department !== null &&
+      String(filters.Department).trim() !== ""
       ? String(filters.Department).trim()
       : null;
 
@@ -4108,7 +4475,7 @@ const deleteApprovalConfig = async (data) => {
     if (client) client.release();
   }
 };
- // ============================================================Opex List PDF
+// ============================================================Opex List PDF
 const generateLegacyOpexDetailPdf = async (Opex) => {
   const fonts = {
     Roboto: {
@@ -4581,8 +4948,8 @@ const generateOpexListPdf = async (data) => {
 
     const formatFilterDate = (value) =>
       value !== null &&
-      value !== undefined &&
-      String(value).trim() !== ""
+        value !== undefined &&
+        String(value).trim() !== ""
         ? formatDate(value)
         : "All";
 
@@ -4601,11 +4968,10 @@ const generateOpexListPdf = async (data) => {
 
       const details = [approval.Status || "Pending"];
       details.push(
-        `Qty - ${
-          approval.ApprovedQuantity === null ||
+        `Qty - ${approval.ApprovedQuantity === null ||
           approval.ApprovedQuantity === undefined
-            ? "-"
-            : approval.ApprovedQuantity
+          ? "-"
+          : approval.ApprovedQuantity
         }`,
       );
       if (approval.Remarks) details.push(approval.Remarks);
@@ -4844,18 +5210,18 @@ const getOpexDepartmentReportPdf = async (data) => {
           width: 100,
           align: "center",
         },
-       
-        
+
+
         {
           header: "Approved",
           key: "approvedcount",
-           width: 100,
+          width: 100,
           align: "center",
         },
         {
           header: "Pending",
           key: "pendingcount",
-           width: 100,
+          width: 100,
           align: "center",
         },
         {
@@ -4864,14 +5230,14 @@ const getOpexDepartmentReportPdf = async (data) => {
           width: 100,
           align: "center",
         },
-       
+
         {
           header: "Returned",
           key: "returnedcount",
           width: 100,
           align: "center",
         },
-         {
+        {
           header: "Hold",
           key: "holdcount",
           width: 100,
@@ -4993,24 +5359,24 @@ const getOpexOrganizationReportPdf = async (data) => {
           label: "To Date",
           value: data.ToDate ? formatDate(data.ToDate) : "All",
         },
-       
+
       ],
 
       columns: [
-       
+
         {
           header: "Organization",
           key: "shortname",
-           width: 100,
+          width: 100,
           align: "center",
         },
         {
           header: "Total Count",
           key: "count",
-         width: 100,
+          width: 100,
           align: "center",
         },
-        
+
         {
           header: "Approved",
           key: "approvedcount",
@@ -5029,14 +5395,14 @@ const getOpexOrganizationReportPdf = async (data) => {
           width: 100,
           align: "center",
         },
-       
+
         {
           header: "Returned",
           key: "returnedcount",
           width: 100,
           align: "center",
         },
-         {
+        {
           header: "Hold",
           key: "holdcount",
           width: 100,
@@ -5829,16 +6195,16 @@ const generateOpexByIdPdf = async (data) => {
       ).map(
         (shape) => {
           const scaledShape =
-            {
-              ...shape,
+          {
+            ...shape,
 
-              lineWidth:
-                (
-                  shape.lineWidth ||
-                  1
-                ) *
-                iconScale,
-            };
+            lineWidth:
+              (
+                shape.lineWidth ||
+                1
+              ) *
+              iconScale,
+          };
 
           for (
             const coordinate of [
@@ -5862,7 +6228,7 @@ const generateOpexByIdPdf = async (data) => {
           ) {
             if (
               typeof scaledShape[
-                coordinate
+              coordinate
               ] ===
               "number"
             ) {
@@ -6047,9 +6413,9 @@ const generateOpexByIdPdf = async (data) => {
       (approval) => {
         if (
           approval.ApprovalRole ===
-            undefined ||
+          undefined ||
           approval.ApprovalRole ===
-            null ||
+          null ||
           String(
             approval.ApprovalRole,
           ).trim() === ""
@@ -6065,14 +6431,14 @@ const generateOpexByIdPdf = async (data) => {
         const approvedQuantity =
           approval.ApprovedQuantity !==
             null &&
-          approval.ApprovedQuantity !==
+            approval.ApprovedQuantity !==
             undefined &&
-          String(
-            approval.ApprovedQuantity,
-          ).trim() !== ""
+            String(
+              approval.ApprovedQuantity,
+            ).trim() !== ""
             ? formatOpexAmount(
-                approval.ApprovedQuantity,
-              )
+              approval.ApprovedQuantity,
+            )
             : "-";
 
         approvalRows.push([
@@ -6225,31 +6591,31 @@ const generateOpexByIdPdf = async (data) => {
               [
                 logo
                   ? {
-                      image:
-                        logo,
+                    image:
+                      logo,
 
-                      fit: [
-                        102,
-                        58,
-                      ],
+                    fit: [
+                      102,
+                      58,
+                    ],
 
-                      border: [
-                        false,
-                        false,
-                        false,
-                        false,
-                      ],
-                    }
+                    border: [
+                      false,
+                      false,
+                      false,
+                      false,
+                    ],
+                  }
                   : {
-                      text: "",
+                    text: "",
 
-                      border: [
-                        false,
-                        false,
-                        false,
-                        false,
-                      ],
-                    },
+                    border: [
+                      false,
+                      false,
+                      false,
+                      false,
+                    ],
+                  },
 
                 {
                   text:
@@ -6345,7 +6711,7 @@ const generateOpexByIdPdf = async (data) => {
 
                 valueCell(
                   opex.OrganizationShortName ||
-                    opex.OrganizationID,
+                  opex.OrganizationID,
                 ),
 
                 labelCell(
@@ -6666,7 +7032,7 @@ const generateOpexByIdPdf = async (data) => {
                 rowIndex,
               ) =>
                 rowIndex ===
-                0
+                  0
                   ? COLORS.tableHeaderBackground
                   : COLORS.white,
 
