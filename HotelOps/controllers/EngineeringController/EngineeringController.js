@@ -2622,3 +2622,71 @@ exports.getEngineeringBreakdownChart = async (
     );
   }
 };
+// ============================================================Upcoming Maintenance (7 days)
+exports.getEngineeringUpcomingMaintenance = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getEngineeringUpcomingMaintenance({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    return res
+      .status(
+        result.statusCode ||
+        (result.success ? 200 : 400),
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================ Recently Expired(In Last 30 Days)
+exports.getEngineeringRecentlyExpired = async (req, res) => {
+  try {
+    const result =
+      await EngineeringService.getEngineeringRecentlyExpired({
+        OrganizationID:
+          req.query.OrganizationID,
+
+        UserID:
+          req.user?.UserID,
+
+        UserType:
+          req.user?.UserType,
+
+        DepartmentName:
+          req.user?.DepartmentName,
+
+        LoginType:
+          req.user?.LoginType,
+      });
+
+    return res
+      .status(
+        result.statusCode ||
+        (result.success ? 200 : 400),
+      )
+      .json(result);
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};

@@ -19248,7 +19248,527 @@ const getEngineeringBreakdownChart = async (data) => {
     );
   }
 };
-// Run the date-based warranty checks in batches. Engineering owns event and
+// ============================================================Upcoming Maintenance (7 days)
+const getEngineeringUpcomingMaintenance = async (data) => {
+  try {
+    const OrganizationID = Number(data.OrganizationID);
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Equipment Schedule
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        e.EquipmentID,
+        e.Description,
+        e.ScheduleOfServicing,
+        e.ScheduleDay
+
+      FROM Engineering_Equipment_Entry_Master e
+
+      WHERE e.OrganizationID = $1
+        AND e.IsDeleted = FALSE
+
+        AND e.ScheduleOfServicing IS NOT NULL
+        AND TRIM(e.ScheduleOfServicing) <> ''
+
+        AND e.ScheduleDay IS NOT NULL
+        AND TRIM(e.ScheduleDay) <> ''
+
+      ORDER BY e.EquipmentID ASC;
+      `,
+      [OrganizationID],
+    );
+
+    // ============================================================
+    // Date Helpers
+    // ============================================================
+
+    const today = new Date();
+
+    today.setHours(
+      0,
+      0,
+      0,
+      0,
+    );
+
+    const endDate = new Date(today);
+
+    endDate.setDate(
+      endDate.getDate() + 7,
+    );
+
+    // ============================================================
+    // Schedule Day Helper
+    // Supports: 15 / Day-15 / Day 15
+    // ============================================================
+
+    const getScheduleDay = (value) => {
+      const match =
+        String(value || "").match(/\d+/);
+
+      if (!match) {
+        return null;
+      }
+
+      const day = Number(match[0]);
+
+      if (
+        !Number.isSafeInteger(day) ||
+        day <= 0
+      ) {
+        return null;
+      }
+
+      return day;
+    };
+
+    // ============================================================
+    // Check Schedule Month
+    // month = 1 to 12
+    // ============================================================
+
+    const isScheduledMonth = (
+      schedule,
+      month,
+    ) => {
+      const value =
+        String(schedule || "")
+          .trim()
+          .toLowerCase();
+
+      if (value === "monthly") {
+        return true;
+      }
+
+      if (
+        value === "bi-monthly" ||
+        value === "bimonthly" ||
+        value === "bi monthly"
+      ) {
+        return [
+          1,
+          3,
+          5,
+          7,
+          9,
+          11,
+        ].includes(month);
+      }
+
+      if (value === "quarterly") {
+        return [
+          1,
+          4,
+          7,
+          10,
+        ].includes(month);
+      }
+
+      if (
+        value === "six monthly" ||
+        value === "six-monthly" ||
+        value === "half yearly" ||
+        value === "half-yearly"
+      ) {
+        return [
+          1,
+          7,
+        ].includes(month);
+      }
+
+      if (
+        value === "yearly" ||
+        value === "annual" ||
+        value === "annually"
+      ) {
+        return month === 1;
+      }
+
+      return false;
+    };
+
+    // ============================================================
+    // Build Upcoming Maintenance
+    // ============================================================
+
+    const upcoming = [];
+
+    for (const equipment of result.rows) {
+      const EquipmentID =
+        Number(equipment.equipmentid);
+
+      const schedule =
+        equipment.scheduleofservicing;
+
+      const scheduleDay =
+        getScheduleDay(
+          equipment.scheduleday,
+        );
+
+      if (!scheduleDay) {
+        continue;
+      }
+
+      // ==========================================================
+      // Check dates from today to next 7 days
+      // ==========================================================
+
+      for (
+        let checkDate = new Date(today);
+        checkDate <= endDate;
+        checkDate.setDate(
+          checkDate.getDate() + 1,
+        )
+      ) {
+        const year =
+          checkDate.getFullYear();
+
+        const month =
+          checkDate.getMonth() + 1;
+
+        if (
+          !isScheduledMonth(
+            schedule,
+            month,
+          )
+        ) {
+          continue;
+        }
+
+        // ========================================================
+        // Clamp ScheduleDay
+        // Example: Day 31 in February
+        // ========================================================
+
+        const lastDay =
+          new Date(
+            year,
+            month,
+            0,
+          ).getDate();
+
+        const actualDay =
+          Math.min(
+            scheduleDay,
+            lastDay,
+          );
+
+        if (
+          checkDate.getDate() !==
+          actualDay
+        ) {
+          continue;
+        }
+
+        // ========================================================
+        // Scheduled Date
+        // ========================================================
+
+        const scheduledDate =
+          new Date(
+            year,
+            month - 1,
+            actualDay,
+          );
+
+        const scheduledDateString =
+          [
+            scheduledDate.getFullYear(),
+
+            String(
+              scheduledDate.getMonth() + 1,
+            ).padStart(2, "0"),
+
+            String(
+              scheduledDate.getDate(),
+            ).padStart(2, "0"),
+          ].join("-");
+
+        // ========================================================
+        // Check Already Completed Maintenance
+        // Same Equipment + Same Month
+        // ========================================================
+
+        const completedResult =
+          await pool.query(
+            `
+            SELECT
+              1
+
+            FROM Engineering_Maintenance_Details m
+
+            WHERE m.OrganizationID = $1
+              AND m.EquipmentID = $2
+              AND m.IsDeleted = FALSE
+
+              AND LOWER(
+                TRIM(
+                  COALESCE(m.Status, '')
+                )
+              ) = 'completed'
+
+              AND EXTRACT(
+                YEAR FROM m.MaintenanceDate
+              ) = $3
+
+              AND EXTRACT(
+                MONTH FROM m.MaintenanceDate
+              ) = $4
+
+            LIMIT 1;
+            `,
+            [
+              OrganizationID,
+              EquipmentID,
+              year,
+              month,
+            ],
+          );
+
+        if (
+          completedResult.rows.length > 0
+        ) {
+          continue;
+        }
+
+        upcoming.push({
+          EquipmentID,
+
+          Equipment:
+            equipment.description,
+
+          Type:
+            schedule,
+
+          ScheduledDate:
+            scheduledDateString,
+        });
+      }
+    }
+
+    // ============================================================
+    // Sort Nearest First
+    // ============================================================
+
+    upcoming.sort(
+      (a, b) =>
+        String(a.ScheduledDate).localeCompare(
+          String(b.ScheduledDate),
+        ),
+    );
+
+    // ============================================================
+    // Dashboard - Top 5
+    // ============================================================
+
+    const dashboardRows =
+      upcoming.slice(0, 5);
+
+    return ok(
+      "Upcoming maintenance fetched successfully.",
+      {
+        Count:
+          dashboardRows.length,
+
+        data:
+          dashboardRows,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Engineering Upcoming Maintenance Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to fetch upcoming maintenance.",
+    );
+  }
+};
+// ============================================================ Recently Expired(In Last 30 Days)
+const getEngineeringRecentlyExpired = async (data) => {
+  try {
+    const OrganizationID =
+      Number(data.OrganizationID);
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !Number.isSafeInteger(OrganizationID) ||
+      OrganizationID <= 0
+    ) {
+      return fail(
+        "Valid OrganizationID is required.",
+        400,
+      );
+    }
+
+    // ============================================================
+    // Recently Expired
+    // ============================================================
+
+    const result = await pool.query(
+      `
+      SELECT
+        x."EquipmentID",
+        x."Equipment",
+        x."Type",
+        x."ExpiredDate"
+
+      FROM
+      (
+        -- ========================================================
+        -- Warranty
+        -- ========================================================
+
+        SELECT
+          e.EquipmentID AS "EquipmentID",
+          e.Description AS "Equipment",
+          'Warranty' AS "Type",
+          e.WarrantyEndDate AS "ExpiredDate"
+
+        FROM Engineering_Equipment_Entry_Master e
+
+        WHERE e.OrganizationID = $1
+          AND e.IsDeleted = FALSE
+
+          AND LOWER(
+            TRIM(
+              COALESCE(e.WarrantyStatus, '')
+            )
+          ) = 'expired'
+
+          AND e.WarrantyEndDate IS NOT NULL
+
+          AND e.WarrantyEndDate
+              BETWEEN
+                CURRENT_DATE - INTERVAL '30 days'
+                AND CURRENT_DATE
+
+
+        UNION ALL
+
+
+        -- ========================================================
+        -- AMC
+        -- ========================================================
+
+        SELECT
+          e.EquipmentID AS "EquipmentID",
+          e.Description AS "Equipment",
+          'AMC' AS "Type",
+          e.AMCEndDate AS "ExpiredDate"
+
+        FROM Engineering_Equipment_Entry_Master e
+
+        WHERE e.OrganizationID = $1
+          AND e.IsDeleted = FALSE
+
+          AND LOWER(
+            TRIM(
+              COALESCE(e.AMCStatus, '')
+            )
+          ) = 'expired'
+
+          AND e.AMCEndDate IS NOT NULL
+
+          AND e.AMCEndDate
+              BETWEEN
+                CURRENT_DATE - INTERVAL '30 days'
+                AND CURRENT_DATE
+      ) x
+
+      ORDER BY
+        x."ExpiredDate" DESC,
+        x."EquipmentID" DESC
+
+      LIMIT 5;
+      `,
+      [
+        OrganizationID,
+      ],
+    );
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    const rows =
+      result.rows.map((row) => ({
+        EquipmentID:
+          Number(row.EquipmentID),
+
+        Equipment:
+          row.Equipment,
+
+        Type:
+          row.Type,
+
+        ExpiredDate:
+          formatDate(
+            row.ExpiredDate,
+          ),
+      }));
+
+    return ok(
+      "Recently expired equipment fetched successfully.",
+      {
+        Count:
+          rows.length,
+
+        data:
+          rows,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Engineering Recently Expired Error:",
+      error.message,
+    );
+
+    const retryResponse =
+      retryableDatabaseResponse(error);
+
+    if (retryResponse) {
+      return retryResponse;
+    }
+
+    return databaseFailure(
+      "Unable to fetch recently expired equipment.",
+    );
+  }
+};
+
+
+
+
+// ========================================Run the date-based warranty checks in batches. Engineering owns event and
 // recipient rules; NotificationService only persists and delivers the command.
 // const processEquipmentWarrantyNotifications = async ({ businessDate, queryable = pool,
 //   publishNotification } = {}) => {
@@ -19833,10 +20353,11 @@ module.exports = {
   getEngineeringMaintenanceChart,
   getEngineeringMaintenanceDistribution,
   getEngineeringBreakdownChart,
-
   generateBreakdownDetailPdf,
   generateAMCDetailPdf,
   processWarrantyStatusUpdates,
   processEquipmentWarrantyNotifications,
   generateAllEquipmentQRCodes,
+  getEngineeringUpcomingMaintenance,
+getEngineeringRecentlyExpired,
 };
