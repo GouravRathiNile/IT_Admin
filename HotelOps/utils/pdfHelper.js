@@ -165,11 +165,14 @@ const baseTableLayout = {
 
 const dataTable = ({ columns, rows = [], layout, table = {}, headerStyle = "pdfTableHeader", cellStyle = "pdfTableCell" }) => {
   const body = [columns.map((column) => ({ text: column.header, style: headerStyle, alignment: column.align || "left" }))];
-  body.push(...rows.map((row) => columns.map((column) => ({
-    text: display(typeof column.value === "function" ? column.value(row) : row[column.key]),
-    style: column.style || cellStyle, alignment: column.align || "left", noWrap: column.noWrap,
-    ...(column.bold ? { bold: true } : {}),
-  }))));
+  body.push(...rows.map((row) => columns.map((column) => {
+    const rawValue = typeof column.value === "function" ? column.value(row) : row[column.key];
+    return {
+      text: column.richText ? rawValue : display(rawValue),
+      style: column.style || cellStyle, alignment: column.align || "left", noWrap: column.noWrap,
+      ...(column.bold ? { bold: true } : {}),
+    };
+  })));
   if (body.length === 1) body.push([{ text: "No data found.", colSpan: columns.length, alignment: "center" }, ...Array(Math.max(0, columns.length - 1)).fill({})]);
   return { table: { headerRows: 1, dontBreakRows: true, widths: columns.map((column) => column.width || "*"), body, ...table }, layout: { ...baseTableLayout, ...layout } };
 };

@@ -16841,7 +16841,7 @@ const generateAMCDetailPdf = async (data) => {
             0,
             7,
             0,
-            14,
+            10,
           ],
         },
 
@@ -16850,7 +16850,7 @@ const generateAMCDetailPdf = async (data) => {
         // =====================================================
 
         sectionHeading(
-          "Equipment Details",
+          // "Equipment Details",
         ),
 
         {
@@ -17033,7 +17033,7 @@ const generateAMCDetailPdf = async (data) => {
             0,
             0,
             0,
-            15,
+            10,
           ],
         },
 
@@ -17042,7 +17042,7 @@ const generateAMCDetailPdf = async (data) => {
         // =====================================================
 
         sectionHeading(
-          "AMC Details",
+          // "AMC Details",
         ),
 
         {
@@ -17124,7 +17124,7 @@ const generateAMCDetailPdf = async (data) => {
             0,
             0,
             0,
-            15,
+            10,
           ],
         },
 
@@ -17133,7 +17133,7 @@ const generateAMCDetailPdf = async (data) => {
         // =====================================================
 
         sectionHeading(
-          "Vendor Details",
+          // "Vendor Details",
         ),
 
         {
@@ -17266,7 +17266,7 @@ const generateAMCDetailPdf = async (data) => {
             0,
             0,
             0,
-            15,
+            10,
           ],
         },
 
@@ -17275,7 +17275,7 @@ const generateAMCDetailPdf = async (data) => {
         // =====================================================
 
         sectionHeading(
-          "Approval Details",
+          // "Approval Details",
         ),
 
         {

@@ -5657,6 +5657,13 @@ const generateCreditApplicationListPdf = async (data) => {
 // PDF Columns
 // ============================================================
 
+const labeledLines = (items) =>
+  items.flatMap((item, index) => [
+    { text: item.label, bold: true },
+    { text: ` ${item.value ?? "-"}` },
+    ...(index < items.length - 1 ? [{ text: "\n" }] : []),
+  ]);
+
 const columns = [
   {
     header: "DATE",
@@ -5672,14 +5679,14 @@ const columns = [
   {
     header: "COMPANY / GST / MSME",
 
-    value: (row) =>
-      [
-        `Company: ${row.CompanyName || "-"}`,
-        `GST No.: ${row.CompanyGSTIN || "-"}`,
-        `MSME: ${row.MSME || "-"}`,
-      ].join("\n"),
+    value: (row) => labeledLines([
+      { label: "Company:", value: row.CompanyName || "-" },
+      { label: "GST No.:", value: row.CompanyGSTIN || "-" },
+      { label: "MSME:", value: row.MSME || "-" },
+    ]),
 
     width: 105,
+    richText: true,
   },
 
   // ============================================================
@@ -5689,13 +5696,13 @@ const columns = [
   {
     header: "BUSINESS / BILLING ADDRESS",
 
-    value: (row) =>
-      [
-        `Business: ${row.BusinessAddress || "-"}`,
-        `Billing: ${row.BillingAddress || "-"}`,
-      ].join("\n"),
+    value: (row) => labeledLines([
+      { label: "Business:", value: row.BusinessAddress || "-" },
+      { label: "Billing:", value: row.BillingAddress || "-" },
+    ]),
 
-    width: 120,
+    width: 105,
+    richText: true,
   },
 
   // ============================================================
@@ -5712,7 +5719,7 @@ const columns = [
         row.AuthorisedPersonEmail || "-",
       ].join("\n"),
 
-    width: 100,
+    width: 90,
   },
 
   // ============================================================
@@ -5735,43 +5742,43 @@ const columns = [
   {
   header: "RECOMMENDED BY / POSITION",
 
-  value: (row) =>
-    [
-      `Recommended By: ${row.RecommendedBy || "-"}`,
-      `Position: ${row.Position || "-"}`,
-    ].join("\n"),
+  value: (row) => labeledLines([
+    { label: "Recommended By:", value: row.RecommendedBy || "-" },
+    { label: "Position:", value: row.Position || "-" },
+  ]),
 
-  width: 80,
+  width: 70,
+  richText: true,
 },
 
 {
   header: "REFERENCE CHECKED BY / DATE",
 
-  value: (row) =>
-    [
-      `Checked By: ${row.CreditReferenceCheckedBy || "-"}`,
-      `Date: ${row.CreditReferenceCheckedDate || "-"}`,
-    ].join("\n"),
+  value: (row) => labeledLines([
+    { label: "Checked By:", value: row.CreditReferenceCheckedBy || "-" },
+    { label: "Date:", value: row.CreditReferenceCheckedDate || "-" },
+  ]),
 
-  width: 85,
+  width: 80,
+  richText: true,
 },
 {
   header: "AMOUNT / FY / FINANCIAL YEAR",
 
-  value: (row) =>
-    [
-      `Amount: ${Number(
-        row.CreditAmountAllowed || 0,
-      ).toLocaleString("en-IN")}`,
+  value: (row) => labeledLines([
+    {
+      label: "Amount:",
+      value: Number(row.CreditAmountAllowed || 0).toLocaleString("en-IN"),
+    },
+    {
+      label: "FY:",
+      value: Number(row.ExpectedBusinessFY || 0).toLocaleString("en-IN"),
+    },
+    { label: "Financial Year:", value: row.FinancialYear || "-" },
+  ]),
 
-      `FY: ${Number(
-        row.ExpectedBusinessFY || 0,
-      ).toLocaleString("en-IN")}`,
-
-      `Financial Year: ${row.FinancialYear || "-"}`,
-    ].join("\n"),
-
-  width: 80,
+  width: 70,
+  richText: true,
 },
   {
     header: "ARID",
@@ -5779,7 +5786,7 @@ const columns = [
     value: (row) =>
       row.ARID || "-",
 
-    width: 45,
+    width: 40,
   },
 
   // ============================================================
@@ -5789,20 +5796,19 @@ const columns = [
   {
     header: "FC / GM STATUS",
 
-    value: (row) =>
-      [
-        `FC: ${approvalStatus(
-          row,
-          ["FC", "FINANCE"],
-        )}`,
+    value: (row) => labeledLines([
+      {
+        label: "FC:",
+        value: approvalStatus(row, ["FC", "FINANCE"]),
+      },
+      {
+        label: "GM:",
+        value: approvalStatus(row, ["GM"]),
+      },
+    ]),
 
-        `GM: ${approvalStatus(
-          row,
-          ["GM"],
-        )}`,
-      ].join("\n"),
-
-    width: 70,
+    width: 50,
+    richText: true,
   },
 ];
 
