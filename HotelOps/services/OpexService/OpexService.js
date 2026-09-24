@@ -3194,7 +3194,7 @@ CEORemarks,
 
       notifyApprovalCommitted({
         kind: "REJECT", notificationAction: "REJECTED",
-        roles: [approverRole], excludeActor: true,
+        roles: [approverRole], includeCreator: true, excludeActor: true,
         actionDate: committedActionDate
       });
 
@@ -3264,7 +3264,7 @@ CEORemarks,
 
       notifyApprovalCommitted({
         kind: "RETURN", notificationAction: "RETURNED",
-        roles: [approverRole], excludeActor: true,
+        roles: [approverRole], includeCreator: true, excludeActor: true,
         actionDate: committedActionDate
       });
 
@@ -3330,7 +3330,7 @@ CEORemarks,
 
       notifyApprovalCommitted({
         kind: "HOLD", notificationAction: "HOLD",
-        roles: [currentRole], excludeActor: true,
+        roles: [currentRole], includeCreator: true, excludeActor: true,
         actionDate: committedActionDate
       });
 
