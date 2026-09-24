@@ -548,6 +548,7 @@ exports.getCreditApplicationList = async (req, res) => {
       OrganizationID,
       CompanyName,
       Status,
+      ApprovalFlow,
       FromDate,
       ToDate,
       page = 1,
@@ -571,6 +572,22 @@ exports.getCreditApplicationList = async (req, res) => {
       );
     }
 
+    const normalizedApprovalFlow = ApprovalFlow
+      ? String(ApprovalFlow).trim().toUpperCase()
+      : null;
+
+    const approvalFlow =
+      normalizedApprovalFlow === "FINANCE"
+        ? "FC"
+        : normalizedApprovalFlow;
+
+    if (approvalFlow && !["FC", "GM"].includes(approvalFlow)) {
+      throw new AppError(
+        "ApprovalFlow must be FC or GM",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
     validateDateFormat(FromDate, "From Date");
     validateDateFormat(ToDate, "To Date");
 
@@ -590,6 +607,9 @@ exports.getCreditApplicationList = async (req, res) => {
 
         Status:
           Status?.trim() || null,
+
+        ApprovalFlow:
+          approvalFlow,
 
         FromDate:
           FromDate?.trim() || null,
@@ -1555,6 +1575,9 @@ exports.generateCreditApplicationListPdf = async (
 
           Status:
             req.query.Status,
+
+          ApprovalFlow:
+            req.query.ApprovalFlow,
 
           FromDate:
             req.query.FromDate,

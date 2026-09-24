@@ -1226,6 +1226,20 @@ const getCreditApplicationList = async (data) => {
       );
     }
 
+    const normalizedApprovalFlow =
+      data.ApprovalFlow !== undefined &&
+      data.ApprovalFlow !== null &&
+      String(data.ApprovalFlow).trim() !== ""
+        ? normalizeCreditApplicationApprovalRole(data.ApprovalFlow)
+        : null;
+
+    if (
+      normalizedApprovalFlow &&
+      !CREDIT_APPLICATION_APPROVAL_ROLES.has(normalizedApprovalFlow)
+    ) {
+      return fail("ApprovalFlow must be FC or GM.", 400);
+    }
+
 
     // ============================================================
     // Application Date Range
@@ -1762,6 +1776,34 @@ const getCreditApplicationList = async (data) => {
           )
         `;
       }
+    }
+
+
+    // ============================================================
+    // Approval Flow Filter
+    // Existing user visibility ke result ko sirf narrow karta hai.
+    // GM approval ke baad ARID-null state displayed FC pending stage hai.
+    // ============================================================
+
+    if (normalizedApprovalFlow) {
+      params.push(normalizedApprovalFlow);
+      const approvalFlowIndex = params.length;
+
+      whereClause += `
+        AND
+        (
+          UPPER(TRIM(COALESCE(current_stage.ApprovalRole, ''))) =
+            $${approvalFlowIndex}
+
+          OR
+          (
+            $${approvalFlowIndex} = 'FC'
+            AND UPPER(TRIM(COALESCE(approval.FinanceStatus, ''))) = 'APPROVED'
+            AND UPPER(TRIM(COALESCE(approval.GMStatus, ''))) = 'APPROVED'
+            AND NULLIF(TRIM(COALESCE(ca.ARID, '')), '') IS NULL
+          )
+        )
+      `;
     }
 
 
@@ -5836,6 +5878,14 @@ const columns = [
         value:
           data.Status ||
           "All",
+      },
+
+      {
+        label: "Approval Flow",
+        value:
+          data.ApprovalFlow
+            ? normalizeCreditApplicationApprovalRole(data.ApprovalFlow)
+            : "All",
       },
 
       {

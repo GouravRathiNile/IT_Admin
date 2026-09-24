@@ -18166,6 +18166,11 @@ const getEngineeringDashboardSummary = async (data) => {
 
     // ============================================================
     // Dashboard Summary
+    //
+    // Date Filter ONLY:
+    // 1. Total Maintenance
+    // 2. Pending Maintenance
+    // 3. Breakdown
     // ============================================================
 
     const result = await pool.query(
@@ -18187,7 +18192,128 @@ const getEngineeringDashboardSummary = async (data) => {
 
 
         -- ========================================================
-        -- Warranty - Active
+        -- Needs Attention
+        --
+        -- WarrantyStatus = Expired
+        -- OR AMCStatus = Expired AMC
+        -- OR ScheduleOfServicing Missing
+        -- OR ScheduleDay Missing
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND
+            (
+              LOWER(
+                TRIM(
+                  COALESCE(e.WarrantyStatus, '')
+                )
+              ) = 'expired'
+
+              OR
+
+              LOWER(
+                TRIM(
+                  COALESCE(e.AMCStatus, '')
+                )
+              ) = 'expired amc'
+
+              OR
+
+              e.ScheduleOfServicing IS NULL
+
+              OR
+
+              TRIM(e.ScheduleOfServicing) = ''
+
+              OR
+
+              e.ScheduleDay IS NULL
+
+              OR
+
+              TRIM(e.ScheduleDay) = ''
+            )
+        ) AS "NeedsAttention",
+
+
+        -- ========================================================
+        -- In Good Condition
+        --
+        -- WarrantyStatus = Under Warranty
+        -- OR AMCStatus = Under AMC
+        --
+        -- But equipment must NOT be in Needs Attention
+        -- ========================================================
+
+        (
+          SELECT COUNT(*)::bigint
+
+          FROM Engineering_Equipment_Entry_Master e
+
+          WHERE e.OrganizationID = $1
+            AND e.IsDeleted = FALSE
+
+            AND
+            (
+              LOWER(
+                TRIM(
+                  COALESCE(e.WarrantyStatus, '')
+                )
+              ) = 'under warranty'
+
+              OR
+
+              LOWER(
+                TRIM(
+                  COALESCE(e.AMCStatus, '')
+                )
+              ) = 'under amc'
+            )
+
+            AND NOT
+            (
+              LOWER(
+                TRIM(
+                  COALESCE(e.WarrantyStatus, '')
+                )
+              ) = 'expired'
+
+              OR
+
+              LOWER(
+                TRIM(
+                  COALESCE(e.AMCStatus, '')
+                )
+              ) = 'expired amc'
+
+              OR
+
+              e.ScheduleOfServicing IS NULL
+
+              OR
+
+              TRIM(e.ScheduleOfServicing) = ''
+
+              OR
+
+              e.ScheduleDay IS NULL
+
+              OR
+
+              TRIM(e.ScheduleDay) = ''
+            )
+        ) AS "InGoodCondition",
+
+
+        -- ========================================================
+        -- Warranty Active
         -- Under Warranty
         -- ========================================================
 
@@ -18208,7 +18334,7 @@ const getEngineeringDashboardSummary = async (data) => {
 
 
         -- ========================================================
-        -- Warranty - Expired
+        -- Warranty Expired
         -- ========================================================
 
         (
@@ -18228,7 +18354,9 @@ const getEngineeringDashboardSummary = async (data) => {
 
 
         -- ========================================================
-        -- Warranty - N/A
+        -- Warranty N/A
+        --
+        -- NULL / Blank / N/A / Any other value
         -- ========================================================
 
         (
@@ -18243,12 +18371,15 @@ const getEngineeringDashboardSummary = async (data) => {
               TRIM(
                 COALESCE(e.WarrantyStatus, '')
               )
-            ) = 'n/a'
+            ) NOT IN (
+              'under warranty',
+              'expired'
+            )
         ) AS "WarrantyNA",
 
 
         -- ========================================================
-        -- AMC - Active
+        -- AMC Active
         -- Under AMC
         -- ========================================================
 
@@ -18269,7 +18400,8 @@ const getEngineeringDashboardSummary = async (data) => {
 
 
         -- ========================================================
-        -- AMC - Expired
+        -- AMC Expired
+        -- Actual Value = Expired AMC
         -- ========================================================
 
         (
@@ -18284,12 +18416,18 @@ const getEngineeringDashboardSummary = async (data) => {
               TRIM(
                 COALESCE(e.AMCStatus, '')
               )
-            ) = 'expired'
+            ) = 'expired amc'
         ) AS "AMCExpired",
 
 
         -- ========================================================
-        -- AMC - N/A
+        -- AMC N/A
+        --
+        -- Everything except:
+        -- Under AMC
+        -- Expired AMC
+        --
+        -- So AMC Status total will always equal Total Equipment
         -- ========================================================
 
         (
@@ -18304,7 +18442,10 @@ const getEngineeringDashboardSummary = async (data) => {
               TRIM(
                 COALESCE(e.AMCStatus, '')
               )
-            ) = 'n/a'
+            ) NOT IN (
+              'under amc',
+              'expired amc'
+            )
         ) AS "AMCNA",
 
 
@@ -18390,6 +18531,11 @@ const getEngineeringDashboardSummary = async (data) => {
 
         -- ========================================================
         -- Equipment Coverage - No AMC Required
+        --
+        -- Explicit No AMC Required
+        -- OR NULL
+        -- OR Blank
+        -- OR any unmatched AMC Type
         -- ========================================================
 
         (
@@ -18404,12 +18550,18 @@ const getEngineeringDashboardSummary = async (data) => {
               TRIM(
                 COALESCE(e.AMCType, '')
               )
-            ) = 'no amc required'
+            ) NOT IN (
+              'comprehensive',
+              'non comprehensive',
+              'on call',
+              'by hotel team'
+            )
         ) AS "NoAMCRequired",
 
 
         -- ========================================================
         -- Breakdown Count
+        -- Date Filter Applied
         -- ========================================================
 
         (
@@ -18434,6 +18586,7 @@ const getEngineeringDashboardSummary = async (data) => {
 
         -- ========================================================
         -- Breakdown Amount
+        -- Date Filter Applied
         -- ========================================================
 
         (
@@ -18461,6 +18614,7 @@ const getEngineeringDashboardSummary = async (data) => {
 
         -- ========================================================
         -- Total Maintenance
+        -- Date Filter Applied
         -- ========================================================
 
         (
@@ -18485,6 +18639,7 @@ const getEngineeringDashboardSummary = async (data) => {
 
         -- ========================================================
         -- Pending Maintenance
+        -- Date Filter Applied
         -- ========================================================
 
         (
@@ -18511,6 +18666,7 @@ const getEngineeringDashboardSummary = async (data) => {
               OR m.MaintenanceDate <= $3::date
             )
         ) AS "PendingMaintenance";
+
       `,
       [
         OrganizationID,
@@ -18527,6 +18683,12 @@ const getEngineeringDashboardSummary = async (data) => {
 
     const TotalEquipment =
       Number(row.TotalEquipment || 0);
+
+    const NeedsAttention =
+      Number(row.NeedsAttention || 0);
+
+    const InGoodCondition =
+      Number(row.InGoodCondition || 0);
 
     const WarrantyActive =
       Number(row.WarrantyActive || 0);
@@ -18579,19 +18741,6 @@ const getEngineeringDashboardSummary = async (data) => {
     };
 
     // ============================================================
-    // Good Condition / Needs Attention
-    //
-    // Exact business condition not defined yet.
-    // Current dashboard requirement:
-    // all equipment treated as good condition.
-    // ============================================================
-
-    const NeedsAttention = 0;
-
-    const InGoodCondition =
-      TotalEquipment - NeedsAttention;
-
-    // ============================================================
     // Response
     // ============================================================
 
@@ -18617,17 +18766,25 @@ const getEngineeringDashboardSummary = async (data) => {
         },
 
         TotalMaintenance:
-          Number(row.TotalMaintenance || 0),
+          Number(
+            row.TotalMaintenance || 0,
+          ),
 
         PendingMaintenance:
-          Number(row.PendingMaintenance || 0),
+          Number(
+            row.PendingMaintenance || 0,
+          ),
 
         Breakdown: {
           Count:
-            Number(row.BreakdownCount || 0),
+            Number(
+              row.BreakdownCount || 0,
+            ),
 
           Amount:
-            Number(row.BreakdownAmount || 0),
+            Number(
+              row.BreakdownAmount || 0,
+            ),
         },
 
         WarrantyStatus: {
