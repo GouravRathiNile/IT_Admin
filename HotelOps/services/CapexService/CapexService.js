@@ -440,6 +440,7 @@ const CAPEX_SELECT = `
     cm.Total,
     cm.IsVoid,
     cm.VoidRemarks,
+    cm.CreatedBy,
     cm.CreatedDate,
     
 
@@ -661,6 +662,42 @@ const attachRelatedData = async (capexRows) => {
   return capexRows.map((row) => byID.get(Number(row.capexid)));
 };
 
+// Add frontend action permissions without exposing the audit CreatedBy field.
+// These flags do not affect record visibility; they describe which buttons the
+// authenticated user may see for each already-visible CAPEX row.
+const addCapexListPermissions = (capexRows, rawRows, data = {}) => {
+  const userID = Number(data.UserID);
+  const userType = String(data.UserType || "").trim().toUpperCase();
+  const rawRowsByID = new Map(
+    rawRows.map((row) => [Number(row.capexid), row]),
+  );
+
+  return capexRows.map((capex) => {
+    const rawRow = rawRowsByID.get(Number(capex.CapexID)) || {};
+    const currentApprovalRole = String(rawRow.currentapprovalrole || "")
+      .trim()
+      .toUpperCase();
+    const currentStatus = String(rawRow.currentstatus || "")
+      .trim()
+      .toUpperCase();
+    const createdBy = Number(rawRow.createdby);
+
+    return {
+      ...capex,
+      CanApprove:
+        APPROVAL_ROLES.has(userType) &&
+        currentApprovalRole === userType &&
+        currentStatus === "PENDING",
+      CanAction:
+        (Number.isSafeInteger(userID) &&
+          userID > 0 &&
+          Number.isSafeInteger(createdBy) &&
+          createdBy === userID) ||
+        ["HOD", "GM"].includes(userType),
+    };
+  });
+};
+
 // Apply organization-wide status visibility for roles that do not own an
 // approval stage. The same helper is used by the list and count queries so
 // pagination cannot disagree with the returned rows.
@@ -696,6 +733,21 @@ const appendOverallCapexStatusFilter = (query, params, approvalStatus) => {
         NOT IN ('REJECTED', 'HOLD', 'RETURNED')
     AND UPPER(TRIM(COALESCE(approval_state.OwnerStatus, 'PENDING')))
         NOT IN ('REJECTED', 'HOLD', 'RETURNED')
+  `;
+};
+
+// Narrow the already role-scoped result to the CAPEX records currently waiting
+// at the selected configured approval stage. This is deliberately additive:
+// it never replaces the logged-in user's existing visibility predicates.
+const appendCapexApprovalFlowFilter = (query, params, approvalFlow) => {
+  if (!approvalFlow) return query;
+
+  params.push(approvalFlow);
+  return `${query}
+    AND UPPER(TRIM(COALESCE(current_stage.ApprovalRole, '')))
+        = $${params.length}
+    AND UPPER(TRIM(COALESCE(approval_state.FinalStatus, 'PENDING')))
+        NOT IN ('APPROVED', 'REJECTED')
   `;
 };
 // ============================================================ Get All CAPEX
@@ -757,6 +809,17 @@ const getAllCapex = async (data) => {
       };
     }
 
+    const approvalFlow =
+      data.ApprovalFlow !== undefined &&
+      data.ApprovalFlow !== null &&
+      String(data.ApprovalFlow).trim() !== ""
+        ? String(data.ApprovalFlow).trim().toUpperCase()
+        : null;
+
+    if (approvalFlow && !APPROVAL_ROLES.has(approvalFlow)) {
+      return fail("ApprovalFlow must be GM, CEO, or OWNER.", 400);
+    }
+
     // =====================================================
     // MAIN QUERY
     // =====================================================
@@ -800,6 +863,8 @@ const getAllCapex = async (data) => {
       params.push(data.ToDate);
       query += ` AND cm.CreatedDate < ($${params.length}::date + INTERVAL '1 day') `;
     }
+
+    query = appendCapexApprovalFlowFilter(query, params, approvalFlow);
 
     // =====================================================
     // STATUS FILTER
@@ -1095,6 +1160,12 @@ const getAllCapex = async (data) => {
       countQuery += ` AND cm.CreatedDate < ($${countParams.length}::date + INTERVAL '1 day') `;
     }
 
+    countQuery = appendCapexApprovalFlowFilter(
+      countQuery,
+      countParams,
+      approvalFlow,
+    );
+
     // =====================================================
     // COUNT STATUS FILTER
     // =====================================================
@@ -1271,7 +1342,12 @@ const getAllCapex = async (data) => {
     // Attach Related Data
     // =====================================================
 
-    const capex = await attachRelatedData(result.rows);
+    const capexWithRelatedData = await attachRelatedData(result.rows);
+    const capex = addCapexListPermissions(
+      capexWithRelatedData,
+      result.rows,
+      data,
+    );
 
     // =====================================================
     // Pagination Count
@@ -3724,6 +3800,10 @@ const generateCapexListPdfDocument = async (data) => {
       ? String(data.Status).toUpperCase()
       : null;
 
+    const approvalFlow = data.ApprovalFlow
+      ? String(data.ApprovalFlow).trim().toUpperCase()
+      : null;
+
     const validStatuses = [
       "PENDING",
       "APPROVED",
@@ -3739,6 +3819,10 @@ const generateCapexListPdfDocument = async (data) => {
           "Status must be Pending, Approved, Rejected, Hold, or Returned.",
         statusCode: 400,
       };
+    }
+
+    if (approvalFlow && !APPROVAL_ROLES.has(approvalFlow)) {
+      return fail("ApprovalFlow must be GM, CEO, or OWNER.", 400);
     }
 
     // ============================================================
@@ -3781,6 +3865,8 @@ const generateCapexListPdfDocument = async (data) => {
       params.push(data.ToDate);
       query += ` AND cm.CreatedDate < ($${params.length}::date + INTERVAL '1 day') `;
     }
+
+    query = appendCapexApprovalFlowFilter(query, params, approvalFlow);
 
     // ============================================================
     // STATUS FILTER
@@ -4175,6 +4261,7 @@ organizationName ||= "All Organizations";
         value: data.ToDate ? formatDate(data.ToDate) : "All",
       },
       { label: "Status", value: approvalStatus || "All" },
+      { label: "Approval Flow", value: approvalFlow || "All" },
       {
         label: "Total Records",
         value: capexRows.length,
@@ -4898,7 +4985,7 @@ const generateCapexByIdPdf = async (data) => {
           width: "*",
           text,
           style: "fieldLabel",
-          margin: [3, 3, 0, 0],
+          margin: [3, 0, 0, 0],
         },
       ],
 

@@ -873,6 +873,7 @@ const Opex_SELECT = `
     cm.Total, 
     cm.IsVoid, 
     cm.VoidRemarks, 
+    cm.CreatedBy,
     cm.CreatedDate, 
 
     CASE 
@@ -1187,6 +1188,48 @@ const attachRelatedData = async (OpexRows) => {
   return OpexRows.map((row) => byID.get(Number(row.opexid)));
 };
 
+// Add frontend permissions to already-visible OPEX rows without exposing the
+// audit CreatedBy field. Approval uses the effective workflow role, while edit
+// and delete actions use the authenticated JWT role exactly as requested.
+const addOpexListPermissions = (
+  opexRows,
+  rawRows,
+  data = {},
+  effectiveRole,
+) => {
+  const userID = Number(data.UserID);
+  const userType = String(data.UserType || "").trim().toUpperCase();
+  const approvalRole = String(effectiveRole || userType).trim().toUpperCase();
+  const rawRowsByID = new Map(
+    rawRows.map((row) => [Number(row.opexid), row]),
+  );
+
+  return opexRows.map((opex) => {
+    const rawRow = rawRowsByID.get(Number(opex.OpexID)) || {};
+    const currentApprovalRole = String(rawRow.currentapprovalrole || "")
+      .trim()
+      .toUpperCase();
+    const currentStatus = String(rawRow.currentstatus || "")
+      .trim()
+      .toUpperCase();
+    const createdBy = Number(rawRow.createdby);
+
+    return {
+      ...opex,
+      CanApprove:
+        APPROVAL_ROLES.has(approvalRole) &&
+        currentApprovalRole === approvalRole &&
+        currentStatus === "PENDING",
+      CanAction:
+        (Number.isSafeInteger(userID) &&
+          userID > 0 &&
+          Number.isSafeInteger(createdBy) &&
+          createdBy === userID) ||
+        ["HOD", "GM"].includes(userType),
+    };
+  });
+};
+
 // Approval-role default view is the union of every role-specific status tab:
 // records currently pending at that role, plus records already acted on by it.
 const appendOpexRoleStatusFilter = (
@@ -1360,6 +1403,21 @@ const appendOpexDateFilter = (query, params, fromDate, toDate) => {
 
   return query;
 };
+
+// Apply the selected current approval stage only after the caller's existing
+// organization, department, and role visibility predicates. This filter can
+// narrow a result set, but cannot grant access to additional OPEX records.
+const appendOpexApprovalFlowFilter = (query, params, approvalFlow) => {
+  if (!approvalFlow) return query;
+
+  params.push(approvalFlow);
+  return `${query}
+    AND UPPER(BTRIM(COALESCE(current_stage.ApprovalRole, '')))
+        = $${params.length}
+    AND UPPER(BTRIM(COALESCE(approval_state.FinalStatus, 'PENDING')))
+        NOT IN ('APPROVED', 'REJECTED')
+  `;
+};
 // ============================================================ Get All Opex
 const getAllOpex = async (data) => {
   try {
@@ -1445,6 +1503,17 @@ const getAllOpex = async (data) => {
       };
     }
 
+    const approvalFlow =
+      data.ApprovalFlow !== undefined &&
+        data.ApprovalFlow !== null &&
+        String(data.ApprovalFlow).trim() !== ""
+        ? String(data.ApprovalFlow).trim().toUpperCase()
+        : null;
+
+    if (approvalFlow && !APPROVAL_ROLES.has(approvalFlow)) {
+      return fail("ApprovalFlow must be HOD, FC, GM, RD-FC, or CEO.", 400);
+    }
+
     // =====================================================
     // MAIN QUERY
     // =====================================================
@@ -1522,6 +1591,7 @@ const getAllOpex = async (data) => {
     }
 
     query = appendOpexDateFilter(query, params, fromDate, toDate);
+    query = appendOpexApprovalFlowFilter(query, params, approvalFlow);
 
     // =====================================================
     // STATUS FILTER
@@ -1647,6 +1717,11 @@ const getAllOpex = async (data) => {
       fromDate,
       toDate,
     );
+    countQuery = appendOpexApprovalFlowFilter(
+      countQuery,
+      countParams,
+      approvalFlow,
+    );
 
     // =====================================================
     // COUNT STATUS FILTER
@@ -1686,7 +1761,13 @@ const getAllOpex = async (data) => {
     // Attach Related Data
     // =====================================================
 
-    const Opex = await attachRelatedData(result.rows);
+    const opexWithRelatedData = await attachRelatedData(result.rows);
+    const Opex = addOpexListPermissions(
+      opexWithRelatedData,
+      result.rows,
+      data,
+      userType,
+    );
 
     // =====================================================
     // Pagination Count
@@ -5018,6 +5099,12 @@ const generateOpexListPdf = async (data) => {
         {
           label: "Status",
           value: data.Status || "All",
+        },
+        {
+          label: "Approval Flow",
+          value: data.ApprovalFlow
+            ? String(data.ApprovalFlow).trim().toUpperCase()
+            : "All",
         },
         { label: "Total Records", value: rows.length },
       ],

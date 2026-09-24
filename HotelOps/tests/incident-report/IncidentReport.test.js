@@ -7,6 +7,7 @@ const { createDTO, listDTO, compactDTO, detailDTO, reportDTO, publicID } = requi
 const service = require("../../services/IncidentReportService/IncidentReportService");
 const repository = require("../../repositories/IncidentReportRepository/IncidentReportRepository");
 const { generatePdf, loadLogo } = require("../../utils/pdfHelper");
+const { pool } = require("../../db");
 
 const valid = {
   OrganizationID: 10,
@@ -153,7 +154,7 @@ test("filtered Incident PDF reuses report list logic and excludes removed audit 
   assert.match(source, /orientation: "landscape"/);
 });
 
-test("PDF logo loading retries transient failures, validates image bytes and falls back", async () => {
+test("PDF logo loading retries transient failures without replacing a configured organization logo", async () => {
   const originalFetch = global.fetch;
   const originalFallback = process.env.NILE_OFFICIAL_LOGO_URL;
   const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00]);
@@ -178,12 +179,50 @@ test("PDF logo loading retries transient failures, validates image bytes and fal
       urls.push(url);
       return url.includes("property") ? response(true, Buffer.from("not-an-image")) : response(true, png);
     };
-    assert.match(await loadLogo(null, "https://logos.test/property.png"), /^data:image\/png;base64,/);
-    assert.deepEqual(urls, ["https://logos.test/property.png", "https://logos.test/nile.png"]);
+    assert.equal(await loadLogo(null, "https://logos.test/property.png"), null);
+    assert.deepEqual(urls, ["https://logos.test/property.png"]);
+
+    urls.length = 0;
+    assert.match(await loadLogo(null, null), /^data:image\/png;base64,/);
+    assert.deepEqual(urls, ["https://logos.test/nile.png"]);
   } finally {
     global.fetch = originalFetch;
     if (originalFallback === undefined) delete process.env.NILE_OFFICIAL_LOGO_URL;
     else process.env.NILE_OFFICIAL_LOGO_URL = originalFallback;
+  }
+});
+
+test("database-backed organization logos retry once and reuse the successful cached image", { concurrency: false }, async () => {
+  const originalFetch = global.fetch;
+  const originalQuery = pool.query;
+  const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00]);
+  let logoQueries = 0;
+  let fetchCalls = 0;
+
+  pool.query = async (sql) => {
+    assert.match(sql, /FROM organization_master_logo/);
+    assert.doesNotMatch(sql, /INNER JOIN organization_master/);
+    logoQueries += 1;
+    return { rows: [{ logoname: "organization-98765.png" }] };
+  };
+  global.fetch = async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) throw new Error("temporary storage delay");
+    return {
+      ok: true,
+      headers: { get: () => null },
+      arrayBuffer: async () => png,
+    };
+  };
+
+  try {
+    assert.match(await loadLogo(98765), /^data:image\/png;base64,/);
+    assert.match(await loadLogo(98765), /^data:image\/png;base64,/);
+    assert.equal(logoQueries, 1);
+    assert.equal(fetchCalls, 2);
+  } finally {
+    global.fetch = originalFetch;
+    pool.query = originalQuery;
   }
 });
 

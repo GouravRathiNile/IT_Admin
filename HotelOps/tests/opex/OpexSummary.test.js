@@ -831,6 +831,146 @@ test("OPEX list PDF forwards the requested department to list and count queries"
   }
 });
 
+test("OPEX ApprovalFlow narrows list, count, and PDF without broadening FC visibility", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    if (sql.includes("SELECT COUNT(*) AS TotalCount")) {
+      return { rows: [{ totalcount: "0" }] };
+    }
+    return { rows: [] };
+  };
+
+  try {
+    const filters = {
+      OrganizationID: 20,
+      UserType: "FC",
+      ApprovalFlow: " fc ",
+      page: 1,
+      PageSize: 10,
+    };
+
+    const list = await OpexService.getAllOpex(filters);
+    const pdf = await OpexService.generateOpexListPdf(filters);
+
+    assert.equal(list.success, true);
+    assert.equal(list.TotalCount, 0);
+    assert.equal(pdf.success, true);
+    assert.equal(pdf.data.subarray(0, 4).toString(), "%PDF");
+
+    const opexQueries = calls.filter((call) =>
+      /FROM Opex_Master cm/.test(call.sql),
+    );
+    assert.equal(opexQueries.length, 4);
+
+    for (const call of opexQueries) {
+      assert.ok(call.values.includes("FC"));
+      assert.match(
+        call.sql,
+        /UPPER\(BTRIM\(COALESCE\(current_stage\.ApprovalRole, ''\)\)\)/,
+      );
+      assert.match(
+        call.sql,
+        /UPPER\(BTRIM\(COALESCE\(approval_state\.HODStatus, 'PENDING'\)\)\)[\s\S]*= 'APPROVED'/,
+      );
+    }
+
+    const queryCount = calls.length;
+    const invalid = await OpexService.getAllOpex({
+      ...filters,
+      ApprovalFlow: "OWNER",
+    });
+    assert.equal(invalid.success, false);
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(calls.length, queryCount);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("OPEX list returns CanApprove and creator-or-HOD/GM CanAction flags", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const masterRows = [
+    {
+      opexid: 201,
+      organizationid: 20,
+      organizationshortname: "HJU",
+      opexnumber: 1,
+      department: "Engineering",
+      item: "Creator item",
+      description: "Creator-owned OPEX",
+      make: "Demo",
+      qty: 1,
+      rate: 100,
+      total: 100,
+      isvoid: false,
+      voidremarks: null,
+      createdby: 77,
+      createddate: "2026-09-01",
+      currentapprovalrole: "GM",
+      currentstatus: "Pending",
+    },
+    {
+      opexid: 202,
+      organizationid: 20,
+      organizationshortname: "HJU",
+      opexnumber: 2,
+      department: "Finance",
+      item: "CEO item",
+      description: "Awaiting CEO",
+      make: "Demo",
+      qty: 1,
+      rate: 200,
+      total: 200,
+      isvoid: false,
+      voidremarks: null,
+      createdby: 88,
+      createddate: "2026-09-02",
+      currentapprovalrole: "CEO",
+      currentstatus: "Pending",
+    },
+  ];
+
+  pool.query = async (sql) => {
+    if (sql.includes("SELECT COUNT(*) AS TotalCount")) {
+      return { rows: [{ totalcount: "2" }] };
+    }
+    if (/FROM Opex_Master cm/.test(sql)) return { rows: masterRows };
+    return { rows: [] };
+  };
+
+  try {
+    const ceo = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserID: 77,
+      UserType: "CEO",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(ceo.success, true);
+    assert.equal(ceo.data[0].CanApprove, false);
+    assert.equal(ceo.data[0].CanAction, true);
+    assert.equal(ceo.data[1].CanApprove, true);
+    assert.equal(ceo.data[1].CanAction, false);
+    assert.equal(Object.hasOwn(ceo.data[0], "CreatedBy"), false);
+
+    const hod = await OpexService.getAllOpex({
+      OrganizationID: 20,
+      UserID: 999,
+      UserType: "HOD",
+      DepartmentName: "Engineering",
+      page: 1,
+      PageSize: 10,
+    });
+    assert.equal(hod.data.every((row) => row.CanAction === true), true);
+    assert.equal(hod.data.every((row) => row.CanApprove === false), true);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
 test("central Finance HOD PDF uses global RD-FC visibility", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];
