@@ -28,10 +28,10 @@ const opexPageUrl = (entityId) => {
     return `${process.env.OPEX_FRONTEND_URL}${separator}opexId=${encodedId}`;
   }
   const configuredBase = String(process.env.FRONTEND_URL || "").trim().replace(/\/$/, "");
-  if (configuredBase) return `${configuredBase}/Hotelops/Pages/Opex/Pages/Details?opexId=${encodedId}`;
+  if (configuredBase) return `${configuredBase}/Hotelops/Pages/Opex/Pages`;
   return process.env.NODE_ENV === "production"
     ? ""
-    : `http://localhost:5173/Hotelops/Pages/Opex/Pages/Details?opexId=${encodedId}`;
+    : `http://localhost:5173/Hotelops/Pages/Opex/Pages`;
 };
 
 const row = (label, value) => `
