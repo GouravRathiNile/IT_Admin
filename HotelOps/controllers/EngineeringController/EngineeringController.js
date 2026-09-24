@@ -2047,7 +2047,8 @@ exports.createAMC = async (req, res) => {
 
         Status:
           req.query.Status,
-
+   ApprovalFlow:
+          req.query.ApprovalFlow,
         Search:
           req.query.Search,
 
@@ -2119,13 +2120,6 @@ exports.getAMCById = async (req, res) => {
 // ============================================================Update AMC
 exports.updateAMC = async (req, res) => {
   try {
-    const Changes =
-      req.body.Changes
-        ? typeof req.body.Changes === "string"
-          ? JSON.parse(req.body.Changes)
-          : req.body.Changes
-        : {};
-
     const DeleteDocumentIDs =
       req.body.DeleteDocumentIDs
         ? typeof req.body.DeleteDocumentIDs === "string"
@@ -2136,12 +2130,76 @@ exports.updateAMC = async (req, res) => {
         : [];
 
     // ============================================================
-    // Yahan req.files ko existing Engineering Azure upload
-    // helper se upload karke Documents array banao.
+    // Build Changes From FormData
+    // ============================================================
+
+    const Changes = {
+      EquipmentID:
+        req.body.EquipmentID,
+
+      AMCStartDate:
+        req.body.AMCStartDate,
+
+      AMCEndDate:
+        req.body.AMCEndDate,
+
+      AMCType:
+        req.body.AMCType,
+
+      AMCAmount:
+        req.body.AMCAmount,
+
+      VendorName:
+        req.body.VendorName,
+
+      VendorEmailAddress:
+        req.body.VendorEmailAddress,
+
+      VendorMobileNumber:
+        req.body.VendorMobileNumber,
+
+      VendorSecondMobileNumber:
+        req.body.VendorSecondMobileNumber,
+
+      VendorLandlineNumber:
+        req.body.VendorLandlineNumber,
+
+      VendorAddress:
+        req.body.VendorAddress,
+
+      VendorCity:
+        req.body.VendorCity,
+
+      VendorState:
+        req.body.VendorState,
+
+      VendorPincode:
+        req.body.VendorPincode,
+    };
+
+    // ============================================================
+    // Remove Undefined Fields
+    // Important for partial update
+    // ============================================================
+
+    Object.keys(Changes).forEach(
+      (key) => {
+        if (Changes[key] === undefined) {
+          delete Changes[key];
+        }
+      },
+    );
+
+    // ============================================================
+    // Uploaded Documents
     // ============================================================
 
     const Documents =
       req.uploadedDocuments || [];
+
+    // ============================================================
+    // Queue
+    // ============================================================
 
     return sendQueueResponse(
       req,

@@ -1298,6 +1298,11 @@ const getCreditApplicationList = async (data) => {
         .trim()
         .toUpperCase();
 
+    const userType =
+      String(data.UserType || "")
+        .trim()
+        .toUpperCase();
+
 
     // ============================================================
     // Front Office Search Rule
@@ -1313,6 +1318,27 @@ const getCreditApplicationList = async (data) => {
         departmentName === "FO"
       );
 
+    const isSalesDepartment =
+      [
+        "SALES",
+        "SALES & MARKETING",
+      ].includes(departmentName);
+
+    const salesViewer =
+      !approvalRole &&
+      isSalesDepartment;
+
+    const canFilter =
+      isSalesDepartment ||
+      (
+        userType !== "CEO" &&
+        Boolean(approvalRole)
+      );
+
+    const completedOnlyViewer =
+      !approvalRole &&
+      !salesViewer;
+
     if (
       frontOfficeViewer &&
       !CompanyName
@@ -1325,6 +1351,7 @@ const getCreditApplicationList = async (data) => {
           CurrentPage: page,
           PageSize,
           TotalPages: 0,
+          CanFilter: canFilter,
           data: [],
         },
       );
@@ -1386,12 +1413,13 @@ const getCreditApplicationList = async (data) => {
 
 
     // ============================================================
-    // Non-Approver Visibility
-    // CEO, Front Office aur baaki non-approver users ko record tabhi
-    // dikhega jab approvals complete hon aur ARID update ho chuka ho.
+    // Completed-Only Visibility
+    // Sales ko chhodkar CEO, Front Office aur baaki non-approver users ko
+    // record tabhi dikhega jab approvals complete hon aur ARID update ho.
+    // Sales / Sales & Marketing ko complete workflow data visible rahega.
     // ============================================================
 
-    if (!approvalRole) {
+    if (completedOnlyViewer) {
       whereClause += `
         AND UPPER(
           TRIM(
@@ -1947,6 +1975,8 @@ const getCreditApplicationList = async (data) => {
     for (
       const record of records
     ) {
+      record.CanAction = isSalesDepartment;
+
       const fcApproval = record.Approvals.find(
         (stage) => stage.ApprovalRole === "FC",
       );
@@ -2053,6 +2083,9 @@ const getCreditApplicationList = async (data) => {
         PageSize,
 
         TotalPages,
+
+        CanFilter:
+          canFilter,
 
         data:
           records,

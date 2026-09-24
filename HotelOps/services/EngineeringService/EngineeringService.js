@@ -12526,11 +12526,11 @@ const getAllAMC = async (data) => {
 
     const Status =
       data.Status !== undefined &&
-        data.Status !== null &&
-        String(data.Status).trim() !== ""
+      data.Status !== null &&
+      String(data.Status).trim() !== ""
         ? String(data.Status)
-          .trim()
-          .toUpperCase()
+            .trim()
+            .toUpperCase()
         : null;
 
     const validStatuses = [
@@ -12551,13 +12551,45 @@ const getAllAMC = async (data) => {
     }
 
     // ============================================================
+    // Approval Flow Filter
+    // ============================================================
+
+    const ApprovalFlow =
+      data.ApprovalFlow !== undefined &&
+      data.ApprovalFlow !== null &&
+      String(data.ApprovalFlow).trim() !== ""
+        ? String(data.ApprovalFlow)
+            .trim()
+            .toUpperCase()
+        : null;
+
+    const validApprovalFlows = [
+      "FC",
+      "GM",
+      "RD",
+      "CEO",
+    ];
+
+    if (
+      ApprovalFlow &&
+      !validApprovalFlows.includes(
+        ApprovalFlow,
+      )
+    ) {
+      return fail(
+        "ApprovalFlow must be FC, GM, RD, or CEO.",
+        400,
+      );
+    }
+
+    // ============================================================
     // Search
     // ============================================================
 
     const Search =
       data.Search !== undefined &&
-        data.Search !== null &&
-        String(data.Search).trim() !== ""
+      data.Search !== null &&
+      String(data.Search).trim() !== ""
         ? String(data.Search).trim()
         : null;
 
@@ -12565,12 +12597,31 @@ const getAllAMC = async (data) => {
     // Logged-In User Approval Role
     // ============================================================
 
-    const access = await resolveAMCAccess({
-      UserID: data.UserID, UserType: data.UserType,
-      DepartmentName: data.DepartmentName, OrganizationID,
-    }, pool, { requireSelectedMapping: true });
-    if (access.error) return access.error;
-    const approvalRole = access.approvalRole;
+    const access = await resolveAMCAccess(
+      {
+        UserID:
+          data.UserID,
+
+        UserType:
+          data.UserType,
+
+        DepartmentName:
+          data.DepartmentName,
+
+        OrganizationID,
+      },
+      pool,
+      {
+        requireSelectedMapping: true,
+      },
+    );
+
+    if (access.error) {
+      return access.error;
+    }
+
+    const approvalRole =
+      access.approvalRole;
 
     // ============================================================
     // Base From Query
@@ -12582,9 +12633,11 @@ const getAllAMC = async (data) => {
       INNER JOIN Engineering_Equipment_Entry_Master e
         ON e.EquipmentID = am.EquipmentID
        AND e.IsDeleted = FALSE
-  INNER JOIN Organization_Master om
-    ON om.OrganizationID = am.OrganizationID
-   AND om.IsDeleted = FALSE
+
+      INNER JOIN Organization_Master om
+        ON om.OrganizationID = am.OrganizationID
+       AND om.IsDeleted = FALSE
+
       LEFT JOIN Engineering_AMC_Approval aa
         ON aa.AMCID = am.AMCID
        AND aa.IsDeleted = FALSE
@@ -12723,7 +12776,9 @@ const getAllAMC = async (data) => {
     `;
 
     const params = [];
+
     // Organization 10 is the central RD's explicit global-view selection.
+
     if (access.globalView) {
       whereClause += `
         AND om.IsActive = TRUE
@@ -12731,7 +12786,11 @@ const getAllAMC = async (data) => {
       `;
     } else {
       params.push(OrganizationID);
-      whereClause += ` AND am.OrganizationID = $${params.length}\n`;
+
+      whereClause += `
+        AND am.OrganizationID =
+            $${params.length}
+      `;
     }
 
     // ============================================================
@@ -12805,6 +12864,25 @@ const getAllAMC = async (data) => {
             ''
           ) ILIKE '%' || ${searchParameter} || '%'
         )
+      `;
+    }
+
+    // ============================================================
+    // Approval Flow Filter
+    // ============================================================
+
+    if (ApprovalFlow) {
+      params.push(ApprovalFlow);
+
+      whereClause += `
+        AND UPPER(
+          TRIM(
+            COALESCE(
+              current_stage.ApprovalRole,
+              ''
+            )
+          )
+        ) = $${params.length}
       `;
     }
 
@@ -13194,7 +13272,7 @@ const getAllAMC = async (data) => {
         SELECT
           am.AMCID,
           am.OrganizationID,
-           om.ShortName AS "OrganizationShortName",
+          om.ShortName AS "OrganizationShortName",
           am.EquipmentID,
 
           am.AMCStartDate,
@@ -13237,6 +13315,7 @@ const getAllAMC = async (data) => {
           e.ResponsiblePerson,
 
           aa.AMCApprovalID,
+
           aa.FCStatus,
           aa.FCStatusDateTime,
           aa.FCStatusApprovedBy,
@@ -13315,30 +13394,66 @@ const getAllAMC = async (data) => {
     // Attach Documents + Approvals
     // ============================================================
 
-    const records = await attachAMCRelatedData(result.rows);
+    const records =
+      await attachAMCRelatedData(
+        result.rows,
+      );
 
-    const approvalRowsByID = new Map(
-      result.rows.map((row) => [Number(row.amcid), row]),
-    );
-    const normalizeApprovalStatus = (value) =>
-      String(value || "Pending").trim().toUpperCase();
+    const approvalRowsByID =
+      new Map(
+        result.rows.map(
+          (row) => [
+            Number(row.amcid),
+            row,
+          ],
+        ),
+      );
+
+    const normalizeApprovalStatus =
+      (value) =>
+        String(
+          value || "Pending",
+        )
+          .trim()
+          .toUpperCase();
 
     for (const record of records) {
-      const approvalRow = approvalRowsByID.get(record.AMCID);
-      const currentStage = record.Approvals.find(
-        (stage) => normalizeApprovalStatus(stage.Status) !== "APPROVED",
-      );
-      record.CanApprove = Boolean(
-        Number.isSafeInteger(Number(data.UserID)) && Number(data.UserID) > 0 &&
-        approvalRow?.amcapprovalid != null &&
-        approvalRole &&
-        normalizeApprovalStatus(approvalRow.finalstatus) !== "APPROVED" &&
-        currentStage?.ApprovalRole === approvalRole &&
-        normalizeApprovalStatus(currentStage.Status) === "PENDING",
-      );
+      const approvalRow =
+        approvalRowsByID.get(
+          record.AMCID,
+        );
+
+      const currentStage =
+        record.Approvals.find(
+          (stage) =>
+            normalizeApprovalStatus(
+              stage.Status,
+            ) !== "APPROVED",
+        );
+
+      record.CanApprove =
+        Boolean(
+          Number.isSafeInteger(
+            Number(data.UserID),
+          ) &&
+          Number(data.UserID) > 0 &&
+          approvalRow?.amcapprovalid != null &&
+          approvalRole &&
+          normalizeApprovalStatus(
+            approvalRow.finalstatus,
+          ) !== "APPROVED" &&
+          currentStage?.ApprovalRole ===
+            approvalRole &&
+          normalizeApprovalStatus(
+            currentStage.Status,
+          ) === "PENDING",
+        );
     }
 
-    // Omit detail-only fields from the AMC list response.
+    // ============================================================
+    // Omit Detail-Only Fields From List
+    // ============================================================
+
     for (const record of records) {
       for (const field of [
         "VendorName",
@@ -13366,8 +13481,8 @@ const getAllAMC = async (data) => {
     const TotalPages =
       TotalCount > 0
         ? Math.ceil(
-          TotalCount / PageSize,
-        )
+            TotalCount / PageSize,
+          )
         : 0;
 
     // ============================================================
@@ -13400,7 +13515,9 @@ const getAllAMC = async (data) => {
     );
 
     const retryResponse =
-      retryableDatabaseResponse(error);
+      retryableDatabaseResponse(
+        error,
+      );
 
     if (retryResponse) {
       return retryResponse;
@@ -15296,6 +15413,37 @@ const processAMCApproval = async (data) => {
       );
     }
 
+    // Sync the approved contract and equipment atomically, only at the final stage.
+    if (Action === "APPROVE" && isFinalStage) {
+      const equipmentUpdate = await client.query(
+        `
+        UPDATE Engineering_Equipment_Entry_Master e
+        SET AMCType = am.AMCType,
+            AMCStartDate = am.AMCStartDate,
+            AMCEndDate = am.AMCEndDate,
+            AMCYearlyExpense = am.AMCAmount,
+            AMCStatus = CASE
+              WHEN am.AMCEndDate < CURRENT_DATE THEN 'Expired AMC'
+              ELSE 'Under AMC'
+            END,
+            ModifiedBy = $2,
+            ModifiedDate = CURRENT_TIMESTAMP
+        FROM Engineering_AMC_Master am
+        WHERE am.AMCID = $1
+          AND am.IsDeleted = FALSE
+          AND e.EquipmentID = am.EquipmentID
+          AND e.OrganizationID = am.OrganizationID
+          AND e.IsDeleted = FALSE;
+        `,
+        [AMCID, UserID],
+      );
+
+      if (equipmentUpdate.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return fail("Linked AMC equipment not found.", 404);
+      }
+    }
+
     await client.query("COMMIT");
 
     const nextApprovalRole = approvalFlow[currentIndex + 1]?.ApprovalRole;
@@ -15339,9 +15487,7 @@ const processAMCApproval = async (data) => {
       return retryResponse;
     }
 
-    return databaseFailure(
-      "Unable to process AMC approval at this time.",
-    );
+    return databaseFailure(error, "Process AMC approval");
   } finally {
     client.release();
   }
