@@ -8040,8 +8040,8 @@ const generateTotalEquipmentReportsPdf = async (data) => {
     // ============================================================
 
     const pdfBuffer = await generatePdf({
-      title:
-        " EQIPMENT REPORT",
+     title:
+  String(data.Title || "EQUIPMENT REPORT").trim(),
 
       reportName:
         "Equipment Report",

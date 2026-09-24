@@ -387,6 +387,143 @@ test("CAPEX list PDF reuses getAllCapex configured-flow visibility", { concurren
   }
 });
 
+test("CAPEX ApprovalFlow narrows list, count, and PDF without broadening role visibility", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const calls = [];
+  pool.query = async (sql, values) => {
+    calls.push({ sql, values });
+    if (sql.includes("SELECT COUNT(*) AS TotalCount")) {
+      return { rows: [{ totalcount: "0" }] };
+    }
+    return { rows: [] };
+  };
+
+  try {
+    const filters = {
+      OrganizationID: 20,
+      UserType: "CEO",
+      ApprovalFlow: " ceo ",
+      page: 1,
+      PageSize: 10,
+    };
+
+    const list = await CapexService.getAllCapex(filters);
+    const pdf = await CapexService.generateCapexListPdf(filters);
+
+    assert.equal(list.success, true);
+    assert.equal(list.TotalCount, 0);
+    assert.equal(pdf.success, true);
+    assert.equal(pdf.data.subarray(0, 4).toString(), "%PDF");
+
+    const capexQueries = calls.filter((call) =>
+      /FROM Capex_Master cm/.test(call.sql),
+    );
+    assert.equal(capexQueries.length, 4);
+
+    for (const call of capexQueries) {
+      assert.ok(call.values.includes("CEO"));
+      assert.match(
+        call.sql,
+        /UPPER\(TRIM\(COALESCE\(current_stage\.ApprovalRole, ''\)\)\)/,
+      );
+      assert.match(
+        call.sql,
+        /UPPER\(COALESCE\(approval_state\.GMStatus, 'PENDING'\)\) = 'APPROVED'/,
+      );
+    }
+
+    const invalid = await CapexService.getAllCapex({
+      ...filters,
+      ApprovalFlow: "FC",
+    });
+    assert.equal(invalid.success, false);
+    assert.equal(invalid.statusCode, 400);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
+test("CAPEX list returns CanApprove and creator-or-HOD/GM CanAction flags", { concurrency: false }, async () => {
+  const originalQuery = pool.query;
+  const masterRows = [
+    {
+      capexid: 101,
+      organizationid: 20,
+      organizationshortname: "HJU",
+      capexnumber: 1,
+      department: "Engineering",
+      item: "Creator item",
+      description: "Creator-owned CAPEX",
+      make: "Demo",
+      qty: 1,
+      rate: 100,
+      total: 100,
+      isvoid: false,
+      voidremarks: null,
+      createdby: 77,
+      createddate: "2026-09-01",
+      currentapprovalrole: "GM",
+      currentstatus: "Pending",
+    },
+    {
+      capexid: 102,
+      organizationid: 20,
+      organizationshortname: "HJU",
+      capexnumber: 2,
+      department: "Finance",
+      item: "CEO item",
+      description: "Awaiting CEO",
+      make: "Demo",
+      qty: 1,
+      rate: 200,
+      total: 200,
+      isvoid: false,
+      voidremarks: null,
+      createdby: 88,
+      createddate: "2026-09-02",
+      currentapprovalrole: "CEO",
+      currentstatus: "Pending",
+    },
+  ];
+
+  pool.query = async (sql) => {
+    if (sql.includes("SELECT COUNT(*) AS TotalCount")) {
+      return { rows: [{ totalcount: "2" }] };
+    }
+    if (/FROM Capex_Master cm/.test(sql)) return { rows: masterRows };
+    return { rows: [] };
+  };
+
+  try {
+    const ceo = await CapexService.getAllCapex({
+      OrganizationID: 20,
+      UserID: 77,
+      UserType: "CEO",
+      page: 1,
+      PageSize: 10,
+    });
+
+    assert.equal(ceo.success, true);
+    assert.equal(ceo.data[0].CanApprove, false);
+    assert.equal(ceo.data[0].CanAction, true);
+    assert.equal(ceo.data[1].CanApprove, true);
+    assert.equal(ceo.data[1].CanAction, false);
+    assert.equal(Object.hasOwn(ceo.data[0], "CreatedBy"), false);
+
+    const hod = await CapexService.getAllCapex({
+      OrganizationID: 20,
+      UserID: 999,
+      UserType: "HOD",
+      page: 1,
+      PageSize: 10,
+    });
+    assert.equal(hod.data.every((row) => row.CanAction === true), true);
+    assert.equal(hod.data.every((row) => row.CanApprove === false), true);
+  } finally {
+    pool.query = originalQuery;
+  }
+});
+
 test("CAPEX organization API and PDF include Hold count", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];

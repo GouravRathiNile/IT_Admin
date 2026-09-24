@@ -251,6 +251,20 @@ exports.getAllOpex = async (req, res) => {
       }
     }
 
+    const ApprovalFlow = req.query.ApprovalFlow
+      ? String(req.query.ApprovalFlow).trim().toUpperCase()
+      : null;
+
+    if (
+      ApprovalFlow &&
+      !["HOD", "FC", "GM", "RD-FC", "CEO"].includes(ApprovalFlow)
+    ) {
+      throw new AppError(
+        "ApprovalFlow must be HOD, FC, GM, RD-FC, or CEO",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
     const Department =
       req.query.Department !== undefined &&
       req.query.Department !== null &&
@@ -294,6 +308,7 @@ exports.getAllOpex = async (req, res) => {
   OrganizationID,
   Department,
   Status,
+  ApprovalFlow,
   FromDate,
   ToDate,
   page,
@@ -1074,6 +1089,20 @@ exports.generateOpexListPdf = async (req, res) => {
       }
     }
 
+    const ApprovalFlow = req.query.ApprovalFlow
+      ? String(req.query.ApprovalFlow).trim().toUpperCase()
+      : null;
+
+    if (
+      ApprovalFlow &&
+      !["HOD", "FC", "GM", "RD-FC", "CEO"].includes(ApprovalFlow)
+    ) {
+      throw new AppError(
+        "ApprovalFlow must be HOD, FC, GM, RD-FC, or CEO",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
     const Department =
       req.query.Department !== undefined &&
       req.query.Department !== null &&
@@ -1101,6 +1130,7 @@ exports.generateOpexListPdf = async (req, res) => {
       OrganizationID,
       Department,
       Status,
+      ApprovalFlow,
       FromDate,
       ToDate,
     });

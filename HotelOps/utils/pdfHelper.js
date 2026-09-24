@@ -18,8 +18,16 @@ const display = (value) => {
   return String(value);
 };
 
-const organizationLogoUrl = async (organizationId) => {
-  if (!organizationId) return null;
+const LOGO_FETCH_TIMEOUT_MS = 10000;
+const LOGO_FETCH_ATTEMPTS = 3;
+const LOGO_CACHE_TTL_MS = 5 * 60 * 1000;
+const organizationLogoCache = new Map();
+const organizationLogoLoads = new Map();
+
+// Keep "not configured" separate from lookup failures. A database/network
+// failure must never be interpreted as permission to show another brand.
+const organizationLogoSource = async (organizationId) => {
+  if (!organizationId) return { state: "missing", url: null };
   try {
     const result = await pool.query(
       `SELECT logoname FROM organization_master_logo
@@ -27,8 +35,13 @@ const organizationLogoUrl = async (organizationId) => {
         ORDER BY logoid LIMIT 1`,
       [Number(organizationId)]
     );
-    return result.rows[0]?.logoname ? generateOrganizationLogoUrl(result.rows[0].logoname) : null;
-  } catch (_error) { return null; }
+    const logoName = result.rows[0]?.logoname;
+    return logoName
+      ? { state: "configured", url: generateOrganizationLogoUrl(logoName) }
+      : { state: "missing", url: null };
+  } catch (_error) {
+    return { state: "error", url: null };
+  }
 };
 
 // Official fallback is a real stored/configured NILE logo. The previous drawn
@@ -63,9 +76,11 @@ const imageMimeType = (buffer) => {
 
 const fetchLogo = async (url) => {
   if (!url || typeof fetch !== "function") return null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < LOGO_FETCH_ATTEMPTS; attempt += 1) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(LOGO_FETCH_TIMEOUT_MS),
+      });
       if (!response.ok) continue;
       const declaredLength = Number(response.headers.get("content-length"));
       if (Number.isFinite(declaredLength) && declaredLength > 5 * 1024 * 1024) return null;
@@ -81,12 +96,72 @@ const fetchLogo = async (url) => {
   return null;
 };
 
+const cachedOrganizationLogo = (organizationId) => {
+  const cached = organizationLogoCache.get(Number(organizationId));
+  if (!cached) return undefined;
+  if (cached.expiresAt <= Date.now()) {
+    organizationLogoCache.delete(Number(organizationId));
+    return undefined;
+  }
+  return cached.logo;
+};
+
+const cacheOrganizationLogo = (organizationId, logo) => {
+  if (!organizationId || !logo) return;
+  organizationLogoCache.set(Number(organizationId), {
+    logo,
+    expiresAt: Date.now() + LOGO_CACHE_TTL_MS,
+  });
+};
+
 const loadLogo = async (organizationId, suppliedUrl) => {
-  const organizationUrl = suppliedUrl || await organizationLogoUrl(organizationId);
-  const organizationLogo = await fetchLogo(organizationUrl);
-  if (organizationLogo) return organizationLogo;
+  const suppliedOrganizationUrl = String(suppliedUrl || "").trim() || null;
+
+  // A supplied URL is explicitly the organization's logo. Retry it, but never
+  // replace it with NILE merely because the remote image is slow/unavailable.
+  if (suppliedOrganizationUrl) {
+    return fetchLogo(suppliedOrganizationUrl);
+  }
+
+  const normalizedOrganizationId = Number(organizationId);
+  const hasOrganizationId =
+    Number.isSafeInteger(normalizedOrganizationId) && normalizedOrganizationId > 0;
+
+  if (hasOrganizationId) {
+    const cachedLogo = cachedOrganizationLogo(normalizedOrganizationId);
+    if (cachedLogo !== undefined) return cachedLogo;
+
+    if (organizationLogoLoads.has(normalizedOrganizationId)) {
+      return organizationLogoLoads.get(normalizedOrganizationId);
+    }
+
+    const logoLoad = (async () => {
+      const source = await organizationLogoSource(normalizedOrganizationId);
+
+      if (source.state === "configured") {
+        const organizationLogo = await fetchLogo(source.url);
+        cacheOrganizationLogo(normalizedOrganizationId, organizationLogo);
+        return organizationLogo;
+      }
+
+      // Lookup failures are not the same as an organization without a logo.
+      if (source.state === "error") return null;
+
+      const fallbackUrl = await officialNileLogoUrl();
+      return fallbackUrl ? fetchLogo(fallbackUrl) : null;
+    })();
+
+    organizationLogoLoads.set(normalizedOrganizationId, logoLoad);
+    try {
+      return await logoLoad;
+    } finally {
+      organizationLogoLoads.delete(normalizedOrganizationId);
+    }
+  }
+
+  // Reports without an organization context retain the official NILE brand.
   const fallbackUrl = await officialNileLogoUrl();
-  return fallbackUrl && fallbackUrl !== organizationUrl ? fetchLogo(fallbackUrl) : null;
+  return fallbackUrl ? fetchLogo(fallbackUrl) : null;
 };
 
 const buildHeader = async (title, organizationId, logoUrl) => {

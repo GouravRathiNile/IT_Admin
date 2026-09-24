@@ -1473,6 +1473,8 @@ exports.getTotalEquipmentReportsPdf = async (
       Search:
         req.query.Search ||
         null,
+        Title:
+    req.query.Title || null,
     };
 
     const response =

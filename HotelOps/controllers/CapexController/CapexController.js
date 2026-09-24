@@ -269,6 +269,19 @@ exports.getAllCapex = async (req, res) => {
       }
     }
 
+    // ================= Approval Flow =================
+
+    const ApprovalFlow = req.query.ApprovalFlow
+      ? String(req.query.ApprovalFlow).trim().toUpperCase()
+      : null;
+
+    if (ApprovalFlow && !["GM", "CEO", "OWNER"].includes(ApprovalFlow)) {
+      throw new AppError(
+        "ApprovalFlow must be GM, CEO, or OWNER",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
+
     // ================= Pagination =================
 
     const page = Number(req.query.page) || 1;
@@ -297,6 +310,7 @@ exports.getAllCapex = async (req, res) => {
   FromDate,
   ToDate,
   Status,
+  ApprovalFlow,
   page,
   PageSize,
 });
@@ -1070,6 +1084,16 @@ exports.generateCapexListPdf = async (req, res) => {
     const ToDate = req.query.ToDate
       ? String(req.query.ToDate).trim()
       : null;
+    const ApprovalFlow = req.query.ApprovalFlow
+      ? String(req.query.ApprovalFlow).trim().toUpperCase()
+      : null;
+
+    if (ApprovalFlow && !["GM", "CEO", "OWNER"].includes(ApprovalFlow)) {
+      throw new AppError(
+        "ApprovalFlow must be GM, CEO, or OWNER",
+        STATUS_CODES.BAD_REQUEST
+      );
+    }
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
     for (const [fieldName, value] of [
@@ -1112,6 +1136,7 @@ exports.generateCapexListPdf = async (req, res) => {
       Department,
       FromDate,
       ToDate,
+      ApprovalFlow,
 
       logoUrl: req.query.logoUrl || null,
     });
