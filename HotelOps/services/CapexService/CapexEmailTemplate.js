@@ -18,7 +18,7 @@ const capexPageUrl = (entityId) => {
     return `${process.env.CAPEX_FRONTEND_URL}${separator}capexId=${encodedId}`;
   }
   const base = String(process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
-  return `${base}/Hotelops/Pages/Capex/Pages/Details?capexId=${encodedId}`;
+  return `${base}/Hotelops/Pages/Capex/Pages`;
 };
 const row = (label, value) => `<tr><td style="width:38%;padding:9px 12px;border-bottom:1px solid #dbe5f0;background:#f5f8fc;color:#52647a;font-size:13px;font-weight:600;vertical-align:top;word-break:break-word;overflow-wrap:anywhere;">${escapeHtml(label)}</td><td style="padding:9px 12px;border-bottom:1px solid #dbe5f0;color:#172033;font-size:13px;vertical-align:top;word-break:break-word;overflow-wrap:anywhere;">${escapeHtml(display(value))}</td></tr>`;
 const introduction = (kind, actor) => ({
