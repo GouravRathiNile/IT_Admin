@@ -2,6 +2,11 @@ const express = require("express");
 const authenticateToken = require("../../middleware/authMiddleware");
 const upload = require("../../middleware/upload");
 const {
+  startEquipmentQRCodeJob,
+  getEquipmentQRCodeJob,
+  downloadEquipmentQRCodeJob,
+} = require("../../controllers/EngineeringController/EquipmentQRCodeJobController");
+const {
   createEquipment,
   getAllEquipment,
   getEquipmentById,
@@ -122,6 +127,9 @@ router.get("/AMCDetailPdf",authenticateToken,generateAMCDetailPdf,);
 // =============================================================QR Code of Equipment
 router.get("/EquipmentQRCode",authenticateToken,generateEquipmentQRCode,);
 router.get("/AllEquipmentQRCodeDownload",authenticateToken,downloadAllEquipmentQRCodes,);
+router.post("/EquipmentQRCodeJobs", authenticateToken, startEquipmentQRCodeJob);
+router.get("/EquipmentQRCodeJobs/:JobID", authenticateToken, getEquipmentQRCodeJob);
+router.get("/EquipmentQRCodeJobs/:JobID/download", authenticateToken, downloadEquipmentQRCodeJob);
 // =============================================================dashboard of Equipment
 router.get("/DashboardSummary",authenticateToken,getEngineeringDashboardSummary,);
 router.get("/DashboardMaintenanceChart",authenticateToken,getEngineeringMaintenanceChart,);

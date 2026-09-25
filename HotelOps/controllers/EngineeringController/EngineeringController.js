@@ -2439,6 +2439,9 @@ exports.generateEquipmentQRCode = async (req, res) => {
 };
 // ============================================================Generate All Equipment QR Codes By Organization
 exports.downloadAllEquipmentQRCodes = async (req, res) => {
+  if (req.query.stream === "true") {
+    return require("./EquipmentQRCodeJobController").streamEquipmentQRCodes(req, res);
+  }
   try {
     const result =
       await EngineeringService.generateAllEquipmentQRCodes({

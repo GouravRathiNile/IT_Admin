@@ -18126,7 +18126,7 @@ const generateEquipmentQRCode = async (data) => {
   }
 };
 // ============================================================Generate All Equipment QR Codes By Organization
-const generateAllEquipmentQRCodes = async (data) => {
+const generateAllEquipmentQRCodes = async (data, options = {}) => {
   try {
     const OrganizationID = Number(data.OrganizationID);
 
@@ -18176,6 +18176,10 @@ const generateAllEquipmentQRCodes = async (data) => {
     // ============================================================
 
     const QRCodes = [];
+    let processed = 0;
+    let generated = 0;
+    let failed = 0;
+    await options.onTotal?.(equipmentResult.rows.length);
 
     for (const row of equipmentResult.rows) {
       const EquipmentID = Number(
@@ -18194,6 +18198,8 @@ const generateAllEquipmentQRCodes = async (data) => {
           qrResult.message,
         );
 
+        failed++;
+        await options.onProgress?.({ processed: ++processed, generated, failed });
         continue;
       }
 
@@ -18205,6 +18211,8 @@ const generateAllEquipmentQRCodes = async (data) => {
           );
 
       if (!base64QRCode) {
+        failed++;
+        await options.onProgress?.({ processed: ++processed, generated, failed });
         continue;
       }
 
@@ -18214,7 +18222,7 @@ const generateAllEquipmentQRCodes = async (data) => {
           "base64",
         );
 
-      QRCodes.push({
+      const qr = {
         EquipmentID,
         Description:
           qrResult.data.Description,
@@ -18222,14 +18230,18 @@ const generateAllEquipmentQRCodes = async (data) => {
           qrResult.data.Area,
         QRBuffer:
           qrBuffer,
-      });
+      };
+      await options.onQRCode?.(qr);
+      if (options.collect !== false) QRCodes.push(qr);
+      generated++;
+      await options.onProgress?.({ processed: ++processed, generated, failed });
     }
 
     // ============================================================
     // Check Generated QR Codes
     // ============================================================
 
-    if (QRCodes.length === 0) {
+    if (generated === 0) {
       return fail(
         "Unable to generate equipment QR codes.",
         500,
@@ -18247,7 +18259,8 @@ const generateAllEquipmentQRCodes = async (data) => {
         TotalEquipment:
           equipmentResult.rows.length,
         TotalQRCodes:
-          QRCodes.length,
+          generated,
+        FailedQRCodes: failed,
         QRCodes,
       },
     );
@@ -18264,9 +18277,7 @@ const generateAllEquipmentQRCodes = async (data) => {
       return retryResponse;
     }
 
-    return databaseFailure(
-      "Unable to generate equipment QR codes.",
-    );
+    return databaseFailure(error, "Generate equipment QR codes");
   }
 };
 // ============================================================================================Dashboard of Equipment Entries
