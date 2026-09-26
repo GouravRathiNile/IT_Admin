@@ -831,7 +831,7 @@ test("OPEX list PDF forwards the requested department to list and count queries"
   }
 });
 
-test("OPEX ApprovalFlow applies Rejected to the selected CEO stage in list, count, and PDF", { concurrency: false }, async () => {
+test("GM OPEX filter applies CEO Rejected without also requiring GM Rejected", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];
   pool.query = async (sql, values) => {
@@ -845,7 +845,7 @@ test("OPEX ApprovalFlow applies Rejected to the selected CEO stage in list, coun
   try {
     const filters = {
       OrganizationID: 20,
-      UserType: "USER",
+      UserType: "GM",
       ApprovalFlow: " ceo ",
       Status: "Rejected",
       page: 1,
@@ -879,9 +879,13 @@ test("OPEX ApprovalFlow applies Rejected to the selected CEO stage in list, coun
         appliedFilters,
         /UPPER\(BTRIM\(COALESCE\(approval_state\.CEOStatus, 'PENDING'\)\)\)[\s\S]*= \$\d+/,
       );
+      assert.match(
+        appliedFilters,
+        /approval_state\.GMStatus[\s\S]*IN \('APPROVED', 'REJECTED', 'HOLD', 'RETURNED'\)/,
+      );
       assert.doesNotMatch(
         appliedFilters,
-        /COALESCE\(current_stage\.ApprovalRole, ''\)/,
+        /COALESCE\(approval_state\.GMStatus, 'PENDING'\)\s*\)\s*= \$\d+/,
       );
     }
 

@@ -1562,6 +1562,11 @@ const getAllOpex = async (data) => {
       return fail("ApprovalFlow must be HOD, FC, GM, RD-FC, or CEO.", 400);
     }
 
+    // With an explicit flow, Status belongs to that selected stage. The
+    // effective login role still defines the base visible dataset, but must not
+    // additionally require the same Status in its own approval column.
+    const visibilityStatus = approvalFlow ? null : approvalStatus;
+
     // =====================================================
     // MAIN QUERY
     // =====================================================
@@ -1665,11 +1670,11 @@ const getAllOpex = async (data) => {
         params,
         userType,
         approverStatusColumn,
-        approvalStatus,
+        visibilityStatus,
         access.financeHod,
       );
     } else if (userType === "USER") {
-      query = appendOpexUserStatusFilter(query, params, approvalStatus);
+      query = appendOpexUserStatusFilter(query, params, visibilityStatus);
     }
 
     // =====================================================
@@ -1787,14 +1792,14 @@ const getAllOpex = async (data) => {
         countParams,
         userType,
         approverStatusColumn,
-        approvalStatus,
+        visibilityStatus,
         access.financeHod,
       );
     } else if (userType === "USER") {
       countQuery = appendOpexUserStatusFilter(
         countQuery,
         countParams,
-        approvalStatus,
+        visibilityStatus,
       );
     }
 

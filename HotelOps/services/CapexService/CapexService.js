@@ -855,6 +855,12 @@ const getAllCapex = async (data) => {
       return fail("ApprovalFlow must be GM, CEO, or OWNER.", 400);
     }
 
+    // When a flow is selected, Status describes that selected approval stage.
+    // The login role continues to control visibility, but must not also apply
+    // the same Status to its own role column (for example GMStatus=Rejected
+    // together with CEOStatus=Rejected).
+    const visibilityStatus = approvalFlow ? null : approvalStatus;
+
     // =====================================================
     // MAIN QUERY
     // =====================================================
@@ -930,7 +936,7 @@ const getAllCapex = async (data) => {
       // ---------------------------------------------------
 
       if (userType === "GM") {
-        if (approvalStatus === "PENDING") {
+        if (visibilityStatus === "PENDING") {
           params.push("GM");
 
           query += `
@@ -938,8 +944,8 @@ const getAllCapex = async (data) => {
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
             AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
-        } else if (approvalStatus) {
-          params.push(approvalStatus);
+        } else if (visibilityStatus) {
+          params.push(visibilityStatus);
 
           query += `
             AND UPPER(
@@ -957,7 +963,7 @@ const getAllCapex = async (data) => {
       // CEO
       // ---------------------------------------------------
       else if (userType === "CEO") {
-        if (approvalStatus === "PENDING") {
+        if (visibilityStatus === "PENDING") {
           params.push("CEO");
 
           query += `
@@ -965,8 +971,8 @@ const getAllCapex = async (data) => {
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
             AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
-        } else if (approvalStatus) {
-          params.push(approvalStatus);
+        } else if (visibilityStatus) {
+          params.push(visibilityStatus);
 
           query += `
             AND UPPER(
@@ -984,7 +990,7 @@ const getAllCapex = async (data) => {
       // OWNER
       // ---------------------------------------------------
       else if (userType === "OWNER") {
-        if (approvalStatus === "PENDING") {
+        if (visibilityStatus === "PENDING") {
           params.push("OWNER");
 
           query += `
@@ -992,8 +998,8 @@ const getAllCapex = async (data) => {
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
             AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
           `;
-        } else if (approvalStatus) {
-          params.push(approvalStatus);
+        } else if (visibilityStatus) {
+          params.push(visibilityStatus);
 
           query += `
             AND UPPER(
@@ -1012,9 +1018,9 @@ const getAllCapex = async (data) => {
     // HOD
     // =====================================================
     else if (userType === "HOD") {
-      if (["REJECTED", "HOLD", "RETURNED"].includes(approvalStatus)) {
+      if (["REJECTED", "HOLD", "RETURNED"].includes(visibilityStatus)) {
         // Match the selected non-pending status at any approval stage.
-        params.push(approvalStatus);
+        params.push(visibilityStatus);
 
         query += `
           AND (
@@ -1053,7 +1059,7 @@ const getAllCapex = async (data) => {
             ) = $${params.length}
           )
         `;
-      } else if (approvalStatus === "APPROVED") {
+      } else if (visibilityStatus === "APPROVED") {
         // FinalStatus already represents completion of the configured flow.
         // Do not require roles (such as OWNER) that may not be configured.
         query += `
@@ -1064,7 +1070,7 @@ const getAllCapex = async (data) => {
             )
           ) = 'APPROVED'
         `;
-      } else if (approvalStatus === "PENDING") {
+      } else if (visibilityStatus === "PENDING") {
         // Pending excludes terminal and paused/returned approval states.
         query += `
           AND NOT (
@@ -1136,7 +1142,7 @@ const getAllCapex = async (data) => {
     // Non-approval roles see organization-wide CAPEX, but a requested status
     // must still constrain the result set.
     else {
-      query = appendOverallCapexStatusFilter(query, params, approvalStatus);
+      query = appendOverallCapexStatusFilter(query, params, visibilityStatus);
     }
 
     // =====================================================
@@ -1235,7 +1241,7 @@ const getAllCapex = async (data) => {
         statusColumn = "approval_state.OwnerStatus";
       }
 
-      if (approvalStatus === "PENDING" ) {
+      if (visibilityStatus === "PENDING" ) {
         countParams.push(userType);
 
         countQuery += `
@@ -1243,8 +1249,8 @@ const getAllCapex = async (data) => {
           AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
           AND UPPER(COALESCE(approval_state.FinalStatus, 'PENDING')) = 'PENDING'
         `;
-      } else if (approvalStatus) {
-        countParams.push(approvalStatus);
+      } else if (visibilityStatus) {
+        countParams.push(visibilityStatus);
 
         countQuery += `
           AND UPPER(
@@ -1261,7 +1267,7 @@ const getAllCapex = async (data) => {
     // HOD COUNT
     // =====================================================
     else if (userType === "HOD") {
-      if (approvalStatus === "REJECTED") {
+      if (visibilityStatus === "REJECTED") {
         countQuery += `
           AND (
             UPPER(
@@ -1290,7 +1296,7 @@ const getAllCapex = async (data) => {
             ) = 'REJECTED'
           )
         `;
-      } else if (approvalStatus === "APPROVED") {
+      } else if (visibilityStatus === "APPROVED") {
         countQuery += `
           AND UPPER(
             COALESCE(
@@ -1299,7 +1305,7 @@ const getAllCapex = async (data) => {
             )
           ) = 'APPROVED'
         `;
-      } else if (approvalStatus === "PENDING") {
+      } else if (visibilityStatus === "PENDING") {
         countQuery += `
           AND NOT (
             UPPER(
@@ -1362,7 +1368,7 @@ const getAllCapex = async (data) => {
       countQuery = appendOverallCapexStatusFilter(
         countQuery,
         countParams,
-        approvalStatus,
+        visibilityStatus,
       );
     }
 
@@ -3866,6 +3872,8 @@ const generateCapexListPdfDocument = async (data) => {
       return fail("ApprovalFlow must be GM, CEO, or OWNER.", 400);
     }
 
+    const visibilityStatus = approvalFlow ? null : approvalStatus;
+
     // ============================================================
     // PDF QUERY
     // Same CAPEX_SELECT + same filters as getAllCapex
@@ -3924,15 +3932,15 @@ const generateCapexListPdfDocument = async (data) => {
       // ----------------------------------------------------------
 
       if (userType === "GM") {
-        if (approvalStatus === "PENDING") {
+        if (visibilityStatus === "PENDING") {
           params.push("GM");
 
           query += `
             AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
           `;
-        } else if (approvalStatus) {
-          params.push(approvalStatus);
+        } else if (visibilityStatus) {
+          params.push(visibilityStatus);
 
           query += `
             AND UPPER(
@@ -3967,15 +3975,15 @@ const generateCapexListPdfDocument = async (data) => {
       // CEO
       // ----------------------------------------------------------
       else if (userType === "CEO") {
-        if (approvalStatus === "PENDING") {
+        if (visibilityStatus === "PENDING") {
           params.push("CEO");
 
           query += `
             AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
           `;
-        } else if (approvalStatus) {
-          params.push(approvalStatus);
+        } else if (visibilityStatus) {
+          params.push(visibilityStatus);
 
           query += `
             AND UPPER(
@@ -4010,15 +4018,15 @@ const generateCapexListPdfDocument = async (data) => {
       // OWNER
       // ----------------------------------------------------------
       else if (userType === "OWNER") {
-        if (approvalStatus === "PENDING") {
+        if (visibilityStatus === "PENDING") {
           params.push("OWNER");
 
           query += `
             AND UPPER(COALESCE(current_stage.ApprovalRole, '')) = $${params.length}
             AND UPPER(COALESCE(current_stage.Status, 'PENDING')) = 'PENDING'
           `;
-        } else if (approvalStatus) {
-          params.push(approvalStatus);
+        } else if (visibilityStatus) {
+          params.push(visibilityStatus);
 
           query += `
             AND UPPER(
@@ -4054,8 +4062,8 @@ const generateCapexListPdfDocument = async (data) => {
     // HOD
     // ============================================================
     else if (userType === "HOD") {
-      if (["REJECTED", "HOLD", "RETURNED"].includes(approvalStatus)) {
-        params.push(approvalStatus);
+      if (["REJECTED", "HOLD", "RETURNED"].includes(visibilityStatus)) {
+        params.push(visibilityStatus);
 
         query += `
           AND (
@@ -4068,7 +4076,7 @@ const generateCapexListPdfDocument = async (data) => {
             UPPER(COALESCE(approval_state.FinalStatus, '')) = $${params.length}
           )
         `;
-      } else if (approvalStatus === "APPROVED") {
+      } else if (visibilityStatus === "APPROVED") {
         query += `
           AND UPPER(
             COALESCE(approval_state.GMStatus, 'PENDING')
@@ -4082,7 +4090,7 @@ const generateCapexListPdfDocument = async (data) => {
             COALESCE(approval_state.OwnerStatus, 'PENDING')
           ) = 'APPROVED'
         `;
-      } else if (approvalStatus === "PENDING") {
+      } else if (visibilityStatus === "PENDING") {
         query += `
           AND NOT (
             UPPER(COALESCE(approval_state.GMStatus, ''))

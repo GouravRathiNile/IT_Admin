@@ -1240,6 +1240,11 @@ const getCreditApplicationList = async (data) => {
       return fail("ApprovalFlow must be FC or GM.", 400);
     }
 
+    // When ApprovalFlow is selected, Status belongs to that selected stage.
+    // The logged-in approver still controls the base visibility scope, but the
+    // same status must not also be applied to the logged-in approver's column.
+    const visibilityStatus = normalizedApprovalFlow ? null : Status;
+
 
     // ============================================================
     // Application Date Range
@@ -1475,7 +1480,7 @@ const getCreditApplicationList = async (data) => {
       // Pending
       // ==========================================================
 
-      if (Status === "PENDING") {
+      if (visibilityStatus === "PENDING") {
         params.push(
           approvalRole,
         );
@@ -1557,15 +1562,15 @@ const getCreditApplicationList = async (data) => {
       // ==========================================================
 
       else if (
-        Status ===
+        visibilityStatus ===
           "APPROVED" ||
-        Status ===
+        visibilityStatus ===
           "REJECTED" ||
-        Status ===
+        visibilityStatus ===
           "RETURNED"
       ) {
         params.push(
-          Status,
+          visibilityStatus,
         );
 
         whereClause += `
@@ -1584,7 +1589,7 @@ const getCreditApplicationList = async (data) => {
         // isliye use FC Approved history mein include nahi karna hai.
         if (
           approvalRole === "FC" &&
-          Status === "APPROVED"
+          visibilityStatus === "APPROVED"
         ) {
           whereClause += `
             AND NOT
@@ -1656,9 +1661,9 @@ const getCreditApplicationList = async (data) => {
     // Sales / Sales & Marketing etc.
     // ============================================================
 
-    else if (Status) {
+    else if (visibilityStatus) {
       if (
-        Status === "APPROVED"
+        visibilityStatus === "APPROVED"
       ) {
         whereClause += `
           AND UPPER(
@@ -1673,7 +1678,7 @@ const getCreditApplicationList = async (data) => {
       }
 
       else if (
-        Status === "REJECTED"
+        visibilityStatus === "REJECTED"
       ) {
         whereClause += `
           AND
@@ -1713,7 +1718,7 @@ const getCreditApplicationList = async (data) => {
       }
 
       else if (
-        Status === "RETURNED"
+        visibilityStatus === "RETURNED"
       ) {
         whereClause += `
           AND
@@ -1753,7 +1758,7 @@ const getCreditApplicationList = async (data) => {
       }
 
       else if (
-        Status === "PENDING"
+        visibilityStatus === "PENDING"
       ) {
         whereClause += `
           AND current_stage.ApprovalRole
@@ -1809,8 +1814,9 @@ const getCreditApplicationList = async (data) => {
 
     // ============================================================
     // Approval Flow Filter
-    // Existing user visibility ke result ko sirf narrow karta hai.
-    // GM approval ke baad ARID-null state displayed FC pending stage hai.
+    // Existing user visibility ke result ko selected approval stage se narrow
+    // karta hai. Non-pending status selected role ke own status column par
+    // apply hota hai; Pending current-stage concept hai.
     // ============================================================
 
     if (normalizedApprovalFlow) {
@@ -1818,20 +1824,81 @@ const getCreditApplicationList = async (data) => {
       const approvalFlowIndex = params.length;
 
       whereClause += `
-        AND
-        (
-          UPPER(TRIM(COALESCE(current_stage.ApprovalRole, ''))) =
-            $${approvalFlowIndex}
-
-          OR
-          (
-            $${approvalFlowIndex} = 'FC'
-            AND UPPER(TRIM(COALESCE(approval.FinanceStatus, ''))) = 'APPROVED'
-            AND UPPER(TRIM(COALESCE(approval.GMStatus, ''))) = 'APPROVED'
-            AND NULLIF(TRIM(COALESCE(ca.ARID, '')), '') IS NULL
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM Credit_Application_Approval_Config flow_cfg
+            WHERE flow_cfg.OrganizationID = ca.OrganizationID
+              AND flow_cfg.IsDeleted = FALSE
+              AND (
+                CASE
+                  WHEN UPPER(TRIM(flow_cfg.ApprovalRole)) = 'FINANCE' THEN 'FC'
+                  ELSE UPPER(TRIM(flow_cfg.ApprovalRole))
+                END
+              ) = $${approvalFlowIndex}
+          )
+          OR (
+            NOT EXISTS (
+              SELECT 1
+              FROM Credit_Application_Approval_Config configured_flow
+              WHERE configured_flow.OrganizationID = ca.OrganizationID
+                AND configured_flow.IsDeleted = FALSE
+            )
+            AND $${approvalFlowIndex} IN ('FC', 'GM')
           )
         )
       `;
+
+      if (Status === "PENDING") {
+        whereClause += `
+          AND (
+            (
+              UPPER(TRIM(COALESCE(current_stage.ApprovalRole, ''))) =
+                $${approvalFlowIndex}
+              AND UPPER(TRIM(COALESCE(current_stage.Status, 'Pending'))) =
+                'PENDING'
+            )
+        `;
+
+        // Finance and GM approvals complete hone ke baad blank ARID ko UI mein
+        // FC ka pending task maana jata hai.
+        if (normalizedApprovalFlow === "FC") {
+          whereClause += `
+            OR (
+              UPPER(TRIM(COALESCE(approval.FinanceStatus, ''))) = 'APPROVED'
+              AND UPPER(TRIM(COALESCE(approval.GMStatus, ''))) = 'APPROVED'
+              AND NULLIF(TRIM(COALESCE(ca.ARID, '')), '') IS NULL
+            )
+          `;
+        }
+
+        whereClause += `
+          )
+        `;
+      } else if (Status) {
+        const flowStatusColumns = {
+          FC: "approval.FinanceStatus",
+          GM: "approval.GMStatus",
+        };
+        const flowStatusColumn = flowStatusColumns[normalizedApprovalFlow];
+
+        params.push(Status);
+        whereClause += `
+          AND UPPER(TRIM(COALESCE(${flowStatusColumn}, 'Pending'))) =
+            $${params.length}
+        `;
+
+        // ARID-null state is displayed as FC Pending, not FC Approved.
+        if (normalizedApprovalFlow === "FC" && Status === "APPROVED") {
+          whereClause += `
+            AND NOT (
+              UPPER(TRIM(COALESCE(approval.FinanceStatus, ''))) = 'APPROVED'
+              AND UPPER(TRIM(COALESCE(approval.GMStatus, ''))) = 'APPROVED'
+              AND NULLIF(TRIM(COALESCE(ca.ARID, '')), '') IS NULL
+            )
+          `;
+        }
+      }
     }
 
 
@@ -5588,9 +5655,26 @@ const generateCreditApplicationListPdf = async (data) => {
     if (!creditApplicationRows) {
       creditApplicationRows = [];
 
+      // Keep the PDF export on the exact same filter and trusted-login scope
+      // as the list API. In particular, ApprovalFlow + Status must be resolved
+      // together by getCreditApplicationList for every exported page.
+      const listFilterData = {
+        OrganizationID: data.OrganizationID,
+        CompanyName: data.CompanyName,
+        Status: data.Status,
+        ApprovalFlow: data.ApprovalFlow,
+        FromDate: data.FromDate,
+        ToDate: data.ToDate,
+        UserID: data.UserID,
+        UserType: data.UserType,
+        DepartmentName: data.DepartmentName,
+        LoginType: data.LoginType,
+        AllOrganizationAccess: data.AllOrganizationAccess,
+      };
+
       const firstPageResult =
         await getCreditApplicationList({
-          ...data,
+          ...listFilterData,
           page: 1,
           PageSize: 100,
         });
@@ -5610,7 +5694,7 @@ const generateCreditApplicationListPdf = async (data) => {
       for (let page = 2; page <= totalPages; page += 1) {
         const pageResult =
           await getCreditApplicationList({
-            ...data,
+            ...listFilterData,
             page,
             PageSize: 100,
           });

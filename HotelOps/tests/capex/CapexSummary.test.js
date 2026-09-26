@@ -387,7 +387,7 @@ test("CAPEX list PDF reuses getAllCapex configured-flow visibility", { concurren
   }
 });
 
-test("CAPEX ApprovalFlow applies Rejected to the selected CEO stage in list, count, and PDF", { concurrency: false }, async () => {
+test("GM CAPEX filter applies CEO Rejected without also requiring GM Rejected", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];
   pool.query = async (sql, values) => {
@@ -401,7 +401,7 @@ test("CAPEX ApprovalFlow applies Rejected to the selected CEO stage in list, cou
   try {
     const filters = {
       OrganizationID: 20,
-      UserType: "CEO",
+      UserType: "GM",
       ApprovalFlow: " ceo ",
       Status: "Rejected",
       page: 1,
@@ -439,9 +439,9 @@ test("CAPEX ApprovalFlow applies Rejected to the selected CEO stage in list, cou
         appliedFilters,
         /COALESCE\(current_stage\.ApprovalRole, ''\)/,
       );
-      assert.match(
+      assert.doesNotMatch(
         appliedFilters,
-        /UPPER\(COALESCE\(approval_state\.GMStatus, 'PENDING'\)\) = 'APPROVED'/,
+        /COALESCE\(\s*approval_state\.GMStatus,[\s\S]*?= \$\d+/,
       );
     }
 
