@@ -2653,7 +2653,7 @@ const processCapexApproval = async (data) => {
       notifyApprovalCommitted({
         kind: "APPROVE",
         notificationAction: "APPROVED",
-        // includeCreator: true,
+        includeCreator: true,
       });
 
       return {
