@@ -11,6 +11,10 @@ const {
   getDailyBreakageOutletWiseReport,
   getDailyBreakagePersonResponsibleReport,
   getDailyBreakagePersonResponsible,
+  getDailyBreakageListPdf,
+  getDailyBreakageOutletWiseReportPdf,
+  getDailyBreakagePersonResponsibleReportPdf,
+  generateDailyBreakageDetailPdf
 } = require("../../controllers/DailyBreakageController/DailyBreakageController");
 const router = express.Router();
 
@@ -27,5 +31,9 @@ router.get("/PersonResponsible",authenticateToken,getDailyBreakagePersonResponsi
 router.get("/SummaryReport",authenticateToken,getDailyBreakageSummaryReport,);
 router.get("/OutletWiseReport",authenticateToken,getDailyBreakageOutletWiseReport,);
 router.get("/PersonResponsibleReport",authenticateToken,getDailyBreakagePersonResponsibleReport,);
-
+// ============================================================ PDFs
+router.get("/DailyBreakageListPdf",authenticateToken,getDailyBreakageListPdf,);
+router.get("/OutletWiseReportPdf",authenticateToken,getDailyBreakageOutletWiseReportPdf,);
+router.get("/PersonResponsibleReportPdf",authenticateToken,getDailyBreakagePersonResponsibleReportPdf,);
+router.get("/DailyBreakageDetailPdf/:DailyBreakageID",authenticateToken,generateDailyBreakageDetailPdf,);
 module.exports = router;

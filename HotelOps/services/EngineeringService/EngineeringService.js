@@ -13603,7 +13603,8 @@ const getAMCById = async (data) => {
 
             e.ScheduleOfServicing,
             e.ScheduleDay,
-            e.ResponsiblePerson
+            e.ResponsiblePerson,
+            rp.FullName AS ResponsiblePersonName
 
           FROM Engineering_Equipment_Entry_Master e
           LEFT JOIN Organization_Master om
@@ -13613,6 +13614,10 @@ const getAMCById = async (data) => {
             ON d.DepartmentID = e.DepartmentID
            AND d.OrganizationID = e.OrganizationID
            AND d.IsDeleted = FALSE
+
+          LEFT JOIN user_master rp
+            ON rp.UserID = e.ResponsiblePerson
+           AND rp.IsDeleted = FALSE
 
           WHERE e.EquipmentID = $1
             AND e.IsDeleted = FALSE
@@ -13779,6 +13784,8 @@ const getAMCById = async (data) => {
         ScheduleDay:
           row.scheduleday,
 
+        ResponsiblePersonName: row.responsiblepersonname ?? null,
+
         ResponsiblePerson:
           row.responsibleperson !== null
             ? Number(
@@ -13879,6 +13886,7 @@ const getAMCById = async (data) => {
         e.ScheduleOfServicing,
         e.ScheduleDay,
         e.ResponsiblePerson,
+        rp.FullName AS ResponsiblePersonName,
 
         -- ========================================================
         -- Approval
@@ -13970,6 +13978,10 @@ const getAMCById = async (data) => {
         ON d.DepartmentID = e.DepartmentID
        AND d.OrganizationID = e.OrganizationID
        AND d.IsDeleted = FALSE
+
+      LEFT JOIN user_master rp
+        ON rp.UserID = e.ResponsiblePerson
+       AND rp.IsDeleted = FALSE
 
       LEFT JOIN Engineering_AMC_Approval aa
         ON aa.AMCID =
@@ -14262,6 +14274,7 @@ const getAMCById = async (data) => {
 
     AMC.OrganizationShortName = row.organizationshortname ?? null;
     AMC.DepartmentName = row.departmentname ?? null;
+    AMC.ResponsiblePersonName = row.responsiblepersonname ?? null;
     delete AMC.FinalStatusDateTime;
     delete AMC.LoggedInApprovalRole;
     delete AMC.CanTakeApprovalAction;

@@ -1222,3 +1222,576 @@ exports.getDailyBreakagePersonResponsibleReport = async (
     );
   }
 };
+// =======================================================================PDFs
+// ============================================================Daily Breakage List PDF
+exports.getDailyBreakageListPdf = async (req, res) => {
+  try {
+    const {
+      OrganizationID,
+      Outlet,
+      FromDate,
+      ToDate,
+    } = req.query;
+
+
+    // ============================================================
+    // Organization Validation
+    // ============================================================
+
+    if (
+      OrganizationID &&
+      (
+        !Number.isInteger(Number(OrganizationID)) ||
+        Number(OrganizationID) <= 0
+      )
+    ) {
+      throw new AppError(
+        "Valid Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Date Validation
+    // ============================================================
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Data
+    // Same Filters As GET List API
+    // ============================================================
+
+    const data = {
+      OrganizationID:
+        OrganizationID
+          ? Number(OrganizationID)
+          : null,
+
+      Outlet:
+        Outlet
+          ? String(Outlet).trim()
+          : null,
+
+      FromDate:
+        FromDate || null,
+
+      ToDate:
+        ToDate || null,
+    };
+
+
+    // ============================================================
+    // Service
+    // ============================================================
+
+    const response =
+      await DailyBreakageService
+        .generateDailyBreakageListPdf(
+          data,
+        );
+
+
+    // ============================================================
+    // Error
+    // ============================================================
+
+    if (!response.success) {
+      return res
+        .status(
+          response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(response);
+    }
+
+
+    // ============================================================
+    // PDF Headers
+    // ============================================================
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType ||
+      "application/pdf",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return res
+      .status(STATUS_CODES.SUCCESS)
+      .send(response.data);
+
+  } catch (error) {
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Outlet Wise Report PDF
+exports.getDailyBreakageOutletWiseReportPdf = async (
+  req,
+  res,
+) => {
+  try {
+
+    const {
+      OrganizationID,
+      Outlet,
+      FromDate,
+      ToDate,
+    } = req.query;
+
+
+    // ============================================================
+    // Organization Validation
+    // SAME AS GET REPORT
+    // ============================================================
+
+    if (
+      OrganizationID &&
+      (
+        !Number.isInteger(
+          Number(
+            OrganizationID,
+          ),
+        ) ||
+        Number(
+          OrganizationID,
+        ) <= 0
+      )
+    ) {
+      throw new AppError(
+        "Valid Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Date Validation
+    // SAME AS GET REPORT
+    // ============================================================
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Same Filters As GET Report
+    // ============================================================
+
+    const data = {
+
+      OrganizationID:
+        OrganizationID
+          ? Number(
+              OrganizationID,
+            )
+          : null,
+
+      Outlet:
+        Outlet
+          ? String(
+              Outlet,
+            ).trim()
+          : null,
+
+      FromDate:
+        FromDate || null,
+
+      ToDate:
+        ToDate || null,
+    };
+
+
+    // ============================================================
+    // Service
+    // ============================================================
+
+    const response =
+      await DailyBreakageService
+        .generateDailyBreakageOutletWiseReportPdf(
+          data,
+        );
+
+
+    // ============================================================
+    // Error Response
+    // ============================================================
+
+    if (!response.success) {
+      return res
+        .status(
+          response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(
+          response,
+        );
+    }
+
+
+    // ============================================================
+    // PDF Headers
+    // ============================================================
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType ||
+      "application/pdf",
+    );
+
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS,
+      )
+      .send(
+        response.data,
+      );
+
+  } catch (error) {
+
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Person Responsible Wise Report PDF
+exports.getDailyBreakagePersonResponsibleReportPdf = async (
+  req,
+  res,
+) => {
+  try {
+
+    const {
+      OrganizationID,
+      PersonResponsible,
+      FromDate,
+      ToDate,
+    } = req.query;
+
+
+    // ============================================================
+    // Organization Validation
+    // SAME AS GET REPORT
+    // ============================================================
+
+    if (
+      OrganizationID &&
+      (
+        !Number.isInteger(
+          Number(OrganizationID),
+        ) ||
+        Number(OrganizationID) <= 0
+      )
+    ) {
+      throw new AppError(
+        "Valid Organization ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Date Validation
+    // SAME AS GET REPORT
+    // ============================================================
+
+    validateDateFormat(
+      FromDate,
+      "From Date",
+    );
+
+    validateDateFormat(
+      ToDate,
+      "To Date",
+    );
+
+
+    if (
+      FromDate &&
+      ToDate &&
+      FromDate > ToDate
+    ) {
+      throw new AppError(
+        "From Date cannot be greater than To Date",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Same Filters As GET Report
+    // ============================================================
+
+    const data = {
+
+      OrganizationID:
+        OrganizationID
+          ? Number(OrganizationID)
+          : null,
+
+      PersonResponsible:
+        PersonResponsible
+          ? String(
+              PersonResponsible,
+            ).trim()
+          : null,
+
+      FromDate:
+        FromDate || null,
+
+      ToDate:
+        ToDate || null,
+    };
+
+
+    // ============================================================
+    // Service
+    // ============================================================
+
+    const response =
+      await DailyBreakageService
+        .generateDailyBreakagePersonResponsibleReportPdf(
+          data,
+        );
+
+
+    // ============================================================
+    // Error
+    // ============================================================
+
+    if (!response.success) {
+      return res
+        .status(
+          response.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(response);
+    }
+
+
+    // ============================================================
+    // PDF Headers
+    // ============================================================
+
+    res.setHeader(
+      "Content-Type",
+      response.contentType ||
+      "application/pdf",
+    );
+
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${response.fileName}"`,
+    );
+
+
+    res.setHeader(
+      "Content-Length",
+      response.data.length,
+    );
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS,
+      )
+      .send(
+        response.data,
+      );
+
+  } catch (error) {
+
+    return handleError(
+      error,
+      res,
+    );
+  }
+};
+// ============================================================Daily Breakage Details PDF
+exports.generateDailyBreakageDetailPdf = async (
+  req,
+  res,
+) => {
+  try {
+
+    const {
+      DailyBreakageID,
+    } = req.params;
+
+
+    // ============================================================
+    // Validation
+    // ============================================================
+
+    if (
+      !DailyBreakageID ||
+      !Number.isInteger(
+        Number(
+          DailyBreakageID,
+        ),
+      ) ||
+      Number(
+        DailyBreakageID,
+      ) <= 0
+    ) {
+      throw new AppError(
+        "Valid Daily Breakage ID is required",
+        STATUS_CODES.BAD_REQUEST,
+      );
+    }
+
+
+    // ============================================================
+    // Service
+    // ============================================================
+
+    const result =
+      await DailyBreakageService
+        .generateDailyBreakageDetailPdf({
+          DailyBreakageID:
+            Number(
+              DailyBreakageID,
+            ),
+        });
+
+
+    // ============================================================
+    // Error
+    // ============================================================
+
+    if (!result.success) {
+      return res
+        .status(
+          result.statusCode ||
+          STATUS_CODES.BAD_REQUEST,
+        )
+        .json(
+          result,
+        );
+    }
+
+
+    // ============================================================
+    // PDF Headers
+    // ============================================================
+
+    res.setHeader(
+      "Content-Type",
+      result.contentType ||
+      "application/pdf",
+    );
+
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.fileName}"`,
+    );
+
+
+    res.setHeader(
+      "Content-Length",
+      result.data.length,
+    );
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return res
+      .status(
+        STATUS_CODES.SUCCESS,
+      )
+      .send(
+        result.data,
+      );
+
+  } catch (error) {
+
+    return handleError(
+      error,
+      res,
+    );
+  }
+};

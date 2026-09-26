@@ -1675,6 +1675,2564 @@ const getDailyBreakagePersonResponsibleReport = async (data) => {
   }
 };
 // =======================================================================PDFs
+// ============================================================Daily Breakage List PDF
+const generateDailyBreakageListPdf = async (data) => {
+  try {
+    // ============================================================
+    // Fetch All Data From Existing GET Service
+    // ============================================================
+
+    let page = 1;
+    const pageSize = 100;
+
+    let totalPages = 1;
+    let records = [];
+
+
+    do {
+      const listResult =
+        await getDailyBreakageList({
+          OrganizationID:
+            data.OrganizationID || null,
+
+          Outlet:
+            data.Outlet || null,
+
+          FromDate:
+            data.FromDate || null,
+
+          ToDate:
+            data.ToDate || null,
+
+          page,
+          PageSize:
+            pageSize,
+        });
+
+
+      if (!listResult.success) {
+        return listResult;
+      }
+
+
+      records.push(
+        ...(
+          Array.isArray(
+            listResult.data,
+          )
+            ? listResult.data
+            : []
+        ),
+      );
+
+
+      totalPages =
+        Number(
+          listResult.TotalPages,
+        ) || 1;
+
+
+      page += 1;
+
+    } while (
+      page <= totalPages
+    );
+
+
+    // ============================================================
+    // PDF Rows
+    // Same Data Returned By GET API
+    // ============================================================
+
+    const pdfRows = [];
+
+
+    records.forEach(
+      (
+        record,
+        recordIndex,
+      ) => {
+
+        const details =
+          Array.isArray(
+            record.Details,
+          )
+            ? record.Details
+            : [];
+
+
+        // ========================================================
+        // Detail Rows
+        // ========================================================
+
+        if (
+          details.length > 0
+        ) {
+          details.forEach(
+            (
+              detail,
+              detailIndex,
+            ) => {
+
+              pdfRows.push({
+                SrNo:
+                  detailIndex === 0
+                    ? String(
+                        recordIndex + 1,
+                      ).padStart(
+                        2,
+                        "0",
+                      )
+                    : "",
+
+                EntryDate:
+                  detailIndex === 0
+                    ? record.EntryDate
+                    : "",
+
+                Outlet:
+                  detailIndex === 0
+                    ? record.Outlet
+                    : "",
+
+                Item:
+                  detail.Item,
+
+                Nos:
+                  detail.Nos,
+
+                PersonResponsible:
+                  detail.PersonResponsible,
+
+                TotalCost:
+                  detail.TotalCost,
+
+                IsTotal:
+                  false,
+              });
+            },
+          );
+
+
+          // ======================================================
+          // Total Row
+          // ======================================================
+
+          pdfRows.push({
+            SrNo:
+              "",
+
+            EntryDate:
+              "",
+
+            Outlet:
+              "",
+
+            Item:
+              "Total",
+
+            Nos:
+              "",
+
+            PersonResponsible:
+              "",
+
+            TotalCost:
+              record.TotalCost,
+
+            IsTotal:
+              true,
+          });
+        }
+
+
+        // ========================================================
+        // Master Without Details
+        // ========================================================
+
+        else {
+          pdfRows.push({
+            SrNo:
+              String(
+                recordIndex + 1,
+              ).padStart(
+                2,
+                "0",
+              ),
+
+            EntryDate:
+              record.EntryDate,
+
+            Outlet:
+              record.Outlet,
+
+            Item:
+              "-",
+
+            Nos:
+              "-",
+
+            PersonResponsible:
+              "-",
+
+            TotalCost:
+              "-",
+
+            IsTotal:
+              false,
+          });
+        }
+      },
+    );
+
+
+    // ============================================================
+    // Columns
+    // Same Fields As Screen
+    // ============================================================
+
+    const columns = [
+      {
+        header:
+          "SR#",
+
+        value:
+          (row) =>
+            row.SrNo,
+
+        width:
+          32,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "DATE",
+
+        value:
+          (row) =>
+            row.EntryDate || "",
+
+        width:
+          80,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "OUTLET",
+
+        value:
+          (row) =>
+            row.Outlet || "",
+
+        width:
+          100,
+      },
+
+      {
+        header:
+          "ITEM",
+
+        value:
+          (row) =>
+            row.Item || "-",
+
+        width:
+          "*",
+      },
+
+      {
+        header:
+          "NOS.",
+
+        value:
+          (row) => {
+            if (
+              row.Nos === "" ||
+              row.Nos === null ||
+              row.Nos === undefined
+            ) {
+              return "";
+            }
+
+            return row.Nos;
+          },
+
+        width:
+          55,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "PERSON RESPONSIBLE",
+
+        value:
+          (row) =>
+            row.PersonResponsible ||
+            "",
+
+        width:
+          125,
+      },
+
+      {
+        header:
+          "TOTAL COST",
+
+        value:
+          (row) => {
+            if (
+              row.TotalCost === "" ||
+              row.TotalCost === null ||
+              row.TotalCost === undefined ||
+              row.TotalCost === "-"
+            ) {
+              return "-";
+            }
+
+            return `₹${Number(
+              row.TotalCost,
+            ).toFixed(2)}`;
+          },
+
+        width:
+          90,
+
+        align:
+          "right",
+      },
+    ];
+
+
+    // ============================================================
+    // Metadata
+    // ============================================================
+
+    const metadata = [];
+
+
+    if (data.OrganizationID) {
+      metadata.push({
+        label:
+          "Organization",
+
+        value:
+          records[0]
+            ?.OrganizationName ||
+          records[0]
+            ?.OrganizationShortName ||
+          data.OrganizationID,
+      });
+    }
+
+
+    if (data.Outlet) {
+      metadata.push({
+        label:
+          "Outlet",
+
+        value:
+          data.Outlet,
+      });
+    }
+
+
+    if (data.FromDate) {
+      metadata.push({
+        label:
+          "From Date",
+
+        value:
+          formatDate(
+            data.FromDate,
+          ),
+      });
+    }
+
+
+    if (data.ToDate) {
+      metadata.push({
+        label:
+          "To Date",
+
+        value:
+          formatDate(
+            data.ToDate,
+          ),
+      });
+    }
+
+
+    metadata.push({
+      label:
+        "Total Entries",
+
+      value:
+        records.length,
+    });
+
+
+    // ============================================================
+    // Generate PDF
+    // ============================================================
+
+    const pdfBuffer =
+      await generatePdf({
+        title:
+          "DAILY BREAKAGE REPORT",
+
+        reportName:
+          "Daily Breakage Report",
+
+        organizationId:
+          data.OrganizationID ||
+          records[0]
+            ?.OrganizationID ||
+          null,
+
+        orientation:
+          "landscape",
+
+        metadata,
+
+        columns,
+
+        rows:
+          pdfRows,
+
+        pageMargins:
+          [
+            20,
+            24,
+            20,
+            35,
+          ],
+      });
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return {
+      success:
+        true,
+
+      message:
+        "Daily Breakage list PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Daily_Breakage_List_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+    console.error(
+      "Daily Breakage List PDF Error:",
+      error,
+    );
+
+    return {
+      success:
+        false,
+
+      statusCode:
+        503,
+
+      message:
+        "Unable to generate Daily Breakage list PDF.",
+    };
+  }
+};
+// ============================================================Outlet Wise Report PDF
+const generateDailyBreakageOutletWiseReportPdf = async (data) => {
+  try {
+
+    // ============================================================
+    // Fetch All Data From Existing GET Report API
+    // GET API PageSize Max = 100
+    // ============================================================
+
+    let page = 1;
+    const pageSize = 100;
+
+    let totalPages = 1;
+    let records = [];
+
+
+    do {
+      const reportResult =
+        await getDailyBreakageOutletWiseReport({
+          OrganizationID:
+            data.OrganizationID || null,
+
+          Outlet:
+            data.Outlet || null,
+
+          FromDate:
+            data.FromDate || null,
+
+          ToDate:
+            data.ToDate || null,
+
+          page,
+          PageSize:
+            pageSize,
+        });
+
+
+      if (!reportResult.success) {
+        return reportResult;
+      }
+
+
+      records.push(
+        ...(
+          Array.isArray(
+            reportResult.data,
+          )
+            ? reportResult.data
+            : []
+        ),
+      );
+
+
+      totalPages =
+        Number(
+          reportResult.TotalPages,
+        ) || 0;
+
+
+      page += 1;
+
+    } while (
+      page <= totalPages
+    );
+
+
+    // ============================================================
+    // PDF Rows
+    // SAME DATA RETURNED BY GET API
+    // ============================================================
+
+    const pdfRows =
+      records.map(
+        (record, index) => ({
+          SrNo:
+            index + 1,
+
+          Outlet:
+            record.Outlet,
+
+          TotalEntries:
+            record.TotalEntries,
+
+          TotalBreakageItems:
+            record.TotalBreakageItems,
+
+          TotalNos:
+            record.TotalNos,
+
+          TotalCost:
+            record.TotalCost,
+        }),
+      );
+
+
+    // ============================================================
+    // PDF Columns
+    // SAME FIELDS AS GET RESPONSE
+    // ============================================================
+
+    const columns = [
+      {
+        header:
+          "SR#",
+
+        value:
+          (row) =>
+            row.SrNo,
+
+        width:
+          40,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "OUTLET",
+
+        value:
+          (row) =>
+            row.Outlet || "-",
+
+        width:
+          "*",
+      },
+
+      {
+        header:
+          "TOTAL ENTRIES",
+
+        value:
+          (row) =>
+            row.TotalEntries,
+
+        width:
+          95,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "TOTAL BREAKAGE ITEMS",
+
+        value:
+          (row) =>
+            row.TotalBreakageItems,
+
+        width:
+          120,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "TOTAL NOS",
+
+        value:
+          (row) =>
+            row.TotalNos,
+
+        width:
+          85,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "TOTAL COST [INR]",
+
+        value:
+          (row) =>
+            Number(
+              row.TotalCost || 0,
+            ).toFixed(2),
+
+        width:
+          100,
+
+        align:
+          "center",
+      },
+    ];
+
+
+    // ============================================================
+    // Metadata
+    // SAME FILTERS USED IN GET API
+    // ============================================================
+
+    const metadata = [];
+
+
+    if (data.OrganizationID) {
+      metadata.push({
+        label:
+          "Organization ID",
+
+        value:
+          data.OrganizationID,
+      });
+    }
+
+
+    if (data.Outlet) {
+      metadata.push({
+        label:
+          "Outlet",
+
+        value:
+          data.Outlet,
+      });
+    }
+
+
+    if (data.FromDate) {
+      metadata.push({
+        label:
+          "From Date",
+
+        value:
+          formatDate(
+            data.FromDate,
+          ),
+      });
+    }
+
+
+    if (data.ToDate) {
+      metadata.push({
+        label:
+          "To Date",
+
+        value:
+          formatDate(
+            data.ToDate,
+          ),
+      });
+    }
+
+
+    metadata.push({
+      label:
+        "Total Outlets",
+
+      value:
+        records.length,
+    });
+
+
+    // ============================================================
+    // Generate PDF
+    // Existing PDF Config
+    // ============================================================
+
+    const pdfBuffer =
+      await generatePdf({
+        title:
+          "OUTLET WISE BREAKAGE REPORT",
+
+        reportName:
+          "Daily Breakage Outlet Wise Report",
+
+        organizationId:
+          data.OrganizationID || null,
+
+        orientation:
+          "landscape",
+
+        metadata,
+
+        columns,
+
+        rows:
+          pdfRows,
+
+        pageMargins:
+          [
+            20,
+            24,
+            20,
+            35,
+          ],
+      });
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return {
+      success: true,
+
+      message:
+        "Outlet wise Daily Breakage report PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Daily_Breakage_Outlet_Wise_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+
+    console.error(
+      "Outlet Wise Daily Breakage PDF Error:",
+      error,
+    );
+
+
+    return {
+      success: false,
+
+      statusCode: 503,
+
+      message:
+        "Unable to generate outlet wise Daily Breakage report PDF.",
+    };
+  }
+};
+// ============================================================Person Responsible Wise Report PDF
+const generateDailyBreakagePersonResponsibleReportPdf = async (data) => {
+  try {
+
+    // ============================================================
+    // Fetch All Data From Existing GET Report API
+    // Existing GET PageSize Max = 100
+    // ============================================================
+
+    let page = 1;
+    const pageSize = 100;
+
+    let totalPages = 1;
+    let records = [];
+
+
+    do {
+      const reportResult =
+        await getDailyBreakagePersonResponsibleReport({
+          OrganizationID:
+            data.OrganizationID || null,
+
+          PersonResponsible:
+            data.PersonResponsible || null,
+
+          FromDate:
+            data.FromDate || null,
+
+          ToDate:
+            data.ToDate || null,
+
+          page,
+
+          PageSize:
+            pageSize,
+        });
+
+
+      if (!reportResult.success) {
+        return reportResult;
+      }
+
+
+      records.push(
+        ...(
+          Array.isArray(reportResult.data)
+            ? reportResult.data
+            : []
+        ),
+      );
+
+
+      totalPages =
+        Number(
+          reportResult.TotalPages,
+        ) || 0;
+
+
+      page += 1;
+
+    } while (
+      page <= totalPages
+    );
+
+
+    // ============================================================
+    // PDF Rows
+    // SAME DATA RETURNED BY GET API
+    // ============================================================
+
+    const pdfRows =
+      records.map(
+        (record, index) => ({
+          SrNo:
+            index + 1,
+
+          PersonResponsible:
+            record.PersonResponsible,
+
+          TotalBreakageCount:
+            record.TotalBreakageCount,
+
+          TotalNos:
+            record.TotalNos,
+
+          TotalCost:
+            record.TotalCost,
+        }),
+      );
+
+
+    // ============================================================
+    // PDF Columns
+    // SAME FIELDS AS GET RESPONSE
+    // ============================================================
+
+    const columns = [
+      {
+        header:
+          "SR#",
+
+        value:
+          (row) =>
+            row.SrNo,
+
+        width:
+          45,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "PERSON RESPONSIBLE",
+
+        value:
+          (row) =>
+            row.PersonResponsible || "-",
+
+        width:
+          "*",
+      },
+
+      {
+        header:
+          "TOTAL BREAKAGE COUNT",
+
+        value:
+          (row) =>
+            row.TotalBreakageCount,
+
+        width:
+          130,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "TOTAL NOS",
+
+        value:
+          (row) =>
+            row.TotalNos,
+
+        width:
+          100,
+
+        align:
+          "center",
+      },
+
+      {
+        header:
+          "TOTAL COST [INR]",
+
+        value:
+          (row) =>
+            Number(
+              row.TotalCost || 0,
+            ).toFixed(2),
+
+        width:
+          110,
+
+        align:
+          "center",
+      },
+    ];
+
+
+    // ============================================================
+    // Metadata
+    // SAME FILTERS AS GET API
+    // ============================================================
+
+    const metadata = [];
+
+
+    if (data.OrganizationID) {
+      metadata.push({
+        label:
+          "Organization ID",
+
+        value:
+          data.OrganizationID,
+      });
+    }
+
+
+    if (data.PersonResponsible) {
+      metadata.push({
+        label:
+          "Person Responsible",
+
+        value:
+          data.PersonResponsible,
+      });
+    }
+
+
+    if (data.FromDate) {
+      metadata.push({
+        label:
+          "From Date",
+
+        value:
+          formatDate(
+            data.FromDate,
+          ),
+      });
+    }
+
+
+    if (data.ToDate) {
+      metadata.push({
+        label:
+          "To Date",
+
+        value:
+          formatDate(
+            data.ToDate,
+          ),
+      });
+    }
+
+
+    metadata.push({
+      label:
+        "Total Persons",
+
+      value:
+        records.length,
+    });
+
+
+    // ============================================================
+    // Generate PDF
+    // Existing PDF Helper
+    // ============================================================
+
+    const pdfBuffer =
+      await generatePdf({
+        title:
+          "PERSON RESPONSIBLE WISE BREAKAGE REPORT",
+
+        reportName:
+          "Daily Breakage Person Responsible Wise Report",
+
+        organizationId:
+          data.OrganizationID || null,
+
+        orientation:
+          "landscape",
+
+        metadata,
+
+        columns,
+
+        rows:
+          pdfRows,
+
+        pageMargins:
+          [
+            20,
+            24,
+            20,
+            35,
+          ],
+      });
+
+
+    // ============================================================
+    // Response
+    // ============================================================
+
+    return {
+      success: true,
+
+      message:
+        "Person responsible wise Daily Breakage report PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Daily_Breakage_Person_Responsible_Report_${Date.now()}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+
+    console.error(
+      "Person Responsible Wise Daily Breakage PDF Error:",
+      error,
+    );
+
+
+    return {
+      success: false,
+
+      statusCode: 503,
+
+      message:
+        "Unable to generate person responsible wise Daily Breakage report PDF.",
+    };
+  }
+};
+// ============================================================Daily Breakage Details PDF
+const generateDailyBreakageDetailPdf = async (data) => {
+  try {
+    // ============================================================
+    // Validate
+    // ============================================================
+
+    const dailyBreakageID =
+      Number(data.DailyBreakageID);
+
+
+    if (
+      !Number.isInteger(
+        dailyBreakageID,
+      ) ||
+      dailyBreakageID <= 0
+    ) {
+      return fail(
+        "Valid DailyBreakageID is required.",
+        400,
+      );
+    }
+
+
+    // ============================================================
+    // SAME GET BY ID API
+    // No Duplicate SQL
+    // ============================================================
+
+    const dailyBreakageResult =
+      await getDailyBreakageById({
+        DailyBreakageID:
+          dailyBreakageID,
+      });
+
+
+    if (
+      !dailyBreakageResult.success
+    ) {
+      return dailyBreakageResult;
+    }
+
+
+    const detail =
+      dailyBreakageResult.data;
+
+
+    // ============================================================
+    // PDF Design
+    // ============================================================
+
+    const COLORS = {
+      navy:
+        "#082B5C",
+
+      label:
+        "#082B5C",
+
+      text:
+        "#172033",
+
+      muted:
+        "#64748B",
+
+      border:
+        "#CFD7E3",
+
+      labelBackground:
+        "#F4F6F9",
+    };
+
+
+    const displayValue = (
+      value,
+    ) =>
+      value === null ||
+      value === undefined ||
+      String(value).trim() === ""
+        ? "-"
+        : String(value);
+
+
+    // ============================================================
+    // Canvas Helpers
+    // ============================================================
+
+    const line = (
+      x1,
+      y1,
+      x2,
+      y2,
+      lineWidth = 1.1,
+    ) => ({
+      type:
+        "line",
+
+      x1,
+      y1,
+      x2,
+      y2,
+
+      lineWidth,
+
+      lineColor:
+        COLORS.navy,
+    });
+
+
+    const rect = (
+      x,
+      y,
+      w,
+      h,
+      r = 0,
+    ) => ({
+      type:
+        "rect",
+
+      x,
+      y,
+      w,
+      h,
+      r,
+
+      lineWidth:
+        1.1,
+
+      lineColor:
+        COLORS.navy,
+    });
+
+
+    const ellipse = (
+      x,
+      y,
+      r1,
+      r2 = r1,
+    ) => ({
+      type:
+        "ellipse",
+
+      x,
+      y,
+      r1,
+      r2,
+
+      lineWidth:
+        1.1,
+
+      lineColor:
+        COLORS.navy,
+    });
+
+
+    // ============================================================
+    // Icons
+    // ============================================================
+
+    const fieldIcon = (
+      type,
+    ) => {
+      const icons = {
+
+        organization: [
+          rect(
+            4,
+            2,
+            10,
+            15,
+            1,
+          ),
+
+          line(
+            1,
+            17,
+            17,
+            17,
+          ),
+
+          line(
+            7,
+            6,
+            7,
+            8,
+          ),
+
+          line(
+            11,
+            6,
+            11,
+            8,
+          ),
+
+          line(
+            7,
+            11,
+            7,
+            13,
+          ),
+
+          line(
+            11,
+            11,
+            11,
+            13,
+          ),
+        ],
+
+
+        calendar: [
+          rect(
+            1,
+            4,
+            16,
+            13,
+            1,
+          ),
+
+          line(
+            1,
+            8,
+            17,
+            8,
+          ),
+
+          line(
+            5,
+            2,
+            5,
+            6,
+          ),
+
+          line(
+            13,
+            2,
+            13,
+            6,
+          ),
+        ],
+
+
+        location: [
+          ellipse(
+            9,
+            7,
+            5,
+          ),
+
+          ellipse(
+            9,
+            7,
+            1.5,
+          ),
+
+          {
+            type:
+              "polyline",
+
+            points: [
+              {
+                x: 5,
+                y: 10,
+              },
+
+              {
+                x: 9,
+                y: 18,
+              },
+
+              {
+                x: 13,
+                y: 10,
+              },
+            ],
+
+            lineWidth:
+              1.1,
+
+            lineColor:
+              COLORS.navy,
+          },
+        ],
+
+
+        quantity: [
+          rect(
+            2,
+            3,
+            14,
+            12,
+            1,
+          ),
+
+          line(
+            5,
+            7,
+            13,
+            7,
+          ),
+
+          line(
+            5,
+            11,
+            13,
+            11,
+          ),
+        ],
+
+
+        money: [
+          ellipse(
+            9,
+            9,
+            7,
+          ),
+
+          line(
+            9,
+            4,
+            9,
+            14,
+          ),
+
+          line(
+            6,
+            6,
+            12,
+            6,
+          ),
+
+          line(
+            6,
+            12,
+            12,
+            12,
+          ),
+        ],
+      };
+
+
+      const iconScale =
+        0.82;
+
+
+      return (
+        icons[type] ||
+        icons.quantity
+      ).map(
+        (shape) => {
+
+          const scaledShape = {
+            ...shape,
+
+            lineWidth:
+              (
+                shape.lineWidth ||
+                1
+              ) *
+              iconScale,
+          };
+
+
+          for (
+            const coordinate
+            of [
+              "x",
+              "y",
+              "x1",
+              "y1",
+              "x2",
+              "y2",
+              "w",
+              "h",
+              "r",
+              "r1",
+              "r2",
+            ]
+          ) {
+            if (
+              typeof scaledShape[
+                coordinate
+              ] ===
+              "number"
+            ) {
+              scaledShape[
+                coordinate
+              ] *=
+                iconScale;
+            }
+          }
+
+
+          if (
+            Array.isArray(
+              scaledShape.points,
+            )
+          ) {
+            scaledShape.points =
+              scaledShape.points.map(
+                (point) => ({
+                  x:
+                    point.x *
+                    iconScale,
+
+                  y:
+                    point.y *
+                    iconScale,
+                }),
+              );
+          }
+
+
+          return scaledShape;
+        },
+      );
+    };
+
+
+    // ============================================================
+    // Cell Helpers
+    // ============================================================
+
+    const labelCell = (
+      label,
+      icon,
+    ) => ({
+      columns: [
+        {
+          width:
+            22,
+
+          canvas:
+            fieldIcon(
+              icon,
+            ),
+
+          margin:
+            [
+              0,
+              0,
+              0,
+              0,
+            ],
+        },
+
+        {
+          width:
+            "*",
+
+          text:
+            label,
+
+          style:
+            "fieldLabel",
+
+          margin:
+            [
+              2,
+              3,
+              0,
+              0,
+            ],
+        },
+      ],
+
+      fillColor:
+        COLORS.labelBackground,
+
+      margin:
+        [
+          8,
+          6,
+          5,
+          6,
+        ],
+    });
+
+
+    const valueCell = (
+      value,
+    ) => ({
+      text:
+        displayValue(
+          value,
+        ),
+
+      style:
+        "fieldValue",
+
+      margin:
+        [
+          9,
+          8,
+          7,
+          7,
+        ],
+    });
+
+
+    const tableLayout = {
+      hLineColor:
+        () =>
+          COLORS.border,
+
+      vLineColor:
+        () =>
+          COLORS.border,
+
+      hLineWidth:
+        () =>
+          0.7,
+
+      vLineWidth:
+        () =>
+          0.7,
+
+      paddingLeft:
+        () =>
+          0,
+
+      paddingRight:
+        () =>
+          0,
+
+      paddingTop:
+        () =>
+          0,
+
+      paddingBottom:
+        () =>
+          0,
+    };
+
+
+    const sectionHeading = (
+      title,
+    ) => ({
+      text:
+        title,
+
+      fontSize:
+        11,
+
+      bold:
+        true,
+
+      color:
+        COLORS.navy,
+
+      margin:
+        [
+          0,
+          4,
+          0,
+          7,
+        ],
+    });
+
+
+    // ============================================================
+    // Logo
+    // ============================================================
+
+    const logo =
+      await loadLogo(
+        detail.OrganizationID,
+        data.logoUrl,
+      );
+
+
+    const generatedOn =
+      formatDate(
+        new Date(),
+        "DD MMM YYYY hh:mm A",
+      );
+
+
+    // ============================================================
+    // Breakage Detail Table Body
+    // ============================================================
+
+    const breakageDetailsBody = [
+      [
+        {
+          text:
+            "Sr.No.",
+
+          style:
+            "tableHeader",
+
+          alignment:
+            "center",
+        },
+
+        {
+          text:
+            "Item",
+
+          style:
+            "tableHeader",
+        },
+
+        {
+          text:
+            "Nos.",
+
+          style:
+            "tableHeader",
+
+          alignment:
+            "center",
+        },
+
+       
+
+        {
+          text:
+            "Total Cost [INR]",
+
+          style:
+            "tableHeader",
+
+          alignment:
+            "center",
+        },
+
+         {
+          text:
+            "Person Responsible",
+
+          style:
+            "tableHeader",
+        },
+      ],
+    ];
+
+
+    // ============================================================
+    // Detail Rows
+    // ============================================================
+
+    if (
+      detail.Details &&
+      detail.Details.length > 0
+    ) {
+      detail.Details.forEach(
+        (
+          item,
+          index,
+        ) => {
+
+          breakageDetailsBody.push([
+            {
+              text:
+                index + 1,
+
+              style:
+                "tableValue",
+
+              alignment:
+                "center",
+            },
+
+            {
+              text:
+                displayValue(
+                  item.Item,
+                ),
+
+              style:
+                "tableValue",
+            },
+
+            {
+              text:
+                displayValue(
+                  item.Nos,
+                ),
+
+              style:
+                "tableValue",
+
+              alignment:
+                "center",
+            },
+
+           
+
+            {
+              text:
+                Number(
+                  item.TotalCost ||
+                  0,
+                ).toFixed(
+                  2,
+                ),
+
+              style:
+                "tableValue",
+
+              alignment:
+                "center",
+            },
+             {
+              text:
+                displayValue(
+                  item.PersonResponsible,
+                ),
+
+              style:
+                "tableValue",
+            },
+          ]);
+        },
+      );
+
+
+      // ==========================================================
+      // Total Row
+      // ==========================================================
+
+      breakageDetailsBody.push([
+        {
+          text:
+            "",
+
+          colSpan:
+            0,
+            style:
+            "tableTotal",
+        },
+
+        { text:
+            "Total",
+
+          style:
+            "tableTotal",
+
+          alignment:
+            "left",},
+
+        {
+          text:
+            Number(
+              detail.TotalNos ||
+              0,
+            ).toFixed(
+              2,
+            ),
+
+          style:
+            "tableTotal",
+
+          alignment:
+            "center",
+        },
+
+        {
+          text:
+            Number(
+              detail.TotalCost ||
+              0,
+            ).toFixed(
+              2,
+            ),
+
+          style:
+            "tableTotal",
+
+          alignment:
+            "center",
+        },
+
+        {
+         text:
+            "",
+
+          colSpan:
+            0,
+            style:
+            "tableTotal",
+        },
+      ]);
+
+    } else {
+
+      breakageDetailsBody.push([
+        {
+          text:
+            "No breakage details found.",
+
+          colSpan:
+            5,
+
+          alignment:
+            "center",
+
+          color:
+            COLORS.muted,
+
+          margin:
+            [
+              0,
+              8,
+              0,
+              8,
+            ],
+        },
+
+        {},
+        {},
+        {},
+        {},
+      ]);
+    }
+
+
+    // ============================================================
+    // Document Definition
+    // ============================================================
+
+    const documentDefinition = {
+
+      pageSize:
+        "A4",
+
+      pageOrientation:
+        "portrait",
+
+      pageMargins:
+        [
+          22,
+          26,
+          22,
+          72,
+        ],
+
+
+      defaultStyle: {
+        font:
+          "Roboto",
+
+        fontSize:
+          9,
+
+        color:
+          COLORS.text,
+      },
+
+
+      content: [
+
+        // ========================================================
+        // Header
+        // ========================================================
+
+        {
+          table: {
+            widths: [
+              130,
+              "*",
+              80,
+            ],
+
+            body: [
+              [
+                logo
+                  ? {
+                      image:
+                        logo,
+
+                      fit:
+                        [
+                          88,
+                          50,
+                        ],
+
+                      border:
+                        [
+                          false,
+                          false,
+                          false,
+                          false,
+                        ],
+                    }
+                  : {
+                      text:
+                        "",
+
+                      border:
+                        [
+                          false,
+                          false,
+                          false,
+                          false,
+                        ],
+                    },
+
+
+                {
+                  text:
+                    "Daily Breakage Detail Report",
+
+                  style:
+                    "title",
+
+                  alignment:
+                    "center",
+
+                  margin:
+                    [
+                      0,
+                      18,
+                      0,
+                      0,
+                    ],
+
+                  border:
+                    [
+                      false,
+                      false,
+                      false,
+                      false,
+                    ],
+                },
+
+
+                {
+                  text:
+                    "",
+
+                  border:
+                    [
+                      false,
+                      false,
+                      false,
+                      false,
+                    ],
+                },
+              ],
+            ],
+          },
+
+          layout:
+            "noBorders",
+        },
+
+
+        // ========================================================
+        // Header Line
+        // ========================================================
+
+        {
+          canvas: [
+            {
+              type:
+                "line",
+
+              x1:
+                0,
+
+              y1:
+                0,
+
+              x2:
+                551,
+
+              y2:
+                0,
+
+              lineWidth:
+                0.8,
+
+              lineColor:
+                COLORS.navy,
+            },
+          ],
+
+          margin:
+            [
+              0,
+              7,
+              0,
+              14,
+            ],
+        },
+
+
+        // ========================================================
+        // Daily Breakage Details
+        // ========================================================
+
+        sectionHeading(
+          "Daily Breakage Details",
+        ),
+
+
+        {
+          table: {
+            widths: [
+              115,
+              "*",
+              115,
+              "*",
+            ],
+
+           body: [
+
+  // ==================================================
+  // Row 1
+  // ==================================================
+
+  [
+    labelCell(
+      "Organization",
+      "organization",
+    ),
+
+    valueCell(
+      detail.OrganizationShortName ||
+      detail.OrganizationName,
+    ),
+
+    labelCell(
+      "Entry Date",
+      "calendar",
+    ),
+
+    valueCell(
+      detail.EntryDate,
+    ),
+  ],
+
+
+  // ==================================================
+  // Row 2
+  // ==================================================
+
+  [
+    labelCell(
+      "Outlet",
+      "location",
+    ),
+
+    valueCell(
+      detail.Outlet,
+    ),
+
+    labelCell(
+      "Total Items",
+      "quantity",
+    ),
+
+    valueCell(
+      detail.TotalItems,
+    ),
+  ],
+],
+          },
+
+          layout:
+            tableLayout,
+
+          margin:
+            [
+              0,
+              0,
+              0,
+              15,
+            ],
+        },
+
+
+        // ========================================================
+        // Breakage Item Details
+        // ========================================================
+
+        sectionHeading(
+          "Breakage Item Details",
+        ),
+
+
+        {
+          table: {
+            headerRows:
+              1,
+
+            dontBreakRows:
+              true,
+
+            widths: [
+              42,
+              "*",
+              55,
+              140,
+              90,
+            ],
+
+            body:
+              breakageDetailsBody,
+          },
+
+
+          layout: {
+            hLineColor:
+              () =>
+                COLORS.border,
+
+            vLineColor:
+              () =>
+                COLORS.border,
+
+            hLineWidth:
+              () =>
+                0.7,
+
+            vLineWidth:
+              () =>
+                0.7,
+
+            paddingLeft:
+              () =>
+                8,
+
+            paddingRight:
+              () =>
+                8,
+
+            paddingTop:
+              () =>
+                7,
+
+            paddingBottom:
+              () =>
+                7,
+          },
+        },
+      ],
+
+
+      // ==========================================================
+      // Footer
+      // ==========================================================
+
+      footer:
+        () => ({
+          margin:
+            [
+              22,
+              8,
+              22,
+              0,
+            ],
+
+          stack: [
+            {
+              canvas: [
+                {
+                  type:
+                    "line",
+
+                  x1:
+                    0,
+
+                  y1:
+                    0,
+
+                  x2:
+                    551,
+
+                  y2:
+                    0,
+
+                  lineWidth:
+                    0.7,
+
+                  lineColor:
+                    COLORS.navy,
+                },
+              ],
+
+              margin:
+                [
+                  0,
+                  0,
+                  0,
+                  8,
+                ],
+            },
+
+
+            {
+              columns: [
+                {
+                  stack: [
+                    {
+                      text:
+                        "Powered by HotelOps",
+
+                      bold:
+                        true,
+
+                      color:
+                        COLORS.navy,
+
+                      fontSize:
+                        8,
+                    },
+                  ],
+                },
+
+
+                {
+                  width:
+                    130,
+
+                  stack: [
+                    {
+                      text:
+                        `Generated On   :  ${generatedOn}`,
+
+                      fontSize:
+                        7,
+
+                      color:
+                        COLORS.label,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+
+
+      // ==========================================================
+      // Styles
+      // ==========================================================
+
+      styles: {
+
+        title: {
+          fontSize:
+            18,
+
+          bold:
+            true,
+
+          color:
+            COLORS.navy,
+        },
+
+
+        fieldLabel: {
+          fontSize:
+            8.5,
+
+          bold:
+            true,
+
+          color:
+            COLORS.label,
+        },
+
+
+        fieldValue: {
+          fontSize:
+            9,
+
+          color:
+            COLORS.text,
+        },
+
+
+        tableHeader: {
+          fontSize:
+            8.5,
+
+          bold:
+            true,
+
+          color:
+            COLORS.navy,
+
+          fillColor:
+            COLORS.labelBackground,
+
+          margin:
+            [
+              0,
+              2,
+              0,
+              2,
+            ],
+        },
+
+
+        tableValue: {
+          fontSize:
+            8.5,
+
+          color:
+            COLORS.text,
+
+          margin:
+            [
+              0,
+              2,
+              0,
+              2,
+            ],
+        },
+
+
+        tableTotal: {
+          fontSize:
+            8.5,
+
+          bold:
+            true,
+
+          color:
+            COLORS.navy,
+
+          fillColor:
+            COLORS.labelBackground,
+
+          margin:
+            [
+              0,
+              2,
+              0,
+              2,
+            ],
+        },
+      },
+    };
+
+
+    // ============================================================
+    // Generate PDF Buffer
+    // ============================================================
+
+    const pdfBuffer =
+      await new Promise(
+        (
+          resolve,
+          reject,
+        ) => {
+          try {
+
+            const pdfDocument =
+              new PdfPrinter(
+                DAILY_BREAKAGE_DETAIL_PDF_FONTS,
+              )
+                .createPdfKitDocument(
+                  documentDefinition,
+                );
+
+
+            const chunks = [];
+
+
+            pdfDocument.on(
+              "data",
+              (chunk) =>
+                chunks.push(
+                  chunk,
+                ),
+            );
+
+
+            pdfDocument.on(
+              "end",
+              () =>
+                resolve(
+                  Buffer.concat(
+                    chunks,
+                  ),
+                ),
+            );
+
+
+            pdfDocument.on(
+              "error",
+              reject,
+            );
+
+
+            pdfDocument.end();
+
+          } catch (error) {
+            reject(error);
+          }
+        },
+      );
+
+
+    // ============================================================
+    // Return
+    // ============================================================
+
+    return {
+      success:
+        true,
+
+      message:
+        "Daily Breakage detail PDF generated successfully.",
+
+      data:
+        pdfBuffer,
+
+      fileName:
+        `Daily-Breakage-Detail-${dailyBreakageID}.pdf`,
+
+      contentType:
+        "application/pdf",
+    };
+
+  } catch (error) {
+
+    console.error(
+      "Generate Daily Breakage detail PDF error:",
+      error,
+    );
+
+
+    return databaseFailure(
+      error,
+      "Generate Daily Breakage detail PDF",
+    );
+  }
+};
 
 
 // ============================================================
@@ -1691,5 +4249,9 @@ module.exports = {
   getDailyBreakageSummaryReport,
   getDailyBreakageOutletWiseReport,
   getDailyBreakagePersonResponsibleReport,
-  getDailyBreakagePersonResponsible
+  getDailyBreakagePersonResponsible,
+  generateDailyBreakageListPdf,
+  generateDailyBreakageOutletWiseReportPdf,
+  generateDailyBreakagePersonResponsibleReportPdf,
+  generateDailyBreakageDetailPdf
 };
