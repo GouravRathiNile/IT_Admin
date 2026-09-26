@@ -2734,7 +2734,7 @@ const generateDailyBreakagePersonResponsibleReportPdf = async (data) => {
     const pdfBuffer =
       await generatePdf({
         title:
-          "PERSON RESPONSIBLE WISE BREAKAGE REPORT",
+          "RESPONSIBLE PERSON WISE BREAKAGE REPORT",
 
         reportName:
           "Daily Breakage Person Responsible Wise Report",
