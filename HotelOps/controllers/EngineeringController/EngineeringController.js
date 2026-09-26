@@ -2194,8 +2194,16 @@ exports.updateAMC = async (req, res) => {
     // Uploaded Documents
     // ============================================================
 
-    const Documents =
-      req.uploadedDocuments || [];
+    const Documents = [];
+    for (const file of req.files || []) {
+      const filePath = await uploadAMCToAzure(file);
+      Documents.push({
+        FileName: file.originalname,
+        FilePath: filePath,
+        FileType: file.mimetype,
+        FileSize: file.size,
+      });
+    }
 
     // ============================================================
     // Queue
