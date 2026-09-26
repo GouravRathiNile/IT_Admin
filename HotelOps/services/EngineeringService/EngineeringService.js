@@ -5428,9 +5428,38 @@ const getDailyMaintenanceReports = async (data) => {
 
     const equipmentID =
       data.EquipmentID &&
-        String(data.EquipmentID).trim()
+      String(data.EquipmentID).trim()
         ? Number(data.EquipmentID)
         : null;
+
+    // =====================================================
+    // MASTER CHECKLIST
+    // =====================================================
+
+    const masterChecklistResult = await pool.query(
+      `
+      SELECT
+        ChecklistID,
+        Title
+      FROM Engineering_Maintenance_Checklist_Master
+      WHERE
+        IsActive = TRUE
+        AND IsDeleted = FALSE
+      ORDER BY ChecklistID ASC;
+      `,
+    );
+
+    const masterChecklists =
+      masterChecklistResult.rows.map((item) => ({
+        ChecklistID:
+          Number(item.checklistid),
+
+        Title:
+          item.title || null,
+
+        IsChecked:
+          false,
+      }));
 
     // =====================================================
     // VIRTUAL SCHEDULED MAINTENANCE
@@ -5449,6 +5478,7 @@ const getDailyMaintenanceReports = async (data) => {
     // =====================================================
 
     const equipmentValues = [];
+
     const equipmentConditions = [
       "e.IsDeleted = FALSE",
     ];
@@ -5541,13 +5571,13 @@ const getDailyMaintenanceReports = async (data) => {
               )::date
 
             AND MaintenanceDate <
-              (
-                DATE_TRUNC(
-                  'month',
-                  CURRENT_DATE
-                )
-                + INTERVAL '1 month'
-              )::date;
+            (
+              DATE_TRUNC(
+                'month',
+                CURRENT_DATE
+              )
+              + INTERVAL '1 month'
+            )::date;
           `,
           [equipmentIDs],
         );
@@ -5772,16 +5802,49 @@ const getDailyMaintenanceReports = async (data) => {
         EquipmentID:
           currentEquipmentID,
 
-        MaintenanceBy:
+        Maintenance:
           null,
 
-        Status:
-          "Pending",
+        MaintenanceDay:
+          null,
 
         MaintenanceDate:
           formatDate(
             scheduledDate,
           ),
+
+        MaintenanceBy:
+          null,
+
+        ServicedBy:
+          null,
+
+        ServicedByName:
+          null,
+
+        EngineerAssigned:
+          null,
+
+        EngineerAssignedName:
+          null,
+
+        Status:
+          "Pending",
+
+        CreatedBy:
+          null,
+
+        CreatedDate:
+          null,
+
+        ModifiedBy:
+          null,
+
+        ModifiedByName:
+          null,
+
+        ModifiedDate:
+          null,
 
         Description:
           equipment.description ||
@@ -5814,6 +5877,13 @@ const getDailyMaintenanceReports = async (data) => {
         ScheduleDay:
           equipment.scheduleday ||
           null,
+
+        Checklists:
+          masterChecklists.map(
+            (item) => ({
+              ...item,
+            }),
+          ),
       });
     }
 
@@ -6098,6 +6168,9 @@ const getDailyMaintenanceReports = async (data) => {
             sb.FullName
               AS ServicedByName,
 
+            mb.FullName
+              AS ModifiedByName,
+
             em.Description
               AS EquipmentDescription,
 
@@ -6113,7 +6186,51 @@ const getDailyMaintenanceReports = async (data) => {
 
             em.ScheduleOfServicing,
 
-            em.ScheduleDay
+            em.ScheduleDay,
+
+            COALESCE(
+              (
+                SELECT JSON_AGG(
+                  JSON_BUILD_OBJECT(
+                    'ChecklistEntryID',
+                      c.ChecklistEntryID,
+
+                    'ChecklistID',
+                      cm.ChecklistID,
+
+                    'Title',
+                      cm.Title,
+
+                    'IsChecked',
+                      COALESCE(
+                        c.IsChecked,
+                        FALSE
+                      )
+                  )
+                  ORDER BY
+                    cm.ChecklistID
+                )
+
+                FROM Engineering_Maintenance_Checklist_Master cm
+
+                LEFT JOIN Engineering_Maintenance_Checklist_Entry_Details c
+                  ON c.ChecklistID =
+                     cm.ChecklistID
+
+                 AND c.MaintenanceID =
+                     m.MaintenanceID
+
+                 AND c.IsDeleted =
+                     FALSE
+
+                WHERE
+                  cm.IsActive = TRUE
+
+                  AND cm.IsDeleted =
+                      FALSE
+              ),
+              '[]'::json
+            ) AS Checklists
 
           FROM Engineering_Maintenance_Details m
 
@@ -6121,21 +6238,28 @@ const getDailyMaintenanceReports = async (data) => {
             ON u.UserID =
                m.EngineerAssigned
 
-            AND u.IsDeleted =
+           AND u.IsDeleted =
                FALSE
 
           LEFT JOIN user_master sb
             ON sb.UserID =
                m.ServicedBy
 
-            AND sb.IsDeleted =
+           AND sb.IsDeleted =
+               FALSE
+
+          LEFT JOIN user_master mb
+            ON mb.UserID =
+               m.ModifiedBy
+
+           AND mb.IsDeleted =
                FALSE
 
           LEFT JOIN Engineering_Equipment_Entry_Master em
             ON em.EquipmentID =
                m.EquipmentID
 
-            AND em.IsDeleted =
+           AND em.IsDeleted =
                FALSE
 
           WHERE ${where}
@@ -6188,8 +6312,8 @@ const getDailyMaintenanceReports = async (data) => {
             ServicedBy:
               row.servicedby
                 ? Number(
-                  row.servicedby,
-                )
+                    row.servicedby,
+                  )
                 : null,
 
             ServicedByName:
@@ -6199,8 +6323,8 @@ const getDailyMaintenanceReports = async (data) => {
             EngineerAssigned:
               row.engineerassigned
                 ? Number(
-                  row.engineerassigned,
-                )
+                    row.engineerassigned,
+                  )
                 : null,
 
             EngineerAssignedName:
@@ -6211,10 +6335,35 @@ const getDailyMaintenanceReports = async (data) => {
               row.status ||
               null,
 
+            CreatedBy:
+              row.createdby
+                ? Number(
+                    row.createdby,
+                  )
+                : null,
+
             CreatedDate:
               formatDate(
                 row.createddate,
               ),
+
+            ModifiedBy:
+              row.modifiedby
+                ? Number(
+                    row.modifiedby,
+                  )
+                : null,
+
+            ModifiedByName:
+              row.modifiedbyname ||
+              null,
+
+            ModifiedDate:
+              row.modifieddate
+                ? formatDate(
+                    row.modifieddate,
+                  )
+                : null,
 
             Description:
               row.equipmentdescription ||
@@ -6247,6 +6396,10 @@ const getDailyMaintenanceReports = async (data) => {
             ScheduleDay:
               row.scheduleday ||
               null,
+
+            Checklists:
+              row.checklists ||
+              [],
           }),
         );
     }

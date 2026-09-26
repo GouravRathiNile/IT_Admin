@@ -1743,13 +1743,13 @@ const generateGuestDetailPdf = async (data) => {
 
     const narrativeTable = (label, icon, value) => ({
       table: {
-        widths: [125, "*"],
+        widths: [115, "*"],
         body: [[
           labelCell(label, icon),
           {
             text: displayValue(value),
             style: "narrativeValue",
-            margin: [12, 15, 12, 15],
+            margin: [10, 10, 12, 15],
           },
         ]],
       },
