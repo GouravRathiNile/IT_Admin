@@ -5793,6 +5793,7 @@ const getDailyMaintenanceReports = async (data) => {
 
       virtualMaintenances.push({
         MaintenanceID: 0,
+        Documents: [],
 
         OrganizationID:
           Number(
@@ -6230,7 +6231,23 @@ const getDailyMaintenanceReports = async (data) => {
                       FALSE
               ),
               '[]'::json
-            ) AS Checklists
+            ) AS Checklists,
+
+            COALESCE(
+              (
+                SELECT JSON_AGG(
+                  JSON_BUILD_OBJECT(
+                    'MaintenanceDocumentID', d.MaintenanceDocumentID,
+                    'FileName', d.FileName,
+                    'FilePath', d.FilePath
+                  ) ORDER BY d.MaintenanceDocumentID
+                )
+                FROM Engineering_Maintenance_Documents d
+                WHERE d.MaintenanceID = m.MaintenanceID
+                  AND d.IsDeleted = FALSE
+              ),
+              '[]'::json
+            ) AS Documents
 
           FROM Engineering_Maintenance_Details m
 
@@ -6400,6 +6417,14 @@ const getDailyMaintenanceReports = async (data) => {
             Checklists:
               row.checklists ||
               [],
+
+            Documents: Array.isArray(row.documents)
+              ? row.documents.map((doc) => ({
+                MaintenanceDocumentID: Number(doc.MaintenanceDocumentID),
+                FileName: doc.FileName || null,
+                FileUrl: doc.FilePath ? generateUrl(doc.FilePath) : null,
+              }))
+              : [],
           }),
         );
     }
