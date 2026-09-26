@@ -736,18 +736,53 @@ const appendOverallCapexStatusFilter = (query, params, approvalStatus) => {
   `;
 };
 
-// Narrow the already role-scoped result to the CAPEX records currently waiting
-// at the selected configured approval stage. This is deliberately additive:
-// it never replaces the logged-in user's existing visibility predicates.
-const appendCapexApprovalFlowFilter = (query, params, approvalFlow) => {
+// Apply ApprovalFlow inside the caller's existing visibility scope. A selected
+// non-pending status belongs to that role's status column; only Pending is a
+// current-stage concept because later stages may also contain default Pending.
+const appendCapexApprovalFlowFilter = (
+  query,
+  params,
+  approvalFlow,
+  approvalStatus,
+) => {
   if (!approvalFlow) return query;
 
+  const statusColumns = {
+    GM: "approval_state.GMStatus",
+    CEO: "approval_state.CEOStatus",
+    OWNER: "approval_state.OwnerStatus",
+  };
+  const statusColumn = statusColumns[approvalFlow];
+
   params.push(approvalFlow);
+  const approvalFlowParameter = `$${params.length}`;
+  query = `${query}
+    AND EXISTS (
+      SELECT 1
+      FROM Capex_Approval_Config flow_cfg
+      WHERE flow_cfg.OrganizationID = cm.OrganizationID
+        AND flow_cfg.IsDeleted = FALSE
+        AND UPPER(TRIM(flow_cfg.ApprovalRole)) = ${approvalFlowParameter}
+    )
+  `;
+
+  if (!approvalStatus) return query;
+
+  if (approvalStatus === "PENDING") {
+    return `${query}
+      AND UPPER(TRIM(COALESCE(current_stage.ApprovalRole, '')))
+          = ${approvalFlowParameter}
+      AND UPPER(TRIM(COALESCE(current_stage.Status, 'PENDING')))
+          = 'PENDING'
+      AND UPPER(TRIM(COALESCE(approval_state.FinalStatus, 'PENDING')))
+          = 'PENDING'
+    `;
+  }
+
+  params.push(approvalStatus);
   return `${query}
-    AND UPPER(TRIM(COALESCE(current_stage.ApprovalRole, '')))
+    AND UPPER(TRIM(COALESCE(${statusColumn}, 'PENDING')))
         = $${params.length}
-    AND UPPER(TRIM(COALESCE(approval_state.FinalStatus, 'PENDING')))
-        NOT IN ('APPROVED', 'REJECTED')
   `;
 };
 // ============================================================ Get All CAPEX
@@ -864,7 +899,12 @@ const getAllCapex = async (data) => {
       query += ` AND cm.CreatedDate < ($${params.length}::date + INTERVAL '1 day') `;
     }
 
-    query = appendCapexApprovalFlowFilter(query, params, approvalFlow);
+    query = appendCapexApprovalFlowFilter(
+      query,
+      params,
+      approvalFlow,
+      approvalStatus,
+    );
 
     // =====================================================
     // STATUS FILTER
@@ -1164,6 +1204,7 @@ const getAllCapex = async (data) => {
       countQuery,
       countParams,
       approvalFlow,
+      approvalStatus,
     );
 
     // =====================================================
@@ -3866,7 +3907,12 @@ const generateCapexListPdfDocument = async (data) => {
       query += ` AND cm.CreatedDate < ($${params.length}::date + INTERVAL '1 day') `;
     }
 
-    query = appendCapexApprovalFlowFilter(query, params, approvalFlow);
+    query = appendCapexApprovalFlowFilter(
+      query,
+      params,
+      approvalFlow,
+      approvalStatus,
+    );
 
     // ============================================================
     // STATUS FILTER

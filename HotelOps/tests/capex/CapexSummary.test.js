@@ -387,7 +387,7 @@ test("CAPEX list PDF reuses getAllCapex configured-flow visibility", { concurren
   }
 });
 
-test("CAPEX ApprovalFlow narrows list, count, and PDF without broadening role visibility", { concurrency: false }, async () => {
+test("CAPEX ApprovalFlow applies Rejected to the selected CEO stage in list, count, and PDF", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];
   pool.query = async (sql, values) => {
@@ -403,6 +403,7 @@ test("CAPEX ApprovalFlow narrows list, count, and PDF without broadening role vi
       OrganizationID: 20,
       UserType: "CEO",
       ApprovalFlow: " ceo ",
+      Status: "Rejected",
       page: 1,
       PageSize: 10,
     };
@@ -422,12 +423,24 @@ test("CAPEX ApprovalFlow narrows list, count, and PDF without broadening role vi
 
     for (const call of capexQueries) {
       assert.ok(call.values.includes("CEO"));
-      assert.match(
-        call.sql,
-        /UPPER\(TRIM\(COALESCE\(current_stage\.ApprovalRole, ''\)\)\)/,
+      assert.ok(call.values.includes("REJECTED"));
+      const appliedFilters = call.sql.slice(
+        call.sql.lastIndexOf("AND cm.OrganizationID"),
       );
       assert.match(
-        call.sql,
+        appliedFilters,
+        /FROM Capex_Approval_Config flow_cfg[\s\S]*flow_cfg\.ApprovalRole/,
+      );
+      assert.match(
+        appliedFilters,
+        /UPPER\(TRIM\(COALESCE\(approval_state\.CEOStatus, 'PENDING'\)\)\)[\s\S]*= \$\d+/,
+      );
+      assert.doesNotMatch(
+        appliedFilters,
+        /COALESCE\(current_stage\.ApprovalRole, ''\)/,
+      );
+      assert.match(
+        appliedFilters,
         /UPPER\(COALESCE\(approval_state\.GMStatus, 'PENDING'\)\) = 'APPROVED'/,
       );
     }
