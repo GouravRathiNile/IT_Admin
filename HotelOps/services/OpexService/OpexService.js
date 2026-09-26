@@ -1404,18 +1404,66 @@ const appendOpexDateFilter = (query, params, fromDate, toDate) => {
   return query;
 };
 
-// Apply the selected current approval stage only after the caller's existing
-// organization, department, and role visibility predicates. This filter can
-// narrow a result set, but cannot grant access to additional OPEX records.
-const appendOpexApprovalFlowFilter = (query, params, approvalFlow) => {
+// Apply ApprovalFlow inside the caller's existing visibility scope. Completed
+// actions belong to the selected role's status column; only Pending is tied to
+// current_stage because later workflow columns may still default to Pending.
+const appendOpexApprovalFlowFilter = (
+  query,
+  params,
+  approvalFlow,
+  approvalStatus,
+) => {
   if (!approvalFlow) return query;
 
+  const statusColumns = {
+    HOD: "approval_state.HODStatus",
+    FC: "approval_state.FCStatus",
+    GM: "approval_state.GMStatus",
+    "RD-FC": "approval_state.RDFCStatus",
+    CEO: "approval_state.CEOStatus",
+  };
+  const statusColumn = statusColumns[approvalFlow];
+
   params.push(approvalFlow);
+  const approvalFlowParameter = `$${params.length}`;
+  query = `${query}
+    AND (
+      EXISTS (
+        SELECT 1
+        FROM Opex_Approval_Config flow_cfg
+        WHERE flow_cfg.OrganizationID = cm.OrganizationID
+          AND flow_cfg.IsDeleted = FALSE
+          AND UPPER(BTRIM(flow_cfg.ApprovalRole)) = ${approvalFlowParameter}
+      )
+      OR (
+        NOT EXISTS (
+          SELECT 1
+          FROM Opex_Approval_Config configured_flow
+          WHERE configured_flow.OrganizationID = cm.OrganizationID
+            AND configured_flow.IsDeleted = FALSE
+        )
+        AND ${approvalFlowParameter} IN ('HOD', 'FC', 'GM', 'RD-FC', 'CEO')
+      )
+    )
+  `;
+
+  if (!approvalStatus) return query;
+
+  if (approvalStatus === "PENDING") {
+    return `${query}
+      AND UPPER(BTRIM(COALESCE(current_stage.ApprovalRole, '')))
+          = ${approvalFlowParameter}
+      AND UPPER(BTRIM(COALESCE(current_stage.Status, 'PENDING')))
+          = 'PENDING'
+      AND UPPER(BTRIM(COALESCE(approval_state.FinalStatus, 'PENDING')))
+          = 'PENDING'
+    `;
+  }
+
+  params.push(approvalStatus);
   return `${query}
-    AND UPPER(BTRIM(COALESCE(current_stage.ApprovalRole, '')))
+    AND UPPER(BTRIM(COALESCE(${statusColumn}, 'PENDING')))
         = $${params.length}
-    AND UPPER(BTRIM(COALESCE(approval_state.FinalStatus, 'PENDING')))
-        NOT IN ('APPROVED', 'REJECTED')
   `;
 };
 // ============================================================ Get All Opex
@@ -1591,7 +1639,12 @@ const getAllOpex = async (data) => {
     }
 
     query = appendOpexDateFilter(query, params, fromDate, toDate);
-    query = appendOpexApprovalFlowFilter(query, params, approvalFlow);
+    query = appendOpexApprovalFlowFilter(
+      query,
+      params,
+      approvalFlow,
+      approvalStatus,
+    );
 
     // =====================================================
     // STATUS FILTER
@@ -1721,6 +1774,7 @@ const getAllOpex = async (data) => {
       countQuery,
       countParams,
       approvalFlow,
+      approvalStatus,
     );
 
     // =====================================================

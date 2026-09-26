@@ -831,7 +831,7 @@ test("OPEX list PDF forwards the requested department to list and count queries"
   }
 });
 
-test("OPEX ApprovalFlow narrows list, count, and PDF without broadening FC visibility", { concurrency: false }, async () => {
+test("OPEX ApprovalFlow applies Rejected to the selected CEO stage in list, count, and PDF", { concurrency: false }, async () => {
   const originalQuery = pool.query;
   const calls = [];
   pool.query = async (sql, values) => {
@@ -845,8 +845,9 @@ test("OPEX ApprovalFlow narrows list, count, and PDF without broadening FC visib
   try {
     const filters = {
       OrganizationID: 20,
-      UserType: "FC",
-      ApprovalFlow: " fc ",
+      UserType: "USER",
+      ApprovalFlow: " ceo ",
+      Status: "Rejected",
       page: 1,
       PageSize: 10,
     };
@@ -865,14 +866,22 @@ test("OPEX ApprovalFlow narrows list, count, and PDF without broadening FC visib
     assert.equal(opexQueries.length, 4);
 
     for (const call of opexQueries) {
-      assert.ok(call.values.includes("FC"));
-      assert.match(
-        call.sql,
-        /UPPER\(BTRIM\(COALESCE\(current_stage\.ApprovalRole, ''\)\)\)/,
+      assert.ok(call.values.includes("CEO"));
+      assert.ok(call.values.includes("REJECTED"));
+      const appliedFilters = call.sql.slice(
+        call.sql.lastIndexOf("AND cm.OrganizationID"),
       );
       assert.match(
-        call.sql,
-        /UPPER\(BTRIM\(COALESCE\(approval_state\.HODStatus, 'PENDING'\)\)\)[\s\S]*= 'APPROVED'/,
+        appliedFilters,
+        /FROM Opex_Approval_Config flow_cfg[\s\S]*flow_cfg\.ApprovalRole/,
+      );
+      assert.match(
+        appliedFilters,
+        /UPPER\(BTRIM\(COALESCE\(approval_state\.CEOStatus, 'PENDING'\)\)\)[\s\S]*= \$\d+/,
+      );
+      assert.doesNotMatch(
+        appliedFilters,
+        /COALESCE\(current_stage\.ApprovalRole, ''\)/,
       );
     }
 
